@@ -553,6 +553,29 @@ mod tests {
     }
 
     #[test]
+    fn demo_annotation_measures_regions() {
+        // No image yet: demo_annotation should capture a mock gel, place 4
+        // lanes, and measure each band region from the pixels.
+        let mut st = AppState::new();
+        let msg = st.demo_annotation();
+        assert!(msg.contains("Demo annotation"), "got: {msg}");
+        let a = st.analysis().unwrap();
+        assert_eq!(a.lanes.len(), 4);
+        assert!(a.lanes.iter().any(|l| l.is_ladder));
+        assert!(!a.bands.is_empty());
+        // Measurement produced positive integrated densities for bands sitting
+        // on the mock gel's bright bands.
+        assert!(
+            a.bands.iter().filter(|b| b.integrated_density > 0.0).count() >= 3,
+            "expected several measured regions"
+        );
+
+        // Re-measuring is idempotent-ish (still positive).
+        let msg2 = st.measure_regions();
+        assert!(msg2.contains("Measured"), "got: {msg2}");
+    }
+
+    #[test]
     fn ladder_names_match_gel_type() {
         let st = AppState::new();
         assert!(!st.ladder_names().is_empty());

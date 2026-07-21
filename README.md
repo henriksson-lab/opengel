@@ -76,6 +76,22 @@ cargo run -p gel-app -- demo.gel.zip          # open a file on launch
 cargo run -p gel-app --features camera        # enable real USB capture
 ```
 
+## GUI viewer
+
+The desktop app is an image viewer first: **zoom** (buttons / mouse wheel),
+**pan** (drag), **live rotation** (slider + auto-straighten), and a display
+**level** control. Lane/band overlays are composited into the image so they
+zoom, pan and rotate together with it.
+
+**Demo annotation → measurement.** *Analyze ▸ Demo annotation* drops 4 example
+lanes (one ladder, three samples) with band regions; *Measure* then integrates
+each region's background-subtracted density straight from the pixels
+(densitometry) and fills the Bands table. This region-measurement step is
+**independent of the detection algorithm** — regions can come from the demo,
+manual editing, or a detector plugged in later behind
+`gel_detect::detector::GelDetector`. Automatic lane/band detection is currently
+deferred pending detector retuning/replacement.
+
 
 ## Datasets
 
