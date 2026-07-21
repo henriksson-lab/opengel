@@ -1,0 +1,20 @@
+[package]
+name = "gel-camera"
+description = "USB camera capture and exposure control for OpenGel (backend-agnostic)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gel-core = { path = "../gel-core" }
+image.workspace = true
+thiserror.workspace = true
+nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+
+[features]
+default = []
+# Real USB camera capture via nokhwa (V4L2 / AVFoundation / MediaFoundation).
+# Off by default so the workspace builds without platform camera libraries.
+nokhwa-backend = ["dep:nokhwa"]

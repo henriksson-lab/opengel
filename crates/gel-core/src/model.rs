@@ -1,0 +1,279 @@
+//! Core data model for an OpenGel project.
+//!
+//! Everything here is `serde`-serializable. A [`GelProject`] is what a
+//! `.gel.zip` deserializes into (minus the raw image pixels, which live in the
+//! ZIP as PNGs and are referenced by [`GelImage::filename`]).
+
+use serde::{Deserialize, Serialize};
+
+/// The kind of gel, which determines molarity conversion and which ladder
+/// templates are applicable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GelType {
+    /// Double-stranded DNA. Size unit: base pairs (bp).
+    Dna,
+    /// RNA. Size unit: nucleotides (nt).
+    Rna,
+    /// Protein (SDS-PAGE). Size unit: daltons (Da).
+    Protein,
+}
+
+impl GelType {
+    /// Average molar mass used to convert a size into g/mol.
+    ///
+    /// * DNA:  ~650 g/mol per base pair.
+    /// * RNA:  ~340 g/mol per nucleotide.
+    /// * Protein: size *is* the molar mass (Da == g/mol), so the per-unit
+    ///   factor is 1.0.
+    pub fn g_per_mol_per_size_unit(self) -> f64 {
+        match self {
+            GelType::Dna => 650.0,
+            GelType::Rna => 340.0,
+            GelType::Protein => 1.0,
+        }
+    }
+
+    /// Human-readable size unit label.
+    pub fn size_unit(self) -> &'static str {
+        match self {
+            GelType::Dna => "bp",
+            GelType::Rna => "nt",
+            GelType::Protein => "Da",
+        }
+    }
+}
+
+/// Per-image capture metadata (stored in `metadata.json`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CaptureMeta {
+    /// Exposure time in seconds. Used for HDR radiance scaling.
+    pub exposure_seconds: f64,
+    /// Sensor gain (ISO-like), if known. Informational.
+    #[serde(default)]
+    pub gain: Option<f64>,
+    /// Camera device name/identifier, if known.
+    #[serde(default)]
+    pub camera_name: Option<String>,
+    /// ISO-8601 capture timestamp, if known.
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    /// Bracket group id: images sharing a value form one HDR exposure bracket.
+    #[serde(default)]
+    pub bracket_group: Option<u32>,
+}
+
+/// A single captured image, referenced by filename inside the ZIP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GelImage {
+    /// Stable id (index-like), unique within a project.
+    pub id: u32,
+    /// Path inside the ZIP, e.g. `images/img_00.png`.
+    pub filename: String,
+    pub width: u32,
+    pub height: u32,
+    /// True if the PNG is 16-bit (higher dynamic range per frame).
+    #[serde(default)]
+    pub sixteen_bit: bool,
+    pub meta: CaptureMeta,
+}
+
+/// A lane: a vertical strip of the gel bounded in x. Bands migrate downward
+/// (increasing y) within it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Lane {
+    pub id: u32,
+    /// Left/right pixel bounds (inclusive left, exclusive right).
+    pub x_min: u32,
+    pub x_max: u32,
+    /// Top/bottom pixel bounds of the lane's active region.
+    pub y_min: u32,
+    pub y_max: u32,
+    #[serde(default)]
+    pub label: Option<String>,
+    /// True when this lane has been identified/assigned as a ladder.
+    #[serde(default)]
+    pub is_ladder: bool,
+}
+
+/// A detected band within a lane.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Band {
+    pub id: u32,
+    pub lane_id: u32,
+    /// Center y (pixels) of the band peak.
+    pub y_center: f64,
+    /// Peak half-extent in pixels (band vertical spread).
+    pub y_half_width: f64,
+    /// Background-subtracted integrated density (area under the peak).
+    pub integrated_density: f64,
+    /// Retention factor in [0,1] once the lane extent is known.
+    #[serde(default)]
+    pub rf: Option<f64>,
+    /// Estimated size (bp/nt/Da) from ladder calibration.
+    #[serde(default)]
+    pub size: Option<f64>,
+    /// Known size when this band belongs to a ladder lane.
+    #[serde(default)]
+    pub known_size: Option<f64>,
+}
+
+/// A free-form region (spot/blob) not necessarily tied to a lane. Stored as an
+/// axis-aligned bounding box plus its integrated density; a polygon mask may be
+/// added later.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Blob {
+    pub id: u32,
+    pub x_min: u32,
+    pub y_min: u32,
+    pub x_max: u32,
+    pub y_max: u32,
+    pub integrated_density: f64,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// One rung of a commercial ladder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LadderBand {
+    /// Size in the gel-type's unit (bp/nt/Da).
+    pub size: f64,
+    /// Mass in ng of this band for the manufacturer's standard load, if known.
+    #[serde(default)]
+    pub mass_ng: Option<f64>,
+    /// True for "reference" bands the manufacturer loads at increased intensity
+    /// (extra-thick / brighter bands used for quick orientation).
+    #[serde(default)]
+    pub reference: bool,
+}
+
+/// A commercial (or custom) ladder definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LadderTemplate {
+    pub name: String,
+    pub gel_type: GelType,
+    /// Manufacturer, e.g. "NEB", "Thermo Fisher", "Bio-Rad", "Promega".
+    #[serde(default)]
+    pub vendor: Option<String>,
+    /// Catalog number(s), e.g. "N3232".
+    #[serde(default)]
+    pub catalog: Option<String>,
+    /// Total loaded mass (ng) the `mass_ng` values correspond to, if specified.
+    #[serde(default)]
+    pub standard_load_ng: Option<f64>,
+    /// Bands, conventionally ordered from largest to smallest size.
+    pub bands: Vec<LadderBand>,
+}
+
+impl LadderTemplate {
+    /// Sizes of the reference (extra-thick) bands.
+    pub fn reference_sizes(&self) -> Vec<f64> {
+        self.bands.iter().filter(|b| b.reference).map(|b| b.size).collect()
+    }
+}
+
+/// Assignment of a ladder template to a lane, mapping detected bands to rungs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LadderAssignment {
+    pub lane_id: u32,
+    pub template_name: String,
+    /// `map[i] = Some(band_id)` links ladder rung `i` to a detected band.
+    #[serde(default)]
+    pub rung_to_band: Vec<Option<u32>>,
+}
+
+/// Intensity → mass calibration model fitted from ladder bands of known mass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Calibration {
+    /// mass = slope * density  (forced through origin).
+    Linear { slope: f64 },
+    /// mass = a * density + b   (affine).
+    Affine { a: f64, b: f64 },
+    /// log(mass) = a * log(density) + b  (power law; handles saturation).
+    LogLog { a: f64, b: f64 },
+}
+
+impl Calibration {
+    /// Predict mass (ng) from an integrated density.
+    pub fn mass_ng(&self, density: f64) -> f64 {
+        match *self {
+            Calibration::Linear { slope } => slope * density,
+            Calibration::Affine { a, b } => a * density + b,
+            Calibration::LogLog { a, b } => (a * density.max(1e-12).ln() + b).exp(),
+        }
+    }
+}
+
+/// Quantification result for one band or blob.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Quantification {
+    /// Band id, or blob id, this result refers to.
+    pub target_id: u32,
+    /// Whether `target_id` refers to a band or a blob.
+    pub target_kind: TargetKind,
+    pub mass_ng: Option<f64>,
+    pub molarity_nmol: Option<f64>,
+    pub size: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetKind {
+    Band,
+    Blob,
+}
+
+/// The full analysis state (serialized as `analysis.json`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Analysis {
+    #[serde(default)]
+    pub lanes: Vec<Lane>,
+    #[serde(default)]
+    pub bands: Vec<Band>,
+    #[serde(default)]
+    pub blobs: Vec<Blob>,
+    #[serde(default)]
+    pub ladder_assignments: Vec<LadderAssignment>,
+    #[serde(default)]
+    pub calibration: Option<Calibration>,
+    #[serde(default)]
+    pub quantifications: Vec<Quantification>,
+}
+
+/// Current on-disk format version.
+pub const FORMAT_VERSION: u32 = 1;
+
+/// A full project: everything in a `.gel.zip` except raw pixels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GelProject {
+    #[serde(default = "default_format")]
+    pub format: String,
+    #[serde(default = "default_version")]
+    pub version: u32,
+    pub gel_type: GelType,
+    #[serde(default)]
+    pub images: Vec<GelImage>,
+    #[serde(default)]
+    pub analysis: Analysis,
+}
+
+fn default_format() -> String {
+    "opengel".to_string()
+}
+fn default_version() -> u32 {
+    FORMAT_VERSION
+}
+
+impl GelProject {
+    /// Create an empty project of the given gel type.
+    pub fn new(gel_type: GelType) -> Self {
+        GelProject {
+            format: default_format(),
+            version: FORMAT_VERSION,
+            gel_type,
+            images: Vec::new(),
+            analysis: Analysis::default(),
+        }
+    }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "gel-sim"
+description = "Synthetic gel image simulator with configurable effects and exact ground truth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gel-core = { path = "../gel-core" }
+gel-detect = { path = "../gel-detect" }
+image.workspace = true
+rayon.workspace = true
+serde_json.workspace = true

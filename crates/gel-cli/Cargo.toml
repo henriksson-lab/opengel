@@ -1,0 +1,23 @@
+[package]
+name = "gel-cli"
+description = "Headless CLI for OpenGel: batch processing, evaluation harness, annotation IO"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gel"
+path = "src/main.rs"
+
+[dependencies]
+gel-core = { path = "../gel-core" }
+gel-detect = { path = "../gel-detect" }
+gel-sim = { path = "../gel-sim" }
+anyhow.workspace = true
+image.workspace = true
+imageproc = "0.25"
+clap.workspace = true
+ndarray = { workspace = true }
+serde_json.workspace = true

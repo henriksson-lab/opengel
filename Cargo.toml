@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/gel-core",
+    "crates/gel-detect",
+    "crates/gel-sim",
+    "crates/gel-camera",
+    "crates/gel-cli",
+    "crates/gel-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["OpenGel contributors"]
+repository = "https://github.com/opengel/opengel"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+image = "0.25"
+ndarray = "0.16"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rayon = "1"

@@ -1,0 +1,37 @@
+[package]
+name = "gel-app"
+description = "OpenGel desktop GUI (Slint): capture, view, analyze and quantify gels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "opengel"
+path = "src/main.rs"
+
+[dependencies]
+gel-core = { path = "../gel-core" }
+gel-detect = { path = "../gel-detect" }
+gel-camera = { path = "../gel-camera" }
+slint = "1.17"
+image.workspace = true
+anyhow.workspace = true
+rfd = "0.15"
+
+[build-dependencies]
+slint-build = "1.17"
+
+[features]
+default = []
+# Enable real USB camera capture in the app.
+camera = ["gel-camera/nokhwa-backend"]
+
+# Desktop installer bundling via `cargo bundle` (.app/.dmg, .msi, .deb).
+[package.metadata.bundle]
+name = "OpenGel"
+identifier = "dev.opengel.app"
+short_description = "Capture, detect and quantify gel electrophoresis images"
+long_description = "OpenGel captures gels from a USB camera with HDR bracketing, detects lanes/bands and the ladder, and quantifies band amounts in ng and molarity for DNA, RNA and protein gels."
+category = "public.app-category.utilities"

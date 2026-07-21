@@ -1,0 +1,394 @@
+[
+  {
+    "name": "NEB 1 kb DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "NEB",
+    "catalog": "N3232",
+    "standard_load_ng": 500,
+    "bands": [
+      { "size": 10000, "mass_ng": 42 }, { "size": 8000, "mass_ng": 42 },
+      { "size": 6000, "mass_ng": 50 }, { "size": 5000, "mass_ng": 42 },
+      { "size": 4000, "mass_ng": 33 }, { "size": 3000, "mass_ng": 125, "reference": true },
+      { "size": 2000, "mass_ng": 48 }, { "size": 1500, "mass_ng": 36 },
+      { "size": 1000, "mass_ng": 42 }, { "size": 500, "mass_ng": 42 }
+    ]
+  },
+  {
+    "name": "NEB 1 kb Plus DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "NEB",
+    "catalog": "N3200",
+    "bands": [
+      { "size": 10000 }, { "size": 8000 }, { "size": 6000 }, { "size": 5000 },
+      { "size": 4000 }, { "size": 3000, "reference": true }, { "size": 2000 },
+      { "size": 1500 }, { "size": 1200 }, { "size": 1000, "reference": true },
+      { "size": 900 }, { "size": 800 }, { "size": 700 }, { "size": 600 },
+      { "size": 500, "reference": true }, { "size": 400 }, { "size": 300 },
+      { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "NEB 100 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "NEB",
+    "catalog": "N3231",
+    "standard_load_ng": 500,
+    "bands": [
+      { "size": 1517, "mass_ng": 45 }, { "size": 1200, "mass_ng": 35 },
+      { "size": 1000, "mass_ng": 95, "reference": true }, { "size": 900, "mass_ng": 27 },
+      { "size": 800, "mass_ng": 24 }, { "size": 700, "mass_ng": 21 },
+      { "size": 600, "mass_ng": 18 }, { "size": 500, "mass_ng": 97, "reference": true },
+      { "size": 400, "mass_ng": 38 }, { "size": 300, "mass_ng": 29 },
+      { "size": 200, "mass_ng": 25 }, { "size": 100, "mass_ng": 48 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler 1 kb",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM0311",
+    "bands": [
+      { "size": 10000 }, { "size": 8000 }, { "size": 6000, "reference": true },
+      { "size": 5000 }, { "size": 4000 }, { "size": 3500 },
+      { "size": 3000, "reference": true }, { "size": 2500 }, { "size": 2000 },
+      { "size": 1500 }, { "size": 1000, "reference": true }, { "size": 750 },
+      { "size": 500 }, { "size": 250 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler 1 kb Plus",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1331",
+    "bands": [
+      { "size": 20000 }, { "size": 10000 }, { "size": 7000 },
+      { "size": 5000, "reference": true }, { "size": 4000 }, { "size": 3000 },
+      { "size": 2000 }, { "size": 1500, "reference": true }, { "size": 1000 },
+      { "size": 700 }, { "size": 500, "reference": true }, { "size": 400 },
+      { "size": 300 }, { "size": 200 }, { "size": 75 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler 100 bp",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM0241",
+    "bands": [
+      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
+      { "size": 600 }, { "size": 500, "reference": true }, { "size": 400 },
+      { "size": 300 }, { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler 100 bp Plus",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM0321",
+    "bands": [
+      { "size": 3000 }, { "size": 2000 }, { "size": 1500 }, { "size": 1200 },
+      { "size": 1000, "reference": true }, { "size": 900 }, { "size": 800 },
+      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
+      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler Low Range",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1191",
+    "bands": [
+      { "size": 700 }, { "size": 500 }, { "size": 400 },
+      { "size": 300, "reference": true }, { "size": 200 }, { "size": 150 },
+      { "size": 100, "reference": true }, { "size": 75 }, { "size": 50 },
+      { "size": 25 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler High Range",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1351",
+    "bands": [
+      { "size": 48502 }, { "size": 24508 }, { "size": 20555 }, { "size": 17000 },
+      { "size": 15258 }, { "size": 13825 }, { "size": 12119 }, { "size": 10171 }
+    ]
+  },
+  {
+    "name": "Thermo GeneRuler Ultra Low Range",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1211",
+    "bands": [
+      { "size": 300 }, { "size": 200 }, { "size": 150 }, { "size": 100 },
+      { "size": 75 }, { "size": 50, "reference": true }, { "size": 35 },
+      { "size": 25 }, { "size": 20 }, { "size": 15 }, { "size": 10 }
+    ]
+  },
+  {
+    "name": "Invitrogen 1 Kb Plus DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Thermo Fisher",
+    "catalog": "10787018",
+    "bands": [
+      { "size": 15000 }, { "size": 10000 }, { "size": 8000 }, { "size": 7000 },
+      { "size": 6000 }, { "size": 5000 }, { "size": 4000 }, { "size": 3000 },
+      { "size": 2000 }, { "size": 1500, "reference": true }, { "size": 1000 },
+      { "size": 850 }, { "size": 650 }, { "size": 500 }, { "size": 400 },
+      { "size": 300 }, { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Bio-Rad EZ Load 100 bp Molecular Ruler",
+    "gel_type": "dna",
+    "vendor": "Bio-Rad",
+    "catalog": "1708352",
+    "bands": [
+      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
+      { "size": 600 }, { "size": 500 }, { "size": 400 }, { "size": 300 },
+      { "size": 200, "reference": true }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Bio-Rad EZ Load Precision Molecular Mass Ruler",
+    "gel_type": "dna",
+    "vendor": "Bio-Rad",
+    "catalog": "1708356",
+    "standard_load_ng": 250,
+    "bands": [
+      { "size": 1000, "mass_ng": 100 }, { "size": 700, "mass_ng": 70 },
+      { "size": 500, "mass_ng": 50 }, { "size": 200, "mass_ng": 20 },
+      { "size": 100, "mass_ng": 10 }
+    ]
+  },
+  {
+    "name": "Promega 1 kb DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Promega",
+    "catalog": "G5711",
+    "bands": [
+      { "size": 10000 }, { "size": 8000 }, { "size": 6000 }, { "size": 5000 },
+      { "size": 4000 }, { "size": 3000, "reference": true }, { "size": 2500 },
+      { "size": 2000 }, { "size": 1500 }, { "size": 1000, "reference": true },
+      { "size": 750 }, { "size": 500 }, { "size": 250 }
+    ]
+  },
+  {
+    "name": "Promega 100 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Promega",
+    "catalog": "G2101",
+    "bands": [
+      { "size": 1500 }, { "size": 1000 }, { "size": 900 }, { "size": 800 },
+      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
+      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Promega PCR Markers",
+    "gel_type": "dna",
+    "vendor": "Promega",
+    "catalog": "G3161",
+    "bands": [
+      { "size": 1000 }, { "size": 750 }, { "size": 500 }, { "size": 300 },
+      { "size": 150 }, { "size": 50 }
+    ]
+  },
+  {
+    "name": "Promega Lambda DNA/HindIII Markers",
+    "gel_type": "dna",
+    "vendor": "Promega",
+    "catalog": "G1711",
+    "bands": [
+      { "size": 23130 }, { "size": 9416 }, { "size": 6557 }, { "size": 4361 },
+      { "size": 2322 }, { "size": 2027 }, { "size": 564 }, { "size": 125 }
+    ]
+  },
+  {
+    "name": "NEB ssRNA Ladder",
+    "gel_type": "rna",
+    "vendor": "NEB",
+    "catalog": "N0362",
+    "bands": [
+      { "size": 9000 }, { "size": 7000 }, { "size": 5000 },
+      { "size": 3000, "reference": true }, { "size": 2000 }, { "size": 1000 },
+      { "size": 500 }
+    ]
+  },
+  {
+    "name": "Thermo RiboRuler High Range RNA",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1821",
+    "standard_load_ng": 960,
+    "bands": [
+      { "size": 6000, "mass_ng": 120 }, { "size": 4000, "mass_ng": 120 },
+      { "size": 3000, "mass_ng": 120 }, { "size": 2000, "mass_ng": 120 },
+      { "size": 1500, "mass_ng": 120 }, { "size": 1000, "mass_ng": 120 },
+      { "size": 500, "mass_ng": 120 }, { "size": 200, "mass_ng": 120 }
+    ]
+  },
+  {
+    "name": "Thermo RiboRuler Low Range RNA",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "SM1831",
+    "standard_load_ng": 980,
+    "bands": [
+      { "size": 1000, "mass_ng": 140 }, { "size": 800, "mass_ng": 140 },
+      { "size": 600, "mass_ng": 140 }, { "size": 400, "mass_ng": 140 },
+      { "size": 300, "mass_ng": 140 }, { "size": 200, "mass_ng": 140 },
+      { "size": 100, "mass_ng": 140 }
+    ]
+  },
+  {
+    "name": "Thermo Millennium RNA Markers",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "AM7150",
+    "bands": [
+      { "size": 9000 }, { "size": 6000 }, { "size": 5000 }, { "size": 4000 },
+      { "size": 3000 }, { "size": 2500 }, { "size": 2000 }, { "size": 1500 },
+      { "size": 1000 }, { "size": 500 }
+    ]
+  },
+  {
+    "name": "Promega RNA Markers",
+    "gel_type": "rna",
+    "vendor": "Promega",
+    "catalog": "G3191",
+    "bands": [
+      { "size": 6583 }, { "size": 4981 }, { "size": 3638 }, { "size": 2604 },
+      { "size": 1908 }, { "size": 1383 }, { "size": 955 }, { "size": 623 },
+      { "size": 281 }
+    ]
+  },
+  {
+    "name": "NEB Color Prestained Protein Standard, Broad Range",
+    "gel_type": "protein",
+    "vendor": "NEB",
+    "catalog": "P7719",
+    "bands": [
+      { "size": 250000 }, { "size": 180000 }, { "size": 130000 }, { "size": 95000 },
+      { "size": 72000, "reference": true }, { "size": 55000 }, { "size": 43000 },
+      { "size": 34000 }, { "size": 26000, "reference": true }, { "size": 17000 },
+      { "size": 11000 }
+    ]
+  },
+  {
+    "name": "NEB Blue Prestained Protein Standard, Broad Range",
+    "gel_type": "protein",
+    "vendor": "NEB",
+    "catalog": "P7718",
+    "bands": [
+      { "size": 250000 }, { "size": 180000 }, { "size": 130000 }, { "size": 95000 },
+      { "size": 72000 }, { "size": 55000 }, { "size": 43000 }, { "size": 34000 },
+      { "size": 26000 }, { "size": 17000 }, { "size": 11000 }
+    ]
+  },
+  {
+    "name": "NEB Unstained Protein Standard, Broad Range",
+    "gel_type": "protein",
+    "vendor": "NEB",
+    "catalog": "P7717",
+    "bands": [
+      { "size": 200000 }, { "size": 150000 }, { "size": 120000 }, { "size": 100000 },
+      { "size": 85000 }, { "size": 70000 }, { "size": 60000 }, { "size": 50000 },
+      { "size": 40000 }, { "size": 30000 }, { "size": 25000 }, { "size": 15000 },
+      { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Prestained (10-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26616",
+    "bands": [
+      { "size": 180000 }, { "size": 130000 }, { "size": 100000 },
+      { "size": 70000, "reference": true }, { "size": 55000 }, { "size": 40000 },
+      { "size": 35000 }, { "size": 25000 }, { "size": 15000 },
+      { "size": 10000, "reference": true }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Plus Prestained (10-250 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26619",
+    "bands": [
+      { "size": 250000 }, { "size": 130000 }, { "size": 100000 }, { "size": 70000 },
+      { "size": 55000 }, { "size": 35000 }, { "size": 25000 }, { "size": 15000 },
+      { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Unstained (10-200 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26614",
+    "bands": [
+      { "size": 200000 }, { "size": 150000 }, { "size": 120000 }, { "size": 100000 },
+      { "size": 85000 }, { "size": 70000 }, { "size": 60000 },
+      { "size": 50000, "reference": true }, { "size": 40000 }, { "size": 30000 },
+      { "size": 25000 }, { "size": 20000 }, { "size": 15000 }, { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Unstained Broad Range (5-250 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26630",
+    "bands": [
+      { "size": 250000 }, { "size": 150000 }, { "size": 100000, "reference": true },
+      { "size": 70000 }, { "size": 50000, "reference": true }, { "size": 40000 },
+      { "size": 30000 }, { "size": 20000, "reference": true }, { "size": 15000 },
+      { "size": 10000 }, { "size": 5000 }
+    ]
+  },
+  {
+    "name": "Thermo Spectra Multicolor Broad Range (10-260 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26623",
+    "bands": [
+      { "size": 260000 }, { "size": 140000 }, { "size": 100000 }, { "size": 70000 },
+      { "size": 50000 }, { "size": 40000 }, { "size": 35000 }, { "size": 25000 },
+      { "size": 15000 }, { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus All Blue",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610373",
+    "bands": [
+      { "size": 250000 }, { "size": 150000 }, { "size": 100000 },
+      { "size": 75000, "reference": true }, { "size": 50000, "reference": true },
+      { "size": 37000 }, { "size": 25000, "reference": true }, { "size": 20000 },
+      { "size": 15000 }, { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus Dual Xtra",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610377",
+    "bands": [
+      { "size": 250000 }, { "size": 150000 }, { "size": 100000 },
+      { "size": 75000, "reference": true }, { "size": 50000, "reference": true },
+      { "size": 37000 }, { "size": 25000, "reference": true }, { "size": 20000 },
+      { "size": 15000 }, { "size": 10000 }, { "size": 5000 },
+      { "size": 2000, "reference": true }
+    ]
+  },
+  {
+    "name": "Promega Broad Range Protein Markers",
+    "gel_type": "protein",
+    "vendor": "Promega",
+    "catalog": "V8491",
+    "bands": [
+      { "size": 225000 }, { "size": 150000 }, { "size": 100000 }, { "size": 75000 },
+      { "size": 50000, "reference": true }, { "size": 35000 }, { "size": 25000 },
+      { "size": 15000 }, { "size": 10000 }
+    ]
+  }
+]

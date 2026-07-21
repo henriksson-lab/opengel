@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Generated demo/eval/simulation artifacts
+*.gel.zip
+/datasets/demo/
+/datasets/sim/
+
+# Real-image dataset: ignore the (mixed-license) image blobs, but keep the
+# source/license sidecars (.txt), manifests, READMEs and derived .gt.json.
+/datasets/real_gels/**/*.jpg
+/datasets/real_gels/**/*.JPG
+/datasets/real_gels/**/*.jpeg
+/datasets/real_gels/**/*.png
+/datasets/real_gels/**/*.tif
+/datasets/real_gels/**/*.tiff
+/datasets/real_gels/**/*.gif
+/datasets/real_gels/**/*.html
+
+# OS cruft
+.DS_Store
