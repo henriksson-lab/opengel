@@ -9,6 +9,7 @@
 //! * [`ladders`] — the built-in commercial ladder database.
 //! * [`quant`] — sizing, calibration and molarity math.
 
+pub mod demo;
 pub mod format;
 pub mod hdr;
 pub mod imagef32;

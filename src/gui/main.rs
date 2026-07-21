@@ -22,10 +22,17 @@ fn main() -> anyhow::Result<()> {
     let ui = AppWindow::new()?;
     let state = Rc::new(RefCell::new(AppState::new()));
 
-    // If a path is passed on the command line, open it immediately.
-    if let Some(path) = std::env::args().nth(1) {
-        if let Err(e) = state.borrow_mut().open_path(std::path::Path::new(&path)) {
-            ui.set_status(format!("Open failed: {e}").into());
+    // CLI: `opengel [PATH] [--demo]`. `--demo` loads the synthetic demo gel;
+    // otherwise a positional path is opened immediately if given.
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.iter().any(|a| a == "--demo") {
+            let msg = state.borrow_mut().load_demo();
+            ui.set_status(msg.into());
+        } else if let Some(path) = args.iter().find(|a| !a.starts_with("--")) {
+            if let Err(e) = state.borrow_mut().open_path(std::path::Path::new(path)) {
+                ui.set_status(format!("Open failed: {e}").into());
+            }
         }
     }
     view::refresh(&ui, &state.borrow());
@@ -89,12 +96,86 @@ fn main() -> anyhow::Result<()> {
             view::refresh(&ui, &state.borrow());
         });
     }
+    // Per-lane ladder assignment and the "set all" convenience control.
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.on_ladder_changed(move |idx| {
+        ui.on_set_all_ladders(move |idx| {
             let ui = ui_weak.unwrap();
-            let msg = state.borrow_mut().force_ladder(idx as usize);
+            let msg = state.borrow_mut().set_all_ladders(idx as usize);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_lane_ladder_changed(move |lane_id, tidx| {
+            let ui = ui_weak.unwrap();
+            let msg = state
+                .borrow_mut()
+                .set_lane_ladder(lane_id as u32, tidx as usize);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_lane_load_changed(move |lane_id, text| {
+            if let Ok(ng) = text.parse::<f64>() {
+                state.borrow_mut().set_ladder_load(lane_id as u32, ng);
+            }
+        });
+    }
+
+    // Tree list: expand/collapse, ladder "Set", the "…" menu, and rename.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_lane_toggle(move |lane_id| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().toggle_expanded(lane_id as u32);
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_lane_set(move |lane_id| {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().reapply_lane_ladder(lane_id as u32);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_lane_menu(move |lane_id, action| {
+            let ui = ui_weak.unwrap();
+            let msg = match action.as_str() {
+                "delete" => state.borrow_mut().delete_lane(lane_id as u32),
+                "ladder" => {
+                    // Toggle: mark if not a ladder, unmark if it is.
+                    let is = state
+                        .borrow()
+                        .analysis()
+                        .map(|a| a.lanes.iter().any(|l| l.id == lane_id as u32 && l.is_ladder))
+                        .unwrap_or(false);
+                    state.borrow_mut().set_lane_is_ladder(lane_id as u32, !is)
+                }
+                _ => String::new(),
+            };
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_lane_renamed(move |lane_id, name| {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().set_lane_label(lane_id as u32, name.as_str());
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });
@@ -117,12 +198,27 @@ fn main() -> anyhow::Result<()> {
             );
         });
     }
-    // Re-render the image when the display level changes.
+    // Switch which captured frame is displayed (or the merged HDR image).
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.on_level_changed(move || {
+        ui.on_frame_changed(move |idx| {
             let ui = ui_weak.unwrap();
+            state.borrow_mut().set_view_frame(idx as usize);
+            view::refresh_image(&ui, &state.borrow());
+        });
+    }
+    // Re-render when the contrast window or invert toggle changes.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_display_changed(move || {
+            let ui = ui_weak.unwrap();
+            {
+                let mut s = state.borrow_mut();
+                s.set_display_window(ui.get_disp_lo(), ui.get_disp_hi());
+                s.set_invert(ui.get_invert());
+            }
             view::refresh_image(&ui, &state.borrow());
         });
     }
@@ -134,17 +230,7 @@ fn main() -> anyhow::Result<()> {
             state.borrow_mut().set_rotation(deg as f64);
         });
     }
-    // Demo annotation + region measurement.
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_demo_annotation(move || {
-            let ui = ui_weak.unwrap();
-            let msg = state.borrow_mut().demo_annotation();
-            ui.set_status(msg.into());
-            view::refresh(&ui, &state.borrow());
-        });
-    }
+    // Region measurement from the current annotation.
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
@@ -192,9 +278,8 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_calibrate(move || {
             let ui = ui_weak.unwrap();
-            let total_ng: f64 = ui.get_ladder_ng().parse().unwrap_or(0.0);
             let vol: f64 = ui.get_volume_ul().parse().unwrap_or(0.0);
-            let msg = state.borrow_mut().calibrate(total_ng, vol);
+            let msg = state.borrow_mut().calibrate(vol);
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });

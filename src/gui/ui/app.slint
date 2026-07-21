@@ -8,19 +8,56 @@ export struct LaneItem {
     selected: bool,
 }
 
+// One ladder lane's per-lane template + load control.
+export struct LadderLaneItem {
+    id: int,
+    label: string,
+    template-index: int,
+    load-ng: string,
+}
+
+// One polyline in the Trace plot (SVG path in a 0..1000 viewbox).
+export struct TracePath {
+    commands: string,
+    color: color,
+    label: string,
+    ladder: bool,
+}
+
+// One row in the combined lane/band tree. `kind`: 0 = lane, 1 = band.
+export struct TreeRow {
+    kind: int,
+    lane-id: int,
+    band-id: int,
+    expanded: bool,
+    is-ladder: bool,
+    name: string,
+    rf: string,
+    size: string,
+    density: string,
+    ng: string,
+    nmol: string,
+}
+
 export component AppWindow inherits Window {
     title: "OpenGel";
-    preferred-width: 1120px;
-    preferred-height: 780px;
+    preferred-width: 1180px;
+    preferred-height: 820px;
 
     // --- state in ---
     in property <image> gel-image;
+    in property <image> histogram-image;
     in property <[string]> ladder-names;
-    in property <[[StandardListViewItem]]> band-rows;
-    in property <string> status: "Open a .gel.zip, capture, or click 'Demo annotation'.";
+    in property <[LadderLaneItem]> ladder-lanes;
+    in property <[string]> frame-names;
+    in property <[TreeRow]> tree-rows;
+    in-out property <int> renaming-lane: -1;
+    in property <string> status: "Open a .gel.zip, or run `opengel --demo` to load a demo gel.";
     in property <string> gel-type-label: "-";
-    in-out property <int> selected-ladder: -1;
-    in-out property <float> level: 1.0;      // display window/level (0..1)
+    in-out property <int> frame-index: 0;
+    in-out property <float> disp-lo: 0.0;     // contrast window, fractions of [min,max]
+    in-out property <float> disp-hi: 1.0;
+    in-out property <bool> invert: false;
     in-out property <string> volume-ul: "10";
     in-out property <float> rotation: 0;      // degrees, live display rotation
     in-out property <float> zoom: 1.0;
@@ -28,9 +65,12 @@ export component AppWindow inherits Window {
     in-out property <length> pan-y: 0px;
     in-out property <float> click-x: -1;      // last click, normalized (viewport)
     in-out property <float> click-y: -1;
-    in-out property <string> ladder-ng: "500";
     // Trace tab.
-    in property <image> trace-image;
+    in property <[TracePath]> trace-plots;
+    in property <[string]> trace-yticks;
+    in property <[string]> trace-xticks;
+    in property <string> trace-xlabel: "Migration (px)";
+    in property <string> trace-ylabel: "Intensity (a.u.)";
     in property <[LaneItem]> lane-items;
     in-out property <int> trace-mode-idx: 0;
 
@@ -39,12 +79,14 @@ export component AppWindow inherits Window {
     callback save();
     callback capture();
     callback analyze();
-    callback demo-annotation();
     callback measure();
-    callback ladder-changed(int);
+    callback frame-changed(int);
+    callback display-changed();
+    callback set-all-ladders(int);
+    callback lane-ladder-changed(int, int);
+    callback lane-load-changed(int, string);
     callback compare();
     callback about();
-    callback level-changed();
     callback rotate(float);
     callback auto-straighten();
     callback add-lane();
@@ -53,6 +95,11 @@ export component AppWindow inherits Window {
     callback add-band();
     callback del-band();
     callback calibrate();
+    // Tree list actions.
+    callback lane-toggle(int);          // expand / collapse
+    callback lane-set(int);             // (ladder lane) re-apply ladder sizing
+    callback lane-menu(int, string);    // "delete" | "ladder" for a lane
+    callback lane-renamed(int, string); // commit an inline rename
     callback toggle-lane(int);
     callback trace-mode-changed(int);
 
@@ -61,6 +108,17 @@ export component AppWindow inherits Window {
         root.zoom = 1.0;
         root.pan-x = 0px;
         root.pan-y = 0px;
+    }
+
+    // Move one edge of the contrast window (which: 1 = black/low, 2 = white/high)
+    // to fraction `f`, keeping a minimum gap so the image never collapses.
+    function apply-window(which: int, f: float) {
+        if (which == 1) {
+            root.disp-lo = Math.max(0, Math.min(f, root.disp-hi - 0.02));
+        } else {
+            root.disp-hi = Math.min(1, Math.max(f, root.disp-lo + 0.02));
+        }
+        root.display-changed();
     }
 
     MenuBar {
@@ -75,14 +133,11 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "View";
-            MenuItem { title: "Zoom in"; activated => { root.zoom = min(8.0, root.zoom * 1.25); } }
-            MenuItem { title: "Zoom out"; activated => { root.zoom = max(0.2, root.zoom / 1.25); } }
             MenuItem { title: "Fit"; activated => { root.fit-view(); } }
             MenuItem { title: "Auto-straighten"; activated => { root.auto-straighten(); } }
         }
         Menu {
             title: "Analyze";
-            MenuItem { title: "Demo annotation"; activated => { root.demo-annotation(); } }
             MenuItem { title: "Measure regions"; activated => { root.measure(); } }
             MenuItem { title: "Detect lanes & bands"; activated => { root.analyze(); } }
             MenuItem { title: "Compare two bands"; activated => { root.compare(); } }
@@ -100,18 +155,33 @@ export component AppWindow inherits Window {
         // ---- left: toolbar + image ----
         VerticalBox {
             HorizontalBox {
-                Button { text: "Open…"; clicked => { root.open(); } }
+                alignment: start;
                 Button { text: "Capture"; clicked => { root.capture(); } }
-                Button { text: "Demo annotation"; clicked => { root.demo-annotation(); } }
                 Button { text: "Measure"; clicked => { root.measure(); } }
-                Button { text: "Save"; clicked => { root.save(); } }
             }
+
+            // View controls: frame, zoom, rotate.
             HorizontalBox {
+                Text { text: "Image:"; vertical-alignment: center; }
+                ComboBox {
+                    model: root.frame-names;
+                    current-index <=> root.frame-index;
+                    min-width: 150px;
+                    selected(v) => { root.frame-changed(self.current-index); }
+                }
                 Text { text: "Zoom"; vertical-alignment: center; }
-                Button { text: "−"; clicked => { root.zoom = max(0.2, root.zoom / 1.25); } }
-                Button { text: "+"; clicked => { root.zoom = min(8.0, root.zoom * 1.25); } }
+                Slider {
+                    minimum: 0.2; maximum: 8.0; value <=> root.zoom;
+                    horizontal-stretch: 1;
+                }
+                Text { text: "Rotate"; vertical-alignment: center; }
+                Slider {
+                    minimum: -50; maximum: 50; value <=> root.rotation;
+                    horizontal-stretch: 1;
+                    changed(v) => { root.rotate(v); }
+                }
                 Button { text: "Fit"; clicked => { root.fit-view(); } }
-                Text { text: Math.round(root.zoom * 100) + "%"; vertical-alignment: center; }
+                Button { text: "Auto"; clicked => { root.auto-straighten(); } }
             }
 
             // Zoom / pan / rotate viewport.
@@ -166,34 +236,107 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // Contrast / brightness: drag the black & white edges directly on
+            // the histogram.
             HorizontalBox {
-                Text { text: "Level"; vertical-alignment: center; }
-                Slider {
-                    minimum: 0.05; maximum: 1.0; value <=> root.level;
-                    changed(v) => { root.level-changed(); }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 3px;
+                    Text {
+                        text: "Contrast — drag the black / white edges on the histogram";
+                        color: #999;
+                        font-size: 11px;
+                    }
+                    hist := Rectangle {
+                        height: 66px;
+                        border-width: 1px;
+                        border-color: #cccccc;
+                        Image {
+                            source: root.histogram-image;
+                            width: 100%;
+                            height: 100%;
+                            image-fit: fill;
+                        }
+                        // Black (low) edge + knob.
+                        Rectangle { x: root.disp-lo * parent.width - 1px; width: 2px; height: 100%; background: #2277ff; }
+                        Rectangle {
+                            x: root.disp-lo * parent.width - 5px;
+                            y: parent.height - 9px;
+                            width: 10px; height: 9px; background: #2277ff; border-radius: 2px;
+                        }
+                        // White (high) edge + knob.
+                        Rectangle { x: root.disp-hi * parent.width - 1px; width: 2px; height: 100%; background: #114499; }
+                        Rectangle {
+                            x: root.disp-hi * parent.width - 5px;
+                            y: 0px;
+                            width: 10px; height: 9px; background: #114499; border-radius: 2px;
+                        }
+                        hist-ta := TouchArea {
+                            property <int> active: 1;
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down) {
+                                    self.active = (Math.abs(self.mouse-x / self.width - root.disp-lo)
+                                                   <= Math.abs(self.mouse-x / self.width - root.disp-hi)) ? 1 : 2;
+                                    root.apply-window(self.active, self.mouse-x / self.width);
+                                }
+                            }
+                            moved => { root.apply-window(self.active, self.mouse-x / self.width); }
+                        }
+                    }
                 }
-                Text { text: "Rotate"; vertical-alignment: center; }
-                Slider {
-                    minimum: -50; maximum: 50; value <=> root.rotation;
-                    changed(v) => { root.rotate(v); }
+                CheckBox {
+                    text: "Invert colors";
+                    checked <=> root.invert;
+                    toggled => { root.display-changed(); }
                 }
-                Button { text: "Auto"; clicked => { root.auto-straighten(); } }
             }
         }
 
         // ---- right: controls + table ----
         ScrollView {
-            width: 400px;
+            width: 480px;
             VerticalBox {
                 GroupBox {
                     title: "Gel";
                     VerticalBox {
                         Text { text: "Type: " + root.gel-type-label; }
-                        Text { text: "Ladder:"; }
-                        ComboBox {
-                            model: root.ladder-names;
-                            current-index <=> root.selected-ladder;
-                            selected(name) => { root.ladder-changed(self.current-index); }
+                    }
+                }
+                GroupBox {
+                    title: "Ladders";
+                    VerticalBox {
+                        HorizontalBox {
+                            Text { text: "Set all lanes:"; vertical-alignment: center; }
+                            ComboBox {
+                                model: root.ladder-names;
+                                horizontal-stretch: 1;
+                                selected(v) => { root.set-all-ladders(self.current-index); }
+                            }
+                        }
+                        if root.ladder-lanes.length > 0: HorizontalBox {
+                            Text { text: "Lane"; width: 56px; color: #888; font-size: 11px; }
+                            Text { text: "Ladder"; horizontal-stretch: 1; color: #888; font-size: 11px; }
+                            Text { text: "Load (ng)"; width: 76px; color: #888; font-size: 11px; }
+                        }
+                        for ll in root.ladder-lanes: HorizontalBox {
+                            Text { text: ll.label; vertical-alignment: center; width: 56px; overflow: elide; }
+                            ComboBox {
+                                model: root.ladder-names;
+                                current-index: ll.template-index;
+                                horizontal-stretch: 1;
+                                selected(v) => { root.lane-ladder-changed(ll.id, self.current-index); }
+                            }
+                            LineEdit {
+                                text: ll.load-ng;
+                                width: 76px;
+                                horizontal-alignment: right;
+                                edited(t) => { root.lane-load-changed(ll.id, t); }
+                            }
+                        }
+                        if root.ladder-lanes.length == 0: Text {
+                            text: "No ladder lanes yet. Click a lane, then 'Ladder?' to mark it.";
+                            color: #999;
+                            wrap: word-wrap;
                         }
                     }
                 }
@@ -215,30 +358,113 @@ export component AppWindow inherits Window {
                     title: "Quantify";
                     VerticalBox {
                         HorizontalBox {
-                            Text { text: "Ladder load (ng):"; vertical-alignment: center; }
-                            LineEdit { text <=> root.ladder-ng; }
-                        }
-                        HorizontalBox {
                             Text { text: "Volume (µL):"; vertical-alignment: center; }
                             LineEdit { text <=> root.volume-ul; }
                         }
-                        Button { text: "Calibrate (absolute ng / nmol)"; clicked => { root.calibrate(); } }
+                        Button { text: "Calibrate (uses per-ladder loads above)"; clicked => { root.calibrate(); } }
                         Button { text: "Compare first two bands"; clicked => { root.compare(); } }
                     }
                 }
                 GroupBox {
-                    title: "Bands";
-                    StandardTableView {
-                        min-height: 240px;
-                        columns: [
-                            { title: "Lane" },
-                            { title: "Rf" },
-                            { title: "Size" },
-                            { title: "Density" },
-                            { title: "ng" },
-                            { title: "nmol" },
-                        ];
-                        rows: root.band-rows;
+                    title: "Lanes & bands";
+                    VerticalBox {
+                        // Column header.
+                        Rectangle {
+                            height: 20px;
+                            HorizontalLayout {
+                                padding-left: 4px;
+                                spacing: 4px;
+                                Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
+                                Text { text: "Rf"; width: 34px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "Size"; width: 52px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "Dens"; width: 46px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "ng"; width: 38px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "nmol"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: ""; width: 92px; }
+                            }
+                        }
+                        ScrollView {
+                            min-height: 260px;
+                            VerticalLayout {
+                                alignment: start;
+                                for row in root.tree-rows: Rectangle {
+                                    height: 28px;
+                                    background: row.kind == 0 ? #f4f4f6 : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 4px;
+                                        padding-right: 4px;
+                                        spacing: 4px;
+
+                                        // Name column: expander (lanes) / indent (bands) + label.
+                                        HorizontalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            if row.kind == 0: Rectangle {
+                                                width: 18px;
+                                                TouchArea {
+                                                    clicked => { root.lane-toggle(row.lane-id); }
+                                                    Text {
+                                                        text: row.expanded ? "▾" : "▸";
+                                                        color: #666;
+                                                        vertical-alignment: center;
+                                                        horizontal-alignment: center;
+                                                    }
+                                                }
+                                            }
+                                            if row.kind == 1: Rectangle { width: 26px; }
+
+                                            // Inline rename for the lane being edited, else a label.
+                                            if row.kind == 0 && row.lane-id == root.renaming-lane: LineEdit {
+                                                text: row.name;
+                                                horizontal-stretch: 1;
+                                                accepted(t) => { root.lane-renamed(row.lane-id, t); root.renaming-lane = -1; }
+                                            }
+                                            if !(row.kind == 0 && row.lane-id == root.renaming-lane): Text {
+                                                text: row.name;
+                                                color: row.kind == 0 ? (row.is-ladder ? #9a6b00 : #222) : #444;
+                                                font-size: row.kind == 0 ? 13px : 12px;
+                                                font-weight: row.kind == 0 ? 600 : 400;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                                horizontal-stretch: 1;
+                                            }
+                                        }
+
+                                        Text { text: row.rf; width: 34px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.size; width: 52px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.density; width: 46px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.ng; width: 38px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.nmol; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+
+                                        // Action column.
+                                        Rectangle {
+                                            width: 92px;
+                                            if row.kind == 0: HorizontalLayout {
+                                                alignment: end;
+                                                spacing: 4px;
+                                                if row.is-ladder: Button {
+                                                    text: "Set";
+                                                    clicked => { root.lane-set(row.lane-id); }
+                                                }
+                                                ComboBox {
+                                                    width: 52px;
+                                                    model: row.is-ladder
+                                                        ? ["…", "Rename", "Unmark ladder", "Delete"]
+                                                        : ["…", "Rename", "Mark ladder", "Delete"];
+                                                    current-index: 0;
+                                                    selected(v) => {
+                                                        if (self.current-index == 1) { root.renaming-lane = row.lane-id; }
+                                                        if (self.current-index == 2) { root.lane-menu(row.lane-id, "ladder"); }
+                                                        if (self.current-index == 3) { root.lane-menu(row.lane-id, "delete"); }
+                                                        self.current-index = 0;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -261,18 +487,111 @@ export component AppWindow inherits Window {
               vertical-alignment: center;
             }
           }
-          Rectangle {
-            background: #1c1c1c;
+
+          plot := Rectangle {
+            background: white;
             border-width: 1px;
-            border-color: #444;
-            height: 360px;
-            Image {
-              source: root.trace-image;
-              image-fit: contain;
-              width: 100%;
-              height: 100%;
+            border-color: #cccccc;
+            height: 380px;
+            property <length> ml: 62px;
+            property <length> mr: 140px;
+            property <length> mt: 16px;
+            property <length> mb: 42px;
+            property <length> pw: max(1px, self.width - self.ml - self.mr);
+            property <length> ph: max(1px, self.height - self.mt - self.mb);
+
+            // Horizontal gridlines.
+            for i in [0, 1, 2, 3, 4]: Rectangle {
+              x: plot.ml;
+              y: plot.mt + plot.ph * (i / 4.0);
+              width: plot.pw;
+              height: 1px;
+              background: #eeeeee;
+            }
+            // Y-axis tick labels (index 0 = top = max).
+            for lbl[i] in root.trace-yticks: Text {
+              x: 4px;
+              y: plot.mt + plot.ph * (i / 4.0) - 7px;
+              width: plot.ml - 10px;
+              horizontal-alignment: right;
+              color: #444444;
+              font-size: 11px;
+              text: lbl;
+            }
+            // X-axis tick labels (index 0 = left = 0).
+            for lbl[i] in root.trace-xticks: Text {
+              x: plot.ml + plot.pw * (i / 4.0) - 22px;
+              y: plot.mt + plot.ph + 6px;
+              width: 44px;
+              horizontal-alignment: center;
+              color: #444444;
+              font-size: 11px;
+              text: lbl;
+            }
+            // Axes.
+            Rectangle { x: plot.ml; y: plot.mt; width: 1.5px; height: plot.ph; background: #333333; }
+            Rectangle { x: plot.ml; y: plot.mt + plot.ph; width: plot.pw; height: 1.5px; background: #333333; }
+
+            // Trace polylines, clipped to the plot area.
+            Rectangle {
+              x: plot.ml;
+              y: plot.mt;
+              width: plot.pw;
+              height: plot.ph;
+              clip: true;
+              for t in root.trace-plots: Path {
+                width: 100%;
+                height: 100%;
+                viewbox-x: 0;
+                viewbox-y: 0;
+                viewbox-width: 1000;
+                viewbox-height: 1000;
+                commands: t.commands;
+                stroke: t.color;
+                stroke-width: 1.5px;
+              }
+            }
+
+            // Axis titles.
+            Text {
+              text: root.trace-xlabel;
+              x: plot.ml + plot.pw / 2 - 60px;
+              y: plot.height - 18px;
+              width: 120px;
+              horizontal-alignment: center;
+              color: #222222;
+              font-size: 12px;
+            }
+            Text {
+              text: root.trace-ylabel;
+              transform-rotation: -90deg;
+              x: 16px - plot.ph / 2;
+              y: plot.mt + plot.ph / 2 - 8px;
+              width: plot.ph;
+              height: 16px;
+              horizontal-alignment: center;
+              color: #222222;
+              font-size: 12px;
+            }
+
+            // Legend.
+            VerticalLayout {
+              x: plot.width - plot.mr + 12px;
+              y: plot.mt;
+              width: plot.mr - 20px;
+              spacing: 5px;
+              for t in root.trace-plots: HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                  width: 18px;
+                  height: 16px;
+                  Rectangle { width: 18px; height: 3px; background: t.color; y: 7px; }
+                }
+                Text { text: t.label; color: #222222; font-size: 11px; overflow: elide; }
+              }
             }
           }
+
           Text { text: "Lanes:"; }
           ScrollView {
             vertical-stretch: 1;

@@ -1,22 +1,25 @@
 //! Rendering application state into the Slint UI. Overlays (lane columns and
 //! band bars) are composited directly into the displayed image so they rotate
-//! and zoom together with it.
+//! and zoom together with it. The Trace tab's plot is built from Slint `Path`
+//! elements (see `app.slint`) so it can carry real axes and labels; this module
+//! only produces the path geometry and colors.
 
 use opengel::core::GrayF32;
-use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, StandardListViewItem, VecModel};
+use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 
 use crate::state::{AppState, LaneTrace, TraceMode};
-use crate::{AppWindow, LaneItem};
+use crate::{AppWindow, LadderLaneItem, LaneItem, TracePath, TreeRow};
 
 /// Distinct colors for sample-lane traces (ladders use a fixed gold).
 const PALETTE: [(u8, u8, u8); 6] = [
-    (51, 187, 255),
-    (255, 110, 110),
-    (120, 220, 120),
-    (200, 130, 255),
-    (120, 220, 220),
-    (240, 160, 70),
+    (33, 118, 214),
+    (214, 45, 45),
+    (34, 160, 68),
+    (150, 60, 200),
+    (0, 150, 150),
+    (214, 120, 20),
 ];
+const LADDER_RGB: (u8, u8, u8) = (196, 140, 0);
 
 /// A normalized-coordinate overlay rectangle to draw onto the image.
 struct OverlayBox {
@@ -32,6 +35,7 @@ struct OverlayBox {
 pub fn refresh(ui: &AppWindow, state: &AppState) {
     ui.set_gel_type_label(format!("{:?}", state.gel_type).into());
 
+    // Ladder template names (for the per-lane and "set all" dropdowns).
     let names: Vec<SharedString> = state
         .ladder_names()
         .into_iter()
@@ -39,44 +43,51 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
         .collect();
     ui.set_ladder_names(ModelRc::new(VecModel::from(names.clone())));
 
-    let mut rows: Vec<ModelRc<StandardListViewItem>> = Vec::new();
-    if let Some(a) = state.analysis() {
-        let unit = state.gel_type.size_unit();
-        for b in &a.bands {
-            let quant = a.quantifications.iter().find(|q| q.target_id == b.id);
-            let ng = quant
-                .and_then(|q| q.mass_ng)
-                .map(|m| format!("{m:.1}"))
-                .unwrap_or_else(|| "-".into());
-            let nmol = quant
-                .and_then(|q| q.molarity_nmol)
-                .map(|m| format!("{m:.3}"))
-                .unwrap_or_else(|| "-".into());
-            rows.push(ModelRc::new(VecModel::from(vec![
-                cell(&format!("{}", b.lane_id)),
-                cell(&b.rf.map(|r| format!("{r:.2}")).unwrap_or_else(|| "-".into())),
-                cell(&b
-                    .size
-                    .map(|s| format!("{s:.0} {unit}"))
-                    .unwrap_or_else(|| "-".into())),
-                cell(&format!("{:.1}", b.integrated_density)),
-                cell(&ng),
-                cell(&nmol),
-            ])));
-        }
-        if let Some(assign) = a.ladder_assignments.first() {
-            if let Some(idx) = names.iter().position(|n| *n == assign.template_name) {
-                ui.set_selected_ladder(idx as i32);
-            }
-        }
-    }
+    // Per-ladder-lane controls: any number of ladder lanes, each tunable.
+    let ladder_lanes: Vec<LadderLaneItem> = state
+        .ladder_lanes()
+        .into_iter()
+        .map(|(id, label, tidx, load)| LadderLaneItem {
+            id: id as i32,
+            label: label.into(),
+            template_index: tidx,
+            load_ng: format!("{load:.0}").into(),
+        })
+        .collect();
+    ui.set_ladder_lanes(ModelRc::new(VecModel::from(ladder_lanes)));
 
-    ui.set_band_rows(ModelRc::new(VecModel::from(rows)));
+    // Frame selector (HDR merged + each captured exposure).
+    let frames: Vec<SharedString> = state
+        .frame_labels()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    ui.set_frame_names(ModelRc::new(VecModel::from(frames)));
+    ui.set_frame_index(state.view_frame_index() as i32);
+
+    let tree: Vec<TreeRow> = state
+        .tree_rows()
+        .into_iter()
+        .map(|r| TreeRow {
+            kind: r.kind,
+            lane_id: r.lane_id as i32,
+            band_id: r.band_id,
+            expanded: r.expanded,
+            is_ladder: r.is_ladder,
+            name: r.name.into(),
+            rf: r.rf.into(),
+            size: r.size.into(),
+            density: r.density.into(),
+            ng: r.ng.into(),
+            nmol: r.nmol.into(),
+        })
+        .collect();
+    ui.set_tree_rows(ModelRc::new(VecModel::from(tree)));
     refresh_image(ui, state);
     refresh_trace(ui, state);
 }
 
-/// Rebuild the Trace tab: lane checklist, mode index, and the plotted image.
+/// Rebuild the Trace tab: lane checklist, mode index, and the plotted paths.
 pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
     let items: Vec<LaneItem> = state
         .lane_items()
@@ -94,34 +105,52 @@ pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
         TraceMode::Ng => 1,
         TraceMode::Molarity => 2,
     });
+
     let traces = state.compute_traces();
-    ui.set_trace_image(render_trace_plot(&traces, 760, 360));
+    let (paths, xmax, ymax) = build_trace_paths(&traces);
+    ui.set_trace_plots(ModelRc::new(VecModel::from(paths)));
+
+    // Five axis ticks each. Y runs top→bottom (index 0 = ymax), X left→right.
+    let yticks: Vec<SharedString> = (0..5)
+        .map(|i| fmt_tick(ymax as f64 * (4 - i) as f64 / 4.0).into())
+        .collect();
+    let xticks: Vec<SharedString> = (0..5)
+        .map(|i| fmt_tick(xmax as f64 * i as f64 / 4.0).into())
+        .collect();
+    ui.set_trace_yticks(ModelRc::new(VecModel::from(yticks)));
+    ui.set_trace_xticks(ModelRc::new(VecModel::from(xticks)));
+    ui.set_trace_xlabel("Migration (px)".into());
+    ui.set_trace_ylabel(
+        match state.trace_mode {
+            TraceMode::Intensity => "Intensity (a.u.)",
+            TraceMode::Ng => "Mass (ng)",
+            TraceMode::Molarity => "Molarity (nmol)",
+        }
+        .into(),
+    );
 }
 
-/// Render selected lanes' densitometry traces as a line plot (electropherogram).
-fn render_trace_plot(traces: &[LaneTrace], w: u32, h: u32) -> Image {
-    let mut buf = SharedPixelBuffer::<slint::Rgb8Pixel>::new(w, h);
-    let px = buf.make_mut_slice();
-    for p in px.iter_mut() {
-        *p = slint::Rgb8Pixel { r: 24, g: 24, b: 28 };
+/// Short, human-friendly axis-tick label.
+fn fmt_tick(v: f64) -> String {
+    if v == 0.0 {
+        "0".into()
+    } else if v.abs() >= 100.0 {
+        format!("{v:.0}")
+    } else if v.abs() >= 1.0 {
+        format!("{v:.1}")
+    } else {
+        format!("{v:.3}")
     }
-    let (ml, mr, mt, mb) = (46i32, 12i32, 12i32, 26i32);
-    let (wi, hi) = (w as i32, h as i32);
-    let (px0, py0, px1, py1) = (ml, mt, wi - mr, hi - mb);
-    let axis = (90u8, 90u8, 96u8);
-    // Axes.
-    for y in py0..=py1 {
-        put(px, w, h, px0, y, axis);
-    }
-    for x in px0..=px1 {
-        put(px, w, h, x, py1, axis);
-    }
-    if traces.is_empty() {
-        return Image::from_rgb8(buf);
-    }
-    // Shared y-scale across selected traces.
+}
+
+/// Build one SVG-path polyline per selected lane in a fixed `0..1000` viewbox
+/// (x = migration left→right, y = value bottom→top). Returns the paths plus the
+/// data extents used to label the axes.
+fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
+    let mut xmax = 0usize;
     let mut vmax = 0.0f64;
     for t in traces {
+        xmax = xmax.max(t.values.len());
         for &v in &t.values {
             if v > vmax {
                 vmax = v;
@@ -129,74 +158,49 @@ fn render_trace_plot(traces: &[LaneTrace], w: u32, h: u32) -> Image {
         }
     }
     let vmax = vmax.max(1e-9);
-    let (pw, ph) = ((px1 - px0).max(1) as f64, (py1 - py0).max(1) as f64);
-
-    for (i, t) in traces.iter().enumerate() {
-        let color = if t.ladder {
-            (255u8, 204u8, 0u8)
-        } else {
-            PALETTE[i % PALETTE.len()]
-        };
+    let mut out = Vec::new();
+    let mut sample_i = 0usize;
+    for t in traces {
         let n = t.values.len();
         if n < 2 {
             continue;
         }
-        let mut prev: Option<(i32, i32)> = None;
+        let (r, g, b) = if t.ladder {
+            LADDER_RGB
+        } else {
+            let c = PALETTE[sample_i % PALETTE.len()];
+            sample_i += 1;
+            c
+        };
+        let mut cmds = String::with_capacity(n * 12);
         for (k, &v) in t.values.iter().enumerate() {
-            let x = px0 + (k as f64 / (n - 1) as f64 * pw).round() as i32;
-            let y = py1 - ((v / vmax) * ph).round() as i32;
-            if let Some(p) = prev {
-                draw_line(px, w, h, p.0, p.1, x, y, color);
-            }
-            prev = Some((x, y));
+            let x = 1000.0 * k as f64 / (n - 1) as f64;
+            let y = 1000.0 * (1.0 - v / vmax);
+            cmds.push_str(if k == 0 { "M " } else { "L " });
+            cmds.push_str(&format!("{x:.1} {y:.1} "));
         }
+        out.push(TracePath {
+            commands: cmds.into(),
+            color: Color::from_rgb_u8(r, g, b),
+            label: t.label.clone().into(),
+            ladder: t.ladder,
+        });
     }
-    Image::from_rgb8(buf)
+    (out, xmax as f32, vmax as f32)
 }
 
-#[inline]
-fn put(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, x: i32, y: i32, c: (u8, u8, u8)) {
-    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
-        return;
-    }
-    px[(y as u32 * w + x as u32) as usize] = slint::Rgb8Pixel {
-        r: c.0,
-        g: c.1,
-        b: c.2,
-    };
-}
-
-/// Bresenham line.
-fn draw_line(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32, c: (u8, u8, u8)) {
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-    let (mut x, mut y) = (x0, y0);
-    let mut err = dx + dy;
-    loop {
-        put(px, w, h, x, y, c);
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-/// Re-render the gel image with overlays composited in (after a level/annotation
-/// change). Rotation and zoom are applied live by the UI.
+/// Re-render the gel image (selected frame or merged HDR) with the current
+/// contrast window, inversion and overlays. Zoom/rotation are applied live by
+/// the UI. Also refreshes the histogram thumbnail for the contrast control.
 pub fn refresh_image(ui: &AppWindow, state: &AppState) {
-    if let Some(work) = state.view_image() {
+    if let Some(work) = state.display_gray() {
         let overlays = compute_overlays(state);
-        let img = to_slint_image(&work, ui.get_level().max(0.01), &overlays);
+        let img = to_slint_image(&work, state.disp_lo, state.disp_hi, state.invert, &overlays);
         ui.set_gel_image(img);
     }
+    ui.set_frame_index(state.view_frame_index() as i32);
+    let hist = state.histogram(160);
+    ui.set_histogram_image(render_histogram(&hist, state.disp_lo, state.disp_hi, 240, 60));
 }
 
 fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
@@ -230,27 +234,68 @@ fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
     out
 }
 
-fn cell(text: &str) -> StandardListViewItem {
-    StandardListViewItem::from(SharedString::from(text))
-}
-
 /// Convert a working image to a displayable RGB [`Image`] with overlays drawn
-/// on top. Grayscale maps `[0, max*level]` → `[0, 255]`.
-fn to_slint_image(work: &GrayF32, level: f32, overlays: &[OverlayBox]) -> Image {
+/// on top. The contrast window maps `[min + lo·span, min + hi·span]` → `[0,255]`
+/// (span = max − min); `invert` flips the result.
+fn to_slint_image(
+    work: &GrayF32,
+    lo_frac: f32,
+    hi_frac: f32,
+    invert: bool,
+    overlays: &[OverlayBox],
+) -> Image {
     let (w, h) = (work.width() as u32, work.height() as u32);
-    let (_lo, hi) = work.min_max();
-    let scale = (hi * level).max(1e-6);
+    let (mn, mx) = work.min_max();
+    let span = (mx - mn).max(1e-6);
+    let black = mn + lo_frac * span;
+    let white = mn + hi_frac * span;
+    let denom = (white - black).max(1e-6);
     let mut buf = SharedPixelBuffer::<slint::Rgb8Pixel>::new(w, h);
     let px = buf.make_mut_slice();
     for y in 0..h as usize {
         for x in 0..w as usize {
-            let v = (work.get(x, y) / scale).clamp(0.0, 1.0);
+            let mut v = ((work.get(x, y) - black) / denom).clamp(0.0, 1.0);
+            if invert {
+                v = 1.0 - v;
+            }
             let g = (v * 255.0) as u8;
             px[y * w as usize + x] = slint::Rgb8Pixel { r: g, g, b: g };
         }
     }
     for ov in overlays {
         draw_overlay(px, w, h, ov);
+    }
+    Image::from_rgb8(buf)
+}
+
+/// Render the intensity histogram of the displayed image as a small thumbnail,
+/// with the selected contrast window `[lo, hi]` highlighted.
+fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
+    let mut buf = SharedPixelBuffer::<slint::Rgb8Pixel>::new(w, h);
+    let px = buf.make_mut_slice();
+    let bg = slint::Rgb8Pixel { r: 250, g: 250, b: 250 };
+    let win = slint::Rgb8Pixel { r: 222, g: 236, b: 252 };
+    for p in px.iter_mut() {
+        *p = bg;
+    }
+    let n = hist.len().max(1);
+    // Log-scaled peak so faint bins stay visible next to a dominant background.
+    let peak = hist.iter().copied().max().unwrap_or(1).max(1) as f64;
+    let lpeak = (1.0 + peak).ln();
+    let (lo_x, hi_x) = ((lo * w as f32) as u32, (hi * w as f32) as u32);
+    for x in 0..w {
+        // Window highlight band behind the bars.
+        if x >= lo_x && x <= hi_x {
+            for y in 0..h {
+                px[(y * w + x) as usize] = win;
+            }
+        }
+        let bin = (x as usize * n / w as usize).min(n - 1);
+        let frac = (1.0 + hist[bin] as f64).ln() / lpeak;
+        let bar = ((frac * (h as f64 - 2.0)).round() as u32).min(h - 1);
+        for y in (h - bar)..h {
+            px[(y * w + x) as usize] = slint::Rgb8Pixel { r: 90, g: 90, b: 96 };
+        }
     }
     Image::from_rgb8(buf)
 }
