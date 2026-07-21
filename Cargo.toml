@@ -1,22 +1,26 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/gel-core",
-    "crates/gel-detect",
-    "crates/gel-sim",
-    "crates/gel-camera",
-    "crates/gel-cli",
-    "crates/gel-app",
-]
-
-[workspace.package]
+[package]
+name = "opengel"
+description = "Capture, simulate, detect and quantify gel electrophoresis images"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["OpenGel contributors"]
 repository = "https://github.com/opengel/opengel"
+build = "build.rs"
 
-[workspace.dependencies]
+[lib]
+name = "opengel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gel"
+path = "src/cli/main.rs"
+
+[[bin]]
+name = "opengel"
+path = "src/gui/main.rs"
+
+[dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -26,3 +30,15 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rayon = "1"
+imageproc = "0.25"
+slint = "1.17"
+rfd = "0.15"
+nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+
+[build-dependencies]
+slint-build = "1.17"
+
+[features]
+default = []
+# Real USB camera capture via nokhwa (V4L2 / AVFoundation / MediaFoundation).
+camera = ["dep:nokhwa"]
