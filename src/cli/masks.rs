@@ -11,9 +11,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use imageproc::region_labelling::{connected_components, Connectivity};
 use opengel::core::model::GelType;
 use opengel::detect::eval::{GroundTruth, GtBand, GtLane};
-use imageproc::region_labelling::{connected_components, Connectivity};
 
 /// Walk `dir`, pair every `*masks*/<name>` with `*images*/<name>`, and write
 /// `<name>.gt.json` next to each image. Returns the number of pairs converted.

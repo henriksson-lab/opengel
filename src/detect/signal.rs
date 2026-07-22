@@ -9,11 +9,11 @@ pub fn smooth(trace: &[f64], radius: usize) -> Vec<f64> {
     }
     let n = trace.len();
     let mut out = vec![0.0; n];
-    for i in 0..n {
+    for (i, out_i) in out.iter_mut().enumerate().take(n) {
         let lo = i.saturating_sub(radius);
         let hi = (i + radius + 1).min(n);
         let slice = &trace[lo..hi];
-        out[i] = slice.iter().sum::<f64>() / slice.len() as f64;
+        *out_i = slice.iter().sum::<f64>() / slice.len() as f64;
     }
     out
 }
@@ -34,22 +34,17 @@ fn max_filter(trace: &[f64], radius: usize) -> Vec<f64> {
     window_reduce(trace, radius, f64::max, f64::NEG_INFINITY)
 }
 
-fn window_reduce(
-    trace: &[f64],
-    radius: usize,
-    f: fn(f64, f64) -> f64,
-    init: f64,
-) -> Vec<f64> {
+fn window_reduce(trace: &[f64], radius: usize, f: fn(f64, f64) -> f64, init: f64) -> Vec<f64> {
     let n = trace.len();
     let mut out = vec![0.0; n];
-    for i in 0..n {
+    for (i, out_i) in out.iter_mut().enumerate().take(n) {
         let lo = i.saturating_sub(radius);
         let hi = (i + radius + 1).min(n);
         let mut acc = init;
         for &v in &trace[lo..hi] {
             acc = f(acc, v);
         }
-        out[i] = acc;
+        *out_i = acc;
     }
     out
 }

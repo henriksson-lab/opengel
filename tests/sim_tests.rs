@@ -52,7 +52,8 @@ fn pipeline_fits_smile_from_two_ladders() {
     let g = simulate(&cfg);
     let img = work_image(&g);
 
-    let analysis = opengel::detect::analyze(&img, cfg.gel.gel_type, &DetectParams::default(), &[], 0.9);
+    let analysis =
+        opengel::detect::analyze(&img, cfg.gel.gel_type, &DetectParams::default(), &[], 0.9);
     let fitted = analysis.warp.expect("pipeline produced a warp");
 
     let identity = GelWarp::identity(cfg.gel.width, cfg.gel.height);
@@ -72,7 +73,8 @@ fn clean_detects_ladder() {
     let cfg = SimConfig::clean(7);
     let g = simulate(&cfg);
     let img = work_image(&g);
-    let analysis = opengel::detect::analyze(&img, cfg.gel.gel_type, &DetectParams::default(), &[], 0.9);
+    let analysis =
+        opengel::detect::analyze(&img, cfg.gel.gel_type, &DetectParams::default(), &[], 0.9);
 
     // The ladder lane (lane 0) is fully resolved on the ideal clean gel and must
     // be identified as the NEB 1 kb ladder it reproduces. Sparse sample lanes
@@ -80,14 +82,22 @@ fn clean_detects_ladder() {
     // assert a lower bound on lanes rather than the full count (robust
     // multi-lane segmentation on realistic gels is tracked as future work — see
     // PLAN.md §6, GelGenie integration).
-    assert!(analysis.lanes.len() >= 3, "lanes detected (got {})", analysis.lanes.len());
+    assert!(
+        analysis.lanes.len() >= 3,
+        "lanes detected (got {})",
+        analysis.lanes.len()
+    );
     assert!(
         analysis
             .ladder_assignments
             .iter()
             .any(|a| a.template_name.contains("1 kb")),
         "NEB 1 kb ladder identified on a clean sim (got {:?})",
-        analysis.ladder_assignments.iter().map(|a| &a.template_name).collect::<Vec<_>>()
+        analysis
+            .ladder_assignments
+            .iter()
+            .map(|a| &a.template_name)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -119,7 +129,10 @@ fn rotation_is_recovered_by_autostraighten() {
 
     let est = estimate_rotation(&img, 50.0, true);
     // Magnitude should match ~22° (sign depends on convention).
-    assert!((est.abs() - 22.0).abs() < 6.0, "estimated {est}, expected ~±22");
+    assert!(
+        (est.abs() - 22.0).abs() < 6.0,
+        "estimated {est}, expected ~±22"
+    );
 
     // The core assertion above is that the rotation magnitude is recovered.
     // After straightening (which resamples and slightly blurs), the gel must
@@ -127,8 +140,13 @@ fn rotation_is_recovered_by_autostraighten() {
     // count (post-resample detection is degraded; robust detection is future
     // work — see PLAN.md §6).
     let (straight, _angle) = auto_straighten(&img, 50.0, true);
-    let analysis =
-        opengel::detect::analyze(&straight, cfg.gel.gel_type, &DetectParams::default(), &[], 0.85);
+    let analysis = opengel::detect::analyze(
+        &straight,
+        cfg.gel.gel_type,
+        &DetectParams::default(),
+        &[],
+        0.85,
+    );
     assert!(
         !analysis.lanes.is_empty(),
         "lanes recovered after straighten (got {})",

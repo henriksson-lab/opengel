@@ -23,9 +23,7 @@ impl Rng {
 
     fn next_u32(&mut self) -> u32 {
         let old = self.state;
-        self.state = old
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(self.inc);
+        self.state = old.wrapping_mul(6364136223846793005).wrapping_add(self.inc);
         let xorshifted = (((old >> 18) ^ old) >> 27) as u32;
         let rot = (old >> 59) as u32;
         xorshifted.rotate_right(rot)

@@ -1,7 +1,7 @@
+use ndarray::Array2;
 use opengel::core::GrayF32;
 use opengel::detect::cellpose::{BlobSegmenter, CellposeDetector};
 use opengel::detect::detector::{DetectParams, GelDetector};
-use ndarray::Array2;
 
 /// A trivial segmenter that returns a fixed set of blob boxes, standing in for
 /// real Cellpose bindings.

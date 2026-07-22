@@ -118,7 +118,10 @@ impl NokhwaBackend {
     fn set_manual_exposure(&mut self, t: f64) -> Result<bool> {
         if self
             .camera
-            .set_camera_control(KnownCameraControl::Exposure, ControlValueSetter::EnumValue(3))
+            .set_camera_control(
+                KnownCameraControl::Exposure,
+                ControlValueSetter::EnumValue(3),
+            )
             .is_err()
         {
             return Ok(false); // custom mode unsupported → auto only
@@ -147,10 +150,10 @@ impl NokhwaBackend {
     #[cfg(not(target_os = "macos"))]
     fn set_manual_exposure(&mut self, t: f64) -> Result<bool> {
         let raw = (t / EXPOSURE_UNIT_S).round().max(1.0) as i64;
-        match self
-            .camera
-            .set_camera_control(KnownCameraControl::Exposure, ControlValueSetter::Integer(raw))
-        {
+        match self.camera.set_camera_control(
+            KnownCameraControl::Exposure,
+            ControlValueSetter::Integer(raw),
+        ) {
             Ok(()) => {
                 self.exposure_s = Some(raw as f64 * EXPOSURE_UNIT_S);
                 Ok(true)

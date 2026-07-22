@@ -17,12 +17,12 @@ crate:
 
 | Module | What it is |
 |--------|------------|
-| `src/gel_core` | Data model, `.gel.zip` IO, HDR merge, ladder database, quant math. |
-| `src/gel_detect` | Pluggable detectors, ladder ID, orientation, evaluation harness. |
-| `src/gel_sim` | Synthetic gel simulator with effects + exact ground truth (rayon). |
-| `src/gel_camera` | USB camera capture + exposure (mock always; nokhwa behind `--features camera`). |
-| `src/gel_cli` | The `gel` binary (headless: analyze, eval, simulate, import-masks, …). |
-| `src/gel_app` | The `opengel` binary — the Slint desktop GUI. |
+| `src/core` | Data model, `.gel.zip` IO, HDR merge, ladder database, quant math. |
+| `src/detect` | Pluggable detectors, ladder ID, orientation, evaluation harness. |
+| `src/sim` | Synthetic gel simulator with effects + exact ground truth (rayon). |
+| `src/camera` | USB camera capture + exposure (mock always; nokhwa behind `--features camera`). |
+| `src/cli` | The `gel` binary (headless: analyze, eval, simulate, import-masks, …). |
+| `src/gui` | The `opengel` binary — the Slint desktop GUI. |
 
 ## The `.gel.zip` format
 
@@ -37,22 +37,22 @@ images/img_NN.png   raw captures (8- or 16-bit)
 
 ## Detection & quantification
 
-* **Lanes** — column-sum intensity profile; lanes are the peaks (`src/gel_detect/classical.rs`).
+* **Lanes** — column-sum intensity profile; lanes are the peaks (`src/detect/classical.rs`).
 * **Bands** — per-lane vertical densitometry trace, rolling-ball baseline
-  subtraction, peak detection + integration (`src/gel_detect/signal.rs`).
+  subtraction, peak detection + integration (`src/detect/signal.rs`).
 * **Ladder ID** — match a lane's band pattern to a commercial template via a
   semi-log fit (`ln(size) ∝ migration`); pick the best-explained lane
-  (`src/gel_detect/ladder_match.rs`).
+  (`src/detect/ladder_match.rs`).
 * **Sizing** — semi-log calibration from the ladder sizes every other band.
 * **Amounts** — intensity→mass calibration from ladder bands of known mass;
   molarity via `mass / (size × g·mol⁻¹·unit⁻¹)` (650/bp DNA, 340/nt RNA, Da for
-  protein) — `src/gel_core/quant.rs`.
-* **Cellpose** — plug real bindings into `gel_detect::cellpose::BlobSegmenter`;
+  protein) — `src/core/quant.rs`.
+* **Cellpose** — plug real bindings into `opengel::detect::cellpose::BlobSegmenter`;
   `CellposeDetector` clusters blobs into lanes/bands. Benchmark it against the
   classical detector with the eval harness.
 
 The detector to ship as default is decided by numbers, not assertion: the
-**evaluation harness** (`src/gel_detect/eval.rs`) scores any `GelDetector`
+**evaluation harness** (`src/detect/eval.rs`) scores any `GelDetector`
 against Claude-annotated ground truth (lane IoU, band precision/recall, position
 error).
 
@@ -103,7 +103,7 @@ each region's background-subtracted density straight from the pixels
 (densitometry) and fills the Bands table. This region-measurement step is
 **independent of the detection algorithm** — regions can come from the demo,
 manual editing, or a detector plugged in later behind
-`gel_detect::detector::GelDetector`. Automatic lane/band detection is currently
+`opengel::detect::detector::GelDetector`. Automatic lane/band detection is currently
 deferred pending detector retuning/replacement.
 
 
@@ -114,4 +114,3 @@ hand-labelled band masks (GelGenie, CC BY 4.0; rice CAPS gels, CC BY-SA 2.1 JP;
 Wikimedia/PLOS mixed) — image blobs are git-ignored, source/license sidecars and
 manifests are tracked. `gel import-masks` turns GelGenie masks into eval ground
 truth.
-

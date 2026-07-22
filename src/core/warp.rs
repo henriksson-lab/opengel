@@ -89,7 +89,11 @@ fn basis_functions(t: f64, degree: usize, knots: &[f64], n_ctrl: usize) -> (usiz
         let mut saved = 0.0;
         for r in 0..j {
             let denom = right[r + 1] + left[j - r];
-            let temp = if denom.abs() < 1e-12 { 0.0 } else { n[r] / denom };
+            let temp = if denom.abs() < 1e-12 {
+                0.0
+            } else {
+                n[r] / denom
+            };
             n[r] = saved + right[r + 1] * temp;
             saved = left[j - r] * temp;
         }
@@ -127,14 +131,15 @@ pub(crate) fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Vec<f64> {
         }
         a.swap(col, piv);
         b.swap(col, piv);
+        let pivot_row = a[col].clone();
         // Eliminate below.
         for r in (col + 1)..n {
             let f = a[r][col] / a[col][col];
             if f == 0.0 {
                 continue;
             }
-            for c in col..n {
-                a[r][c] -= f * a[col][c];
+            for (arc, apc) in a[r].iter_mut().zip(pivot_row.iter()).skip(col) {
+                *arc -= f * *apc;
             }
             b[r] -= f * b[col];
         }
@@ -238,12 +243,12 @@ impl GelWarp {
         let (su, nu_b) = basis_functions(u, self.degree_u, &self.knots_u, self.nu);
         let (sv, nv_b) = basis_functions(v, self.degree_v, &self.knots_v, self.nv);
         let (mut x, mut y, mut wsum) = (0.0, 0.0, 0.0);
-        for a in 0..=self.degree_v {
+        for (a, &nv_val) in nv_b.iter().enumerate().take(self.degree_v + 1) {
             let iv = sv - self.degree_v + a;
-            for b in 0..=self.degree_u {
+            for (b, &nu_val) in nu_b.iter().enumerate().take(self.degree_u + 1) {
                 let iu = su - self.degree_u + b;
                 let idx = iv * self.nu + iu;
-                let wgt = self.weights[idx] * nv_b[a] * nu_b[b];
+                let wgt = self.weights[idx] * nv_val * nu_val;
                 x += wgt * self.ctrl[idx][0];
                 y += wgt * self.ctrl[idx][1];
                 wsum += wgt;
@@ -347,12 +352,12 @@ impl GelWarp {
             let bv = full_basis(v, self.degree_v, &self.knots_v, self.nv);
             // Sparse weight vector w[iv*nu+iu] = bv[iv]·bu[iu]; collect nonzeros.
             let mut nz: Vec<(usize, f64)> = Vec::new();
-            for iv in 0..self.nv {
-                if bv[iv] == 0.0 {
+            for (iv, &bv_val) in bv.iter().enumerate().take(self.nv) {
+                if bv_val == 0.0 {
                     continue;
                 }
-                for iu in 0..self.nu {
-                    let wgt = bv[iv] * bu[iu];
+                for (iu, &bu_val) in bu.iter().enumerate().take(self.nu) {
+                    let wgt = bv_val * bu_val;
                     if wgt != 0.0 {
                         nz.push((iv * self.nu + iu, wgt));
                     }
@@ -421,7 +426,9 @@ impl GelWarp {
         if n == 1 {
             return vec![self.eval(0.5, v)];
         }
-        (0..n).map(|i| self.eval(i as f64 / (n - 1) as f64, v)).collect()
+        (0..n)
+            .map(|i| self.eval(i as f64 / (n - 1) as f64, v))
+            .collect()
     }
 
     /// Polyline (`n` points) of the iso-`u` curve (one lane's path down the gel).
@@ -432,7 +439,9 @@ impl GelWarp {
         if n == 1 {
             return vec![self.eval(u, 0.5)];
         }
-        (0..n).map(|i| self.eval(u, i as f64 / (n - 1) as f64)).collect()
+        (0..n)
+            .map(|i| self.eval(u, i as f64 / (n - 1) as f64))
+            .collect()
     }
 
     /// Least-squares fit of an `nu × nv` control lattice to `(u,v)→(x,y)`
@@ -452,12 +461,12 @@ impl GelWarp {
             let bu = full_basis(a.u, base.degree_u, &base.knots_u, nu);
             let bv = full_basis(a.v, base.degree_v, &base.knots_v, nv);
             let mut nz: Vec<(usize, f64)> = Vec::new();
-            for iv in 0..nv {
-                if bv[iv] == 0.0 {
+            for (iv, &bv_val) in bv.iter().enumerate().take(nv) {
+                if bv_val == 0.0 {
                     continue;
                 }
-                for iu in 0..nu {
-                    let wgt = bv[iv] * bu[iu];
+                for (iu, &bu_val) in bu.iter().enumerate().take(nu) {
+                    let wgt = bv_val * bu_val;
                     if wgt != 0.0 {
                         nz.push((iv * nu + iu, wgt));
                     }
@@ -560,9 +569,8 @@ mod tests {
         let ys = [170.0, 150.0, 170.0];
         let v = (ys[0] + ys[1] + ys[2]) / 3.0 / h as f64;
         let us = [1.0 / 4.0, 2.0 / 4.0, 3.0 / 4.0];
-        let corr: Vec<(f64, f64, f64, f64)> = (0..3)
-            .map(|i| (us[i], v, lane_x[i], ys[i]))
-            .collect();
+        let corr: Vec<(f64, f64, f64, f64)> =
+            (0..3).map(|i| (us[i], v, lane_x[i], ys[i])).collect();
         let warp = prior.refine_least_squares(&corr, 1e-3);
 
         // The surface reproduces the smile at the front's v.

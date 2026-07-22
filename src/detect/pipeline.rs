@@ -12,6 +12,8 @@ use crate::core::{ladders, GrayF32};
 use crate::detect::classical::{lane_row_profile, ClassicalDetector};
 use crate::detect::detector::{DetectParams, GelDetector};
 use crate::detect::ladder_match::{best_template, LadderMatch};
+
+type WarpRungGroups = Vec<(f64, Vec<(f64, f64, f64)>)>;
 use crate::detect::signal::subtract_baseline;
 
 /// Re-measure each band's integrated density on the **rectified** image, so a
@@ -69,8 +71,12 @@ fn fit_smile_warp(
     if lane_centers.len() < 2 {
         return None;
     }
-    let lane_pos: std::collections::HashMap<u32, usize> =
-        det.lanes.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
+    let lane_pos: std::collections::HashMap<u32, usize> = det
+        .lanes
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (l.id, i))
+        .collect();
     let nu = lane_centers.len() + 2; // gel edges + one column per lane
 
     // Match the template to every lane; group matched rungs by ladder size.
@@ -81,7 +87,7 @@ fn fit_smile_warp(
     // would fabricate a bogus smile.
     let strict_r2 = min_r2.max(0.9);
     let min_rungs = (0.6 * template.bands.len() as f64).ceil() as usize;
-    let mut by_size: Vec<(f64, Vec<(f64, f64, f64)>)> = Vec::new();
+    let mut by_size: WarpRungGroups = Vec::new();
     for (&lane_id, idxs) in per_lane0 {
         let positions: Vec<f64> = idxs.iter().map(|&i| b0[i].v_center).collect();
         let Some(m) = best_template(&positions, std::iter::once(template), strict_r2) else {
@@ -97,7 +103,10 @@ fn fit_smile_warp(
             };
             let db = &det.bands[bi];
             let pt = (u, db.x_center, db.y_center);
-            match by_size.iter_mut().find(|(s, _)| (*s - pair.size).abs() < 1e-6) {
+            match by_size
+                .iter_mut()
+                .find(|(s, _)| (*s - pair.size).abs() < 1e-6)
+            {
                 Some((_, pts)) => pts.push(pt),
                 None => by_size.push((pair.size, vec![pt])),
             }
@@ -211,7 +220,12 @@ pub fn analyze_detection(
             best_template(&pos, cand_refs.iter().copied(), min_r2)
         })
         .max_by(|a, b| a.r2.partial_cmp(&b.r2).unwrap())
-        .and_then(|m| cand_refs.iter().copied().find(|t| t.name == m.template_name));
+        .and_then(|m| {
+            cand_refs
+                .iter()
+                .copied()
+                .find(|t| t.name == m.template_name)
+        });
 
     let work = if params.signal_is_bright {
         img.clone()
@@ -254,7 +268,7 @@ pub fn analyze_detection(
     for (&lane_id, idxs) in &per_lane {
         let positions: Vec<f64> = idxs.iter().map(|&i| analysis.bands[i].v_center).collect();
         if let Some(m) = best_template(&positions, cand_refs.iter().copied(), min_r2) {
-            if best.as_ref().map_or(true, |(_, bm)| m.r2 > bm.r2) {
+            if best.as_ref().is_none_or(|(_, bm)| m.r2 > bm.r2) {
                 best = Some((lane_id, m));
             }
         }

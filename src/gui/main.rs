@@ -1,7 +1,7 @@
 //! OpenGel desktop GUI.
 //!
-//! Wires the Slint UI (`ui/app.slint`) to `gel-core` (documents, HDR, quant),
-//! `gel-detect` (analysis pipeline) and `gel-camera` (capture).
+//! Wires the Slint UI (`ui/app.slint`) to the core document/HDR/quant modules,
+//! the analysis pipeline and camera capture.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -66,7 +66,10 @@ fn main() -> anyhow::Result<()> {
                             st.set_cameras(names);
                             live_dirty = true;
                         }
-                        CamEvent::Opened { name, manual_exposure } => {
+                        CamEvent::Opened {
+                            name,
+                            manual_exposure,
+                        } => {
                             st.camera_name = name;
                             st.exposure_supported = manual_exposure;
                             live_dirty = true;
@@ -196,8 +199,7 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_open_ladder_dialog(move |lane_id| {
             let ui = ui_weak.unwrap();
-            let (name, tidx, vol, conc) =
-                state.borrow().ladder_dialog_prefill(lane_id as u32);
+            let (name, tidx, vol, conc) = state.borrow().ladder_dialog_prefill(lane_id as u32);
             ui.set_dialog_lane_name(name.into());
             ui.set_dialog_ladder_index(tidx.max(0));
             ui.set_dialog_volume(format!("{vol:.1}").into());
@@ -283,7 +285,9 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_lane_renamed(move |lane_id, name| {
             let ui = ui_weak.unwrap();
-            let msg = state.borrow_mut().set_lane_label(lane_id as u32, name.as_str());
+            let msg = state
+                .borrow_mut()
+                .set_lane_label(lane_id as u32, name.as_str());
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });
@@ -362,8 +366,7 @@ fn main() -> anyhow::Result<()> {
             // fall back to selecting/dragging an annotation.
             let hit = {
                 let mut st = state.borrow_mut();
-                st.press_warp_knot(x as f64, y as f64)
-                    || st.press_annotation(x as f64, y as f64)
+                st.press_warp_knot(x as f64, y as f64) || st.press_annotation(x as f64, y as f64)
             };
             view::refresh_image(&ui, &state.borrow());
             hit
@@ -446,8 +449,10 @@ fn main() -> anyhow::Result<()> {
             });
         }};
     }
-    edit_cb!(on_add_lane, |s: &mut AppState, nx: f64, _ny: f64| s.add_lane_at(nx));
-    edit_cb!(on_add_band, |s: &mut AppState, nx: f64, ny: f64| s.add_band_at(nx, ny));
+    edit_cb!(on_add_lane, |s: &mut AppState, nx: f64, _ny: f64| s
+        .add_lane_at(nx));
+    edit_cb!(on_add_band, |s: &mut AppState, nx: f64, ny: f64| s
+        .add_band_at(nx, ny));
     // Absolute calibration.
     {
         let ui_weak = ui.as_weak();

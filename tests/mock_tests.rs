@@ -36,7 +36,10 @@ fn bracket_hdr_recovers_faint_and_bright() {
         .iter()
         .map(|(img, _)| GrayF32::from_dynamic(img))
         .collect();
-    let ts: Vec<f64> = frames_meta.iter().map(|(_, m)| m.exposure_seconds).collect();
+    let ts: Vec<f64> = frames_meta
+        .iter()
+        .map(|(_, m)| m.exposure_seconds)
+        .collect();
     let hdr = merge_hdr(&grays, &ts).unwrap();
 
     // The merged radiance should show a wide dynamic range: a very bright band

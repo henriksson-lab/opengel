@@ -117,7 +117,10 @@ fn main() -> Result<()> {
         Command::MakeDataset { dir } => demo::write_dataset(&dir),
         Command::ImportMasks { dir } => {
             let n = masks::import_dir(&dir)?;
-            println!("wrote {n} ground-truth files from masks in {}", dir.display());
+            println!(
+                "wrote {n} ground-truth files from masks in {}",
+                dir.display()
+            );
             Ok(())
         }
         Command::Simulate {
@@ -142,7 +145,10 @@ fn parse_warp_mode(s: &str) -> Result<opengel::sim::WarpMode> {
 fn cmd_info(path: &std::path::Path) -> Result<()> {
     let doc = GelDocument::load(path).with_context(|| format!("loading {}", path.display()))?;
     let p = &doc.project;
-    println!("format {} v{}  gel_type {:?}", p.format, p.version, p.gel_type);
+    println!(
+        "format {} v{}  gel_type {:?}",
+        p.format, p.version, p.gel_type
+    );
     println!("images: {}", p.images.len());
     for img in &p.images {
         println!(
@@ -263,7 +269,10 @@ fn cmd_analyze(
         analysis.bands.len()
     );
     for la in &analysis.ladder_assignments {
-        println!("  identified ladder: lane {} = {}", la.lane_id, la.template_name);
+        println!(
+            "  identified ladder: lane {} = {}",
+            la.lane_id, la.template_name
+        );
     }
     doc.project.analysis = analysis;
 
@@ -287,7 +296,11 @@ fn cmd_simulate(
     let n = opengel::sim::write_dataset(dir, &gels)?;
     println!(
         "rendered {n} simulated gels{} ({:?} warp) to {}",
-        if upright { " (upright)" } else { " (rotated ≤50°)" },
+        if upright {
+            " (upright)"
+        } else {
+            " (rotated ≤50°)"
+        },
         mode,
         dir.display()
     );

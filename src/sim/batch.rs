@@ -50,11 +50,11 @@ pub fn write_dataset(dir: &Path, gels: &[RenderedGel]) -> std::io::Result<usize>
             let img_path = dir.join(&g.truth.image);
             g.image
                 .save(&img_path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             let stem = g.truth.image.trim_end_matches(".png");
             let gt_path = dir.join(format!("{stem}.gt.json"));
             let json = serde_json::to_string_pretty(&g.truth)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             std::fs::write(gt_path, json)?;
             Ok(())
         })

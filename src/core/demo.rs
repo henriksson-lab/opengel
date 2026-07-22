@@ -81,14 +81,14 @@ fn demo_config(exposure: f64) -> SimConfig {
     // Three NEB 1 kb ladder lanes at 0, 4, 7; five sample lanes between them.
     let ladder = "NEB 1 kb DNA Ladder";
     let lanes = vec![
-        SimLane::ladder(ladder),                       // 0  ladder
-        SimLane::sample(vec![4000.0, 1500.0, 700.0]),  // 1
+        SimLane::ladder(ladder),                             // 0  ladder
+        SimLane::sample(vec![4000.0, 1500.0, 700.0]),        // 1
         SimLane::sample(vec![6000.0, 2000.0, 900.0, 400.0]), // 2
-        SimLane::sample(vec![3000.0, 1000.0]),         // 3
-        SimLane::ladder(ladder),                       // 4  ladder
-        SimLane::sample(vec![5000.0, 1200.0, 500.0]),  // 5
-        SimLane::sample(vec![2500.0, 800.0]),          // 6
-        SimLane::ladder(ladder),                       // 7  ladder
+        SimLane::sample(vec![3000.0, 1000.0]),               // 3
+        SimLane::ladder(ladder),                             // 4  ladder
+        SimLane::sample(vec![5000.0, 1200.0, 500.0]),        // 5
+        SimLane::sample(vec![2500.0, 800.0]),                // 6
+        SimLane::ladder(ladder),                             // 7  ladder
     ];
     SimConfig { gel, lanes }
 }

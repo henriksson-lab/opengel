@@ -209,7 +209,11 @@ pub struct LadderTemplate {
 impl LadderTemplate {
     /// Sizes of the reference (extra-thick) bands.
     pub fn reference_sizes(&self) -> Vec<f64> {
-        self.bands.iter().filter(|b| b.reference).map(|b| b.size).collect()
+        self.bands
+            .iter()
+            .filter(|b| b.reference)
+            .map(|b| b.size)
+            .collect()
     }
 }
 

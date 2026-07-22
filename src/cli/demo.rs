@@ -26,6 +26,10 @@ pub fn write_dataset(dir: &std::path::Path) -> Result<()> {
     let json = serde_json::to_string_pretty(&gt)?;
     let gt_path = dir.join("demo.gt.json");
     std::fs::write(&gt_path, json)?;
-    println!("wrote dataset: {} and {}", png_path.display(), gt_path.display());
+    println!(
+        "wrote dataset: {} and {}",
+        png_path.display(),
+        gt_path.display()
+    );
     Ok(())
 }

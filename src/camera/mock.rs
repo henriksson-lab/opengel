@@ -57,7 +57,9 @@ fn build_radiance() -> Vec<f64> {
     let (sx, sy) = (5.0f64, 3.5f64);
     // (x, size, peak_radiance)
     let mut spots: Vec<(f64, f64, f64)> = Vec::new();
-    for size in [10000.0, 8000.0, 6000.0, 5000.0, 4000.0, 3000.0, 2000.0, 1500.0, 1000.0, 500.0] {
+    for size in [
+        10000.0, 8000.0, 6000.0, 5000.0, 4000.0, 3000.0, 2000.0, 1500.0, 1000.0, 500.0,
+    ] {
         spots.push((30.0, size, 4.0));
     }
     // Sample lanes with a mix of very bright and very faint bands.

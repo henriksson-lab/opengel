@@ -40,7 +40,11 @@ fn semilog_r2(positions: &[f64], sizes: &[f64]) -> Option<(f64, SizingFit)> {
     if positions.len() != sizes.len() || positions.len() < 2 {
         return None;
     }
-    let pts: Vec<(f64, f64)> = positions.iter().cloned().zip(sizes.iter().cloned()).collect();
+    let pts: Vec<(f64, f64)> = positions
+        .iter()
+        .cloned()
+        .zip(sizes.iter().cloned())
+        .collect();
     let fit = SizingFit::fit(&pts)?;
     let ys: Vec<f64> = sizes.iter().map(|s| s.ln()).collect();
     let mean = ys.iter().sum::<f64>() / ys.len() as f64;
@@ -59,7 +63,11 @@ fn semilog_r2(positions: &[f64], sizes: &[f64]) -> Option<(f64, SizingFit)> {
     Some((r2, fit))
 }
 
-fn finalize(template: &LadderTemplate, pairs: Vec<MatchPair>, positions: &[f64]) -> Option<LadderMatch> {
+fn finalize(
+    template: &LadderTemplate,
+    pairs: Vec<MatchPair>,
+    positions: &[f64],
+) -> Option<LadderMatch> {
     if pairs.len() < 2 {
         return None;
     }
@@ -136,8 +144,13 @@ pub fn align_template(
                     let mut resid_sum = 0.0;
                     for i in 0..s {
                         let mut chosen: Option<(usize, f64)> = None;
-                        for j in ((last_j + 1) as usize)..p {
-                            let r = (ln_sizes[i] - (a * positions[j] + b)).abs();
+                        for (j, &position) in positions
+                            .iter()
+                            .enumerate()
+                            .take(p)
+                            .skip((last_j + 1) as usize)
+                        {
+                            let r = (ln_sizes[i] - (a * position + b)).abs();
                             if r < tol_ln {
                                 match chosen {
                                     Some((_, br)) if br <= r => {}

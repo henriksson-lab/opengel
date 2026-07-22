@@ -42,7 +42,13 @@ pub fn estimate_rotation(img: &GrayF32, max_deg: f64, signal_is_bright: bool) ->
     let coarse = 2.0;
     let (best_angle, _) = search(&work, -max_deg, max_deg, coarse, f64::NEG_INFINITY);
     // Fine pass around the coarse best.
-    let (fine_best, _) = search(&work, best_angle - coarse, best_angle + coarse, 0.25, f64::NEG_INFINITY);
+    let (fine_best, _) = search(
+        &work,
+        best_angle - coarse,
+        best_angle + coarse,
+        0.25,
+        f64::NEG_INFINITY,
+    );
     fine_best
 }
 

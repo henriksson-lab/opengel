@@ -12,9 +12,7 @@ const BUILTIN_JSON: &str = include_str!("ladders/ladders.json");
 
 fn builtins() -> &'static [LadderTemplate] {
     static CACHE: OnceLock<Vec<LadderTemplate>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        serde_json::from_str(BUILTIN_JSON).expect("bundled ladders.json is valid")
-    })
+    CACHE.get_or_init(|| serde_json::from_str(BUILTIN_JSON).expect("bundled ladders.json is valid"))
 }
 
 /// All built-in ladder templates.

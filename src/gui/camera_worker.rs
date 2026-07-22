@@ -138,7 +138,10 @@ fn worker_main(rx: Receiver<CamCommand>, tx: Sender<CamEvent>, cancel: Arc<Atomi
                     Ok((name, c)) => {
                         let manual_exposure = c.capabilities().manual_exposure;
                         cam = Some(c);
-                        let _ = tx.send(CamEvent::Opened { name, manual_exposure });
+                        let _ = tx.send(CamEvent::Opened {
+                            name,
+                            manual_exposure,
+                        });
                     }
                     Err(e) => {
                         let _ = tx.send(CamEvent::OpenFailed(e.to_string()));
@@ -194,7 +197,10 @@ fn ensure_open(cam: &mut Option<Box<dyn Camera>>, tx: &Sender<CamEvent>) {
         if let Ok((name, c)) = crate::camera_glue::open_camera_by_index(0) {
             let manual_exposure = c.capabilities().manual_exposure;
             *cam = Some(c);
-            let _ = tx.send(CamEvent::Opened { name, manual_exposure });
+            let _ = tx.send(CamEvent::Opened {
+                name,
+                manual_exposure,
+            });
         }
     }
 }

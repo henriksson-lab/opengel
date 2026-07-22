@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use opengel::core::model::{
-    Analysis, Band, Calibration, CaptureMeta, GelType, Lane, LadderAssignment, LadderTemplate,
+    Analysis, Band, Calibration, CaptureMeta, GelType, LadderAssignment, LadderTemplate, Lane,
     Quantification, TargetKind,
 };
 use opengel::core::quant::{compare, mass_ng_to_nmol, nmol_to_molar};
@@ -319,7 +319,13 @@ impl AppState {
         let Some(doc) = self.doc.as_mut() else {
             return "No document.".into();
         };
-        if let Some(lane) = doc.project.analysis.lanes.iter_mut().find(|l| l.id == lane_id) {
+        if let Some(lane) = doc
+            .project
+            .analysis
+            .lanes
+            .iter_mut()
+            .find(|l| l.id == lane_id)
+        {
             lane.label = if name.trim().is_empty() {
                 None
             } else {
@@ -555,7 +561,11 @@ impl AppState {
         if !self.show_warp {
             return false;
         }
-        let Some((w, h)) = self.work.as_ref().map(|i| (i.width() as f64, i.height() as f64)) else {
+        let Some((w, h)) = self
+            .work
+            .as_ref()
+            .map(|i| (i.width() as f64, i.height() as f64))
+        else {
             return false;
         };
         let Some(warp) = self.fit_warp() else {
@@ -569,7 +579,7 @@ impl AppState {
                 let dx = nx - cx / w.max(1.0);
                 let dy = ny - cy / h.max(1.0);
                 let d2 = dx * dx + dy * dy;
-                if best.map_or(true, |(_, bd)| d2 < bd) {
+                if best.is_none_or(|(_, bd)| d2 < bd) {
                     best = Some(((iu, iv), d2));
                 }
             }
@@ -591,7 +601,11 @@ impl AppState {
         let Some((iu, iv)) = self.dragging_knot else {
             return;
         };
-        let Some((w, h)) = self.work.as_ref().map(|i| (i.width() as f64, i.height() as f64)) else {
+        let Some((w, h)) = self
+            .work
+            .as_ref()
+            .map(|i| (i.width() as f64, i.height() as f64))
+        else {
             return;
         };
         if let Some((gen, warp)) = self.warp_edit.as_mut() {
@@ -824,11 +838,13 @@ impl AppState {
         a.lanes
             .iter()
             .map(|l| {
-                let label = l
-                    .label
-                    .clone()
-                    .unwrap_or_else(|| format!("Lane {}", l.id));
-                (l.id, label, l.is_ladder, self.selected_lanes.contains(&l.id))
+                let label = l.label.clone().unwrap_or_else(|| format!("Lane {}", l.id));
+                (
+                    l.id,
+                    label,
+                    l.is_ladder,
+                    self.selected_lanes.contains(&l.id),
+                )
             })
             .collect()
     }
@@ -949,7 +965,6 @@ impl AppState {
         })
     }
 
-
     /// Measure every annotated band region from the image: integrate the
     /// background-subtracted lane densitometry trace over each band's y-extent.
     /// This is the core gel-region measurement, independent of how the regions
@@ -1045,7 +1060,7 @@ impl AppState {
             }
             let dy = (py - b.v_center * h).abs();
             let tol = (b.v_half_width * h * 2.0).max(8.0);
-            if dy <= tol && best_band.map_or(true, |(_, bd)| dy < bd) {
+            if dy <= tol && best_band.is_none_or(|(_, bd)| dy < bd) {
                 best_band = Some((b.id, dy));
             }
         }
@@ -1265,7 +1280,10 @@ impl AppState {
     }
 
     pub fn save_path(&self, path: &Path) -> Result<()> {
-        let doc = self.doc.as_ref().ok_or_else(|| anyhow!("nothing to save"))?;
+        let doc = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| anyhow!("nothing to save"))?;
         doc.save(path)?;
         Ok(())
     }
@@ -1294,14 +1312,16 @@ impl AppState {
     /// Run detection + ladder ID + sizing. If `force_template` is set, only that
     /// template is considered (min_r2 relaxed so the user's choice wins).
     pub fn analyze(&mut self, force_template: Option<&str>) -> Result<String> {
-        let work = self.display_image().ok_or_else(|| anyhow!("no image loaded"))?;
+        let work = self
+            .display_image()
+            .ok_or_else(|| anyhow!("no image loaded"))?;
         let work = &work;
         let params = DetectParams::default();
 
-        let (candidates, min_r2): (Vec<&opengel::core::LadderTemplate>, f64) = match force_template {
+        let (candidates, min_r2): (Vec<&opengel::core::LadderTemplate>, f64) = match force_template
+        {
             Some(name) => {
-                let t = ladders::by_name(name)
-                    .ok_or_else(|| anyhow!("unknown ladder {name}"))?;
+                let t = ladders::by_name(name).ok_or_else(|| anyhow!("unknown ladder {name}"))?;
                 (vec![t], 0.0)
             }
             None => (Vec::new(), 0.9),
@@ -1315,12 +1335,11 @@ impl AppState {
             .map(|a| format!(", ladder: {} (lane {})", a.template_name, a.lane_id))
             .unwrap_or_default();
 
-        let doc = self
-            .doc
-            .as_mut()
-            .ok_or_else(|| anyhow!("no document"))?;
+        let doc = self.doc.as_mut().ok_or_else(|| anyhow!("no document"))?;
         doc.project.analysis = analysis;
-        Ok(format!("Detected {n_lanes} lanes, {n_bands} bands{ladder}."))
+        Ok(format!(
+            "Detected {n_lanes} lanes, {n_bands} bands{ladder}."
+        ))
     }
 
     // ---- interactive editing (coordinates are normalized [0,1] over the
@@ -1445,9 +1464,7 @@ impl AppState {
             let mut quants = Vec::new();
             for b in &a.bands {
                 let mass = cal.mass_ng(b.integrated_density);
-                let nmol = b
-                    .size
-                    .and_then(|s| mass_ng_to_nmol(mass, s, gel_type));
+                let nmol = b.size.and_then(|s| mass_ng_to_nmol(mass, s, gel_type));
                 let _molar = nmol.and_then(|n| nmol_to_molar(n, volume_ul));
                 quants.push(Quantification {
                     target_id: b.id,
@@ -1512,7 +1529,11 @@ fn fmt_size(s: Option<f64>) -> String {
 /// Match `template` against a lane's bands (top→bottom), assign `known_size`/
 /// `size` to the matched bands, and record/replace the [`LadderAssignment`].
 /// Returns the number of rungs matched, or `None` if no acceptable match.
-fn apply_ladder_to_lane(a: &mut Analysis, lane_id: u32, template: &LadderTemplate) -> Option<usize> {
+fn apply_ladder_to_lane(
+    a: &mut Analysis,
+    lane_id: u32,
+    template: &LadderTemplate,
+) -> Option<usize> {
     // Band indices for this lane, in detection (y-ascending) order.
     let idxs: Vec<usize> = a
         .bands
@@ -1562,8 +1583,12 @@ fn resize_sample_lanes(a: &mut Analysis) {
     let Some(fit) = opengel::core::quant::SizingFit::fit(&pts) else {
         return;
     };
-    let ladder_ids: std::collections::BTreeSet<u32> =
-        a.lanes.iter().filter(|l| l.is_ladder).map(|l| l.id).collect();
+    let ladder_ids: std::collections::BTreeSet<u32> = a
+        .lanes
+        .iter()
+        .filter(|l| l.is_ladder)
+        .map(|l| l.id)
+        .collect();
     for b in &mut a.bands {
         if !ladder_ids.contains(&b.lane_id) {
             b.size = Some(fit.size_at(b.v_center));
@@ -1616,7 +1641,10 @@ mod tests {
         assert!(!a.bands.is_empty());
         // The mock ladder lane reproduces the NEB 1 kb ladder, so it should be
         // identified against the built-in database.
-        assert!(a.ladder_assignments.iter().any(|x| x.template_name.contains("1 kb")));
+        assert!(a
+            .ladder_assignments
+            .iter()
+            .any(|x| x.template_name.contains("1 kb")));
 
         let cmp = st.compare_first_two(10.0);
         assert!(cmp.contains("ratio"));
@@ -1632,12 +1660,26 @@ mod tests {
         // Add a lane then a band in it.
         st.add_lane_at(0.5);
         let lanes_after = st.analysis().unwrap().lanes.len();
-        let new_lane_id = st.analysis().unwrap().lanes.iter().map(|l| l.id).max().unwrap();
+        let new_lane_id = st
+            .analysis()
+            .unwrap()
+            .lanes
+            .iter()
+            .map(|l| l.id)
+            .max()
+            .unwrap();
         st.add_band_at(0.5, 0.5);
         assert!(st.analysis().unwrap().bands.len() > before);
 
         // Delete the band we just added back out (by id).
-        let new_band_id = st.analysis().unwrap().bands.iter().map(|b| b.id).max().unwrap();
+        let new_band_id = st
+            .analysis()
+            .unwrap()
+            .bands
+            .iter()
+            .map(|b| b.id)
+            .max()
+            .unwrap();
         st.delete_band_by_id(new_band_id);
 
         // Mark as ladder then delete the lane operate without panicking.
@@ -1650,7 +1692,10 @@ mod tests {
         assert!(msg.contains("Calibrated"), "got: {msg}");
         let a = st.analysis().unwrap();
         assert!(a.calibration.is_some());
-        assert!(a.quantifications.iter().any(|q| q.mass_ng.unwrap_or(0.0) > 0.0));
+        assert!(a
+            .quantifications
+            .iter()
+            .any(|q| q.mass_ng.unwrap_or(0.0) > 0.0));
         // Sized DNA bands should also get a molarity.
         assert!(a.quantifications.iter().any(|q| q.molarity_nmol.is_some()));
     }
@@ -1681,7 +1726,11 @@ mod tests {
         // Measurement produced positive integrated densities for bands sitting
         // on the demo gel's bright bands.
         assert!(
-            a.bands.iter().filter(|b| b.integrated_density > 0.0).count() >= 3,
+            a.bands
+                .iter()
+                .filter(|b| b.integrated_density > 0.0)
+                .count()
+                >= 3,
             "expected several measured regions"
         );
 
@@ -1717,7 +1766,10 @@ mod tests {
                 .parse()
                 .unwrap()
         };
-        assert!(num(&top) > num(&bot), "top {top} should be larger than bottom {bot}");
+        assert!(
+            num(&top) > num(&bot),
+            "top {top} should be larger than bottom {bot}"
+        );
         // Off-image positions produce no readout.
         assert!(st.hover_size_label(-0.1).is_none());
         assert!(st.hover_size_label(1.5).is_none());
@@ -1784,7 +1836,10 @@ mod tests {
 
         // Grab the first knot (iu=0, iv=0), drag it, and release.
         let (nx, ny) = (knots[0].0 as f64, knots[0].1 as f64);
-        assert!(st.press_warp_knot(nx, ny), "should grab the knot under the cursor");
+        assert!(
+            st.press_warp_knot(nx, ny),
+            "should grab the knot under the cursor"
+        );
         assert!(st.is_dragging_knot());
         let target = (0.30, 0.40);
         st.drag_warp_knot(target.0, target.1);
@@ -1827,7 +1882,11 @@ mod tests {
         assert!(traces[0].values.len() > 10);
 
         // lane_items reflects the selection.
-        let sel = st.lane_items().into_iter().filter(|(_, _, _, s)| *s).count();
+        let sel = st
+            .lane_items()
+            .into_iter()
+            .filter(|(_, _, _, s)| *s)
+            .count();
         assert_eq!(sel, 2);
 
         // Switching to ng mode still yields traces (scaled by calibration).
@@ -1844,6 +1903,9 @@ mod tests {
     fn ladder_names_match_gel_type() {
         let st = AppState::new();
         assert!(!st.ladder_names().is_empty());
-        assert!(st.ladder_names().iter().all(|n| opengel::core::ladders::by_name(n).is_some()));
+        assert!(st
+            .ladder_names()
+            .iter()
+            .all(|n| opengel::core::ladders::by_name(n).is_some()));
     }
 }

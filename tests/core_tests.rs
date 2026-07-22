@@ -1,9 +1,9 @@
+use image::{DynamicImage, GrayImage, Luma};
 use opengel::core::hdr::merge_hdr;
 use opengel::core::imagef32::GrayF32;
 use opengel::core::model::CaptureMeta;
 use opengel::core::quant::{compare, mass_ng_to_nmol, nmol_to_molar, SizingFit};
 use opengel::core::{ladders, Calibration, GelDocument, GelType};
-use image::{DynamicImage, GrayImage, Luma};
 
 fn solid(w: u32, h: u32, v: u8) -> DynamicImage {
     DynamicImage::ImageLuma8(GrayImage::from_pixel(w, h, Luma([v])))
@@ -67,7 +67,7 @@ fn hdr_recovers_linear_radiance() {
 fn hdr_rejects_bad_input() {
     let f = GrayF32::new(2, 2);
     assert!(merge_hdr(&[], &[]).is_err());
-    assert!(merge_hdr(&[f.clone()], &[0.0]).is_err());
+    assert!(merge_hdr(std::slice::from_ref(&f), &[0.0]).is_err());
     assert!(merge_hdr(&[f], &[0.1, 0.2]).is_err());
 }
 

@@ -2,10 +2,10 @@
 //! `camera` feature and a device is available; otherwise falls back to the mock
 //! backend so the UI is fully usable without hardware.
 
+use image::DynamicImage;
 use opengel::camera::mock;
 use opengel::camera::{capture_bracket, Camera};
 use opengel::core::model::CaptureMeta;
-use image::DynamicImage;
 
 /// Default exposure bracket (seconds) for HDR capture.
 pub const DEFAULT_BRACKET: [f64; 3] = [0.05, 0.2, 0.8];

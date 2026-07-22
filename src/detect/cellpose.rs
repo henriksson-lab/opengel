@@ -118,7 +118,10 @@ impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
         flush(&mut lanes, &mut bands, &mut band_id, &lane_blobs);
 
         // Fill integrated densities from the blob boxes.
-        for (band, blob) in bands.iter_mut().zip(sorted_by_lane_then_y(&blobs, self.lane_gap)) {
+        for (band, blob) in bands
+            .iter_mut()
+            .zip(sorted_by_lane_then_y(&blobs, self.lane_gap))
+        {
             band.integrated_density = integrated_density(&work, blob);
         }
 
@@ -137,7 +140,7 @@ fn sorted_by_lane_then_y(
     let mut last_cx: Option<u32> = None;
     let push_group = |group: &mut Vec<(u32, u32, u32, u32)>, out: &mut Vec<_>| {
         group.sort_by_key(|b: &(u32, u32, u32, u32)| b.1 + b.3);
-        out.extend(group.drain(..));
+        out.append(group);
     };
     for b in blobs {
         let cx = (b.0 + b.2) / 2;

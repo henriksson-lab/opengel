@@ -9,8 +9,8 @@
 //!
 //! A [`SimConfig`] is simply the gel parameters plus the ordered lanes.
 
-use crate::core::model::GelType;
 use crate::core::ladders;
+use crate::core::model::GelType;
 
 use crate::sim::rng::Rng;
 
@@ -123,10 +123,14 @@ pub struct SimLane {
 
 impl SimLane {
     pub fn ladder(name: impl Into<String>) -> Self {
-        SimLane { content: LaneContent::Ladder(name.into()) }
+        SimLane {
+            content: LaneContent::Ladder(name.into()),
+        }
     }
     pub fn sample(sizes: Vec<f64>) -> Self {
-        SimLane { content: LaneContent::Sample(sizes) }
+        SimLane {
+            content: LaneContent::Sample(sizes),
+        }
     }
     pub fn is_ladder(&self) -> bool {
         matches!(self.content, LaneContent::Ladder(_))

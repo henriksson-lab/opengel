@@ -63,8 +63,8 @@ pub fn column_profile(img: &GrayF32) -> Vec<f64> {
     let (w, h) = (img.width(), img.height());
     let mut profile = vec![0.0; w];
     for y in 0..h {
-        for x in 0..w {
-            profile[x] += img.get(x, y) as f64;
+        for (x, px) in profile.iter_mut().enumerate().take(w) {
+            *px += img.get(x, y) as f64;
         }
     }
     profile
@@ -75,12 +75,12 @@ pub fn lane_row_profile(img: &GrayF32, x_min: usize, x_max: usize) -> Vec<f64> {
     let h = img.height();
     let x_max = x_max.min(img.width());
     let mut profile = vec![0.0; h];
-    for y in 0..h {
+    for (y, py) in profile.iter_mut().enumerate().take(h) {
         let mut acc = 0.0;
         for x in x_min..x_max {
             acc += img.get(x, y) as f64;
         }
-        profile[y] = acc;
+        *py = acc;
     }
     profile
 }

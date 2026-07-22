@@ -103,8 +103,8 @@ impl GelDocument {
         let mut buf = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
-            let opts = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
             let manifest = Manifest {
                 format: "opengel".to_string(),
@@ -117,8 +117,8 @@ impl GelDocument {
 
             for (img, frame) in self.project.images.iter().zip(&self.frames) {
                 // Images are already compressed (PNG), so store without deflate.
-                let store = SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Stored);
+                let store =
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
                 zip.start_file(&img.filename, store)?;
                 let mut png = Vec::new();
                 frame.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
@@ -179,8 +179,7 @@ impl GelDocument {
             .ok_or(FormatError::MissingEntry("manifest.json"))?;
         let images: Vec<GelImage> = read_json(&mut zip, "metadata.json")?
             .ok_or(FormatError::MissingEntry("metadata.json"))?;
-        let analysis: Analysis =
-            read_json(&mut zip, "analysis.json")?.unwrap_or_default();
+        let analysis: Analysis = read_json(&mut zip, "analysis.json")?.unwrap_or_default();
 
         let mut frames = Vec::with_capacity(images.len());
         for img in &images {

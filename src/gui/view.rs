@@ -183,7 +183,7 @@ fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
 // warp line, instead of re-windowing the whole image and recomputing the
 // histogram every mouse-move event. Single UI thread → thread_local is fine.
 type BaseKey = (u64, usize, u32, u32, bool, bool, u32, u32); // doc_gen, frame, lo, hi, invert, overexp, w, h
-type HistKey = (u64, usize, u32, u32);                       // doc_gen, frame, lo, hi
+type HistKey = (u64, usize, u32, u32); // doc_gen, frame, lo, hi
 thread_local! {
     static BASE_CACHE: std::cell::RefCell<Option<(BaseKey, SharedPixelBuffer<slint::Rgb8Pixel>)>> =
         const { std::cell::RefCell::new(None) };
@@ -204,8 +204,13 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
     if state.show_unwarped {
         if let Some(rect) = state.unwarped_view() {
             let (w, h) = (rect.width() as u32, rect.height() as u32);
-            let mut buf =
-                window_gray(&rect, state.disp_lo, state.disp_hi, state.invert, state.show_overexposed);
+            let mut buf = window_gray(
+                &rect,
+                state.disp_lo,
+                state.disp_hi,
+                state.invert,
+                state.show_overexposed,
+            );
             {
                 let px = buf.make_mut_slice();
                 for ov in &compute_overlays_unwarped(state) {
@@ -237,7 +242,13 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
                     return b.clone();
                 }
             }
-            let b = window_gray(&work, state.disp_lo, state.disp_hi, state.invert, state.show_overexposed);
+            let b = window_gray(
+                &work,
+                state.disp_lo,
+                state.disp_hi,
+                state.invert,
+                state.show_overexposed,
+            );
             *c = Some((base_key, b.clone()));
             b
         });
@@ -260,10 +271,16 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
         state.disp_lo.to_bits(),
         state.disp_hi.to_bits(),
     );
-    let need_hist = HIST_CACHE.with(|c| c.borrow().map_or(true, |k| k != hist_key));
+    let need_hist = HIST_CACHE.with(|c| c.borrow().is_none_or(|k| k != hist_key));
     if need_hist {
         let hist = state.histogram(256);
-        ui.set_histogram_image(render_histogram(&hist, state.disp_lo, state.disp_hi, 1024, 120));
+        ui.set_histogram_image(render_histogram(
+            &hist,
+            state.disp_lo,
+            state.disp_hi,
+            1024,
+            120,
+        ));
         HIST_CACHE.with(|c| *c.borrow_mut() = Some(hist_key));
     }
 }
@@ -306,14 +323,25 @@ fn draw_warp(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
     }
     // Alignment line at the hovered migration level.
     if state.hover_x >= 0.0 && state.hover_y >= 0.0 {
-        let (hx, hy) = (state.hover_x as f64 * w as f64, state.hover_y as f64 * h as f64);
+        let (hx, hy) = (
+            state.hover_x as f64 * w as f64,
+            state.hover_y as f64 * h as f64,
+        );
         let (_, v0) = warp.invert(hx, hy);
         polyline(px, w, h, &warp.iso_v(v0, 96), (0, 210, 255));
     }
 }
 
 /// Draw a filled square knot handle with a dark 1px border, clipped to bounds.
-fn fill_handle(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, cx: i32, cy: i32, r: i32, c: (u8, u8, u8)) {
+fn fill_handle(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    c: (u8, u8, u8),
+) {
     for dy in -r..=r {
         for dx in -r..=r {
             let x = cx + dx;
@@ -324,7 +352,11 @@ fn fill_handle(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, cx: i32, cy: i32, r:
             let edge = dx.abs() == r || dy.abs() == r;
             let (rr, gg, bb) = if edge { (20, 20, 20) } else { c };
             let idx = y as usize * w as usize + x as usize;
-            px[idx] = slint::Rgb8Pixel { r: rr, g: gg, b: bb };
+            px[idx] = slint::Rgb8Pixel {
+                r: rr,
+                g: gg,
+                b: bb,
+            };
         }
     }
 }
@@ -527,10 +559,8 @@ fn polyline(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, pts: &[(f64, f64)], c: 
             px,
             w,
             h,
-            pair[0].0 as i32,
-            pair[0].1 as i32,
-            pair[1].0 as i32,
-            pair[1].1 as i32,
+            (pair[0].0 as i32, pair[0].1 as i32),
+            (pair[1].0 as i32, pair[1].1 as i32),
             c,
         );
     }
@@ -541,11 +571,24 @@ fn put(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, x: i32, y: i32, c: (u8, u8, 
     if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
         return;
     }
-    px[(y as u32 * w + x as u32) as usize] = slint::Rgb8Pixel { r: c.0, g: c.1, b: c.2 };
+    px[(y as u32 * w + x as u32) as usize] = slint::Rgb8Pixel {
+        r: c.0,
+        g: c.1,
+        b: c.2,
+    };
 }
 
 /// Bresenham line into an RGB buffer.
-fn draw_line(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32, c: (u8, u8, u8)) {
+fn draw_line(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    p0: (i32, i32),
+    p1: (i32, i32),
+    c: (u8, u8, u8),
+) {
+    let (x0, y0) = p0;
+    let (x1, y1) = p1;
     let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
     let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
     let (mut x, mut y) = (x0, y0);
@@ -572,8 +615,16 @@ fn draw_line(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, x0: i32, y0: i32, x1: 
 fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
     let mut buf = SharedPixelBuffer::<slint::Rgb8Pixel>::new(w, h);
     let px = buf.make_mut_slice();
-    let bg = slint::Rgb8Pixel { r: 250, g: 250, b: 250 };
-    let win = slint::Rgb8Pixel { r: 222, g: 236, b: 252 };
+    let bg = slint::Rgb8Pixel {
+        r: 250,
+        g: 250,
+        b: 250,
+    };
+    let win = slint::Rgb8Pixel {
+        r: 222,
+        g: 236,
+        b: 252,
+    };
     for p in px.iter_mut() {
         *p = bg;
     }
@@ -593,7 +644,11 @@ fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
         let frac = (1.0 + hist[bin] as f64).ln() / lpeak;
         let bar = ((frac * (h as f64 - 2.0)).round() as u32).min(h - 1);
         for y in (h - bar)..h {
-            px[(y * w + x) as usize] = slint::Rgb8Pixel { r: 90, g: 90, b: 96 };
+            px[(y * w + x) as usize] = slint::Rgb8Pixel {
+                r: 90,
+                g: 90,
+                b: 96,
+            };
         }
     }
     Image::from_rgb8(buf)
@@ -615,7 +670,11 @@ fn draw_overlay(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, ov: &OverlayBox, al
         (51u8, 187u8, 255u8)
     };
     let fill = if ov.selected {
-        if ov.is_lane { 0.16 } else { 0.42 }
+        if ov.is_lane {
+            0.16
+        } else {
+            0.42
+        }
     } else if ov.is_lane {
         0.10
     } else {
@@ -641,5 +700,7 @@ fn draw_overlay(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, ov: &OverlayBox, al
 
 #[inline]
 fn blend(bg: u8, fg: u8, a: f32) -> u8 {
-    (bg as f32 * (1.0 - a) + fg as f32 * a).round().clamp(0.0, 255.0) as u8
+    (bg as f32 * (1.0 - a) + fg as f32 * a)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }

@@ -52,8 +52,8 @@ impl GrayF32 {
                 .map(|&b| b as f32 / 255.0)
                 .collect(),
         };
-        let data = Array2::from_shape_vec((h, w), flat)
-            .unwrap_or_else(|_| Array2::<f32>::zeros((h, w)));
+        let data =
+            Array2::from_shape_vec((h, w), flat).unwrap_or_else(|_| Array2::<f32>::zeros((h, w)));
         GrayF32 { data }
     }
 

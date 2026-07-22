@@ -304,12 +304,22 @@ fn build_scene(cfg: &SimConfig, r: &mut Rng) -> (Vec<SceneLane>, Vec<SceneBand>)
         let x = first_x + spacing * li as f64;
         // Some lanes retain a bright residual line of un-migrated material in
         // the well; others show little.
-        let well_residual = if r.unit() < 0.7 { r.range(0.3, 0.7) } else { r.range(0.0, 0.15) };
+        let well_residual = if r.unit() < 0.7 {
+            r.range(0.3, 0.7)
+        } else {
+            r.range(0.0, 0.15)
+        };
         let (is_ladder, ladder_name) = match &lane.content {
             LaneContent::Ladder(name) => (true, Some(name.clone())),
             LaneContent::Sample(_) => (false, None),
         };
-        lanes.push(SceneLane { is_ladder, ladder_name, x, half_x, well_residual });
+        lanes.push(SceneLane {
+            is_ladder,
+            ladder_name,
+            x,
+            half_x,
+            well_residual,
+        });
         let band_gain = cfg.gel.band_gain;
         let push_band = |size: f64, mass: f64, bands: &mut Vec<SceneBand>| {
             let y = size_to_y(size);
@@ -317,7 +327,15 @@ fn build_scene(cfg: &SimConfig, r: &mut Rng) -> (Vec<SceneLane>, Vec<SceneBand>)
             // Densitometry: peak brightness = mass / band area (∝ half_x·sigma_y),
             // times the overall band gain (low for a realistic low-contrast look).
             let peak = MASS_TO_PEAK * mass / (half_x * sigma_y) * band_gain;
-            bands.push(SceneBand { x, y, size, peak, half_x, sigma_y, lane: li });
+            bands.push(SceneBand {
+                x,
+                y,
+                size,
+                peak,
+                half_x,
+                sigma_y,
+                lane: li,
+            });
         };
         match &lane.content {
             LaneContent::Ladder(name) => {
@@ -329,7 +347,11 @@ fn build_scene(cfg: &SimConfig, r: &mut Rng) -> (Vec<SceneLane>, Vec<SceneBand>)
                     // rungs are heavier/brighter, otherwise fall back to a
                     // plausible mass so intensity tracks amount, not a random amp.
                     let mass = band.mass_ng.unwrap_or_else(|| {
-                        if band.reference { r.range(80.0, 120.0) } else { r.range(30.0, 55.0) }
+                        if band.reference {
+                            r.range(80.0, 120.0)
+                        } else {
+                            r.range(30.0, 55.0)
+                        }
                     });
                     push_band(band.size, mass, &mut bands);
                 }
@@ -478,8 +500,10 @@ pub fn simulate(cfg: &SimConfig) -> RenderedGel {
             let frame = (outer - inner).max(0.0);
             acc -= 0.05 * inner; // slot slightly darker than the gel
             acc -= 0.10 * frame; // darker outline
-            // Bright residual un-migrated material stuck at the well.
-            acc += l.well_residual * super_x(dx, l.half_x * 0.85) * (-0.5 * (dyw / 1.0).powi(2)).exp();
+                                 // Bright residual un-migrated material stuck at the well.
+            let residual =
+                l.well_residual * super_x(dx, l.half_x * 0.85) * (-0.5 * (dyw / 1.0).powi(2)).exp();
+            acc += residual;
         }
         acc
     };
@@ -503,9 +527,12 @@ pub fn simulate(cfg: &SimConfig) -> RenderedGel {
             let gel_signal = (scene_at(gx, gy) + wells_at(gx, gy) + fluor) * m;
             // Uneven (darker) camera background, present across the whole frame.
             let bg = cfg.gel.background
-                * (0.5 + 0.5 * (fx as f64 * bg_ax + bg_phx).sin() * (fy as f64 * bg_ay + bg_phy).cos());
+                * (0.5
+                    + 0.5
+                        * (fx as f64 * bg_ax + bg_phx).sin()
+                        * (fy as f64 * bg_ay + bg_phy).cos());
             // Exposure gain on gel emission, then saturation clip (overexposure).
-            let mut val = (gel_signal * cfg.gel.exposure + bg).min(1.0).max(0.0);
+            let mut val = (gel_signal * cfg.gel.exposure + bg).clamp(0.0, 1.0);
             // Poisson shot noise.
             if cfg.gel.photons > 0.0 {
                 val = (noise_rng.poisson(val * cfg.gel.photons) / cfg.gel.photons).min(1.0);

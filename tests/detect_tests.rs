@@ -1,9 +1,9 @@
+use ndarray::Array2;
 use opengel::core::model::{GelType, LadderBand, LadderTemplate};
 use opengel::core::GrayF32;
 use opengel::detect::detector::{DetectParams, GelDetector};
 use opengel::detect::eval::{aggregate, evaluate, GroundTruth, GtBand, GtLane};
 use opengel::detect::{analyze, ClassicalDetector};
-use ndarray::Array2;
 
 const W: usize = 200;
 const H: usize = 300;
@@ -94,7 +94,11 @@ fn pipeline_identifies_ladder_and_sizes_bands() {
     let analysis = analyze(&img, GelType::Dna, &DetectParams::default(), &cands, 0.9);
 
     // The leftmost lane is the ladder.
-    let ladder_lane = analysis.lanes.iter().find(|l| l.is_ladder).expect("a ladder lane");
+    let ladder_lane = analysis
+        .lanes
+        .iter()
+        .find(|l| l.is_ladder)
+        .expect("a ladder lane");
     assert_eq!(ladder_lane.id, 0);
     assert_eq!(analysis.ladder_assignments.len(), 1);
     assert_eq!(analysis.ladder_assignments[0].template_name, "test-ladder");
@@ -143,7 +147,14 @@ fn eval_harness_scores_perfect_on_ground_truth() {
         x_max: 40,
         is_ladder: true,
         ladder_name: Some("test-ladder".into()),
-        bands: ladder_ys().iter().map(|&y| GtBand { y_center: y, size: None, v_true: None }).collect(),
+        bands: ladder_ys()
+            .iter()
+            .map(|&y| GtBand {
+                y_center: y,
+                size: None,
+                v_true: None,
+            })
+            .collect(),
     }];
     for &x in &[70u32, 110, 150] {
         lanes.push(GtLane {
@@ -153,7 +164,11 @@ fn eval_harness_scores_perfect_on_ground_truth() {
             ladder_name: None,
             bands: [70.0, 150.0, 210.0]
                 .iter()
-                .map(|&y| GtBand { y_center: y, size: None, v_true: None })
+                .map(|&y| GtBand {
+                    y_center: y,
+                    size: None,
+                    v_true: None,
+                })
                 .collect(),
         });
     }
