@@ -171,6 +171,7 @@ fn convert_pair(img_path: &Path, mask_path: &Path) -> Result<GroundTruth> {
             .map(|b| GtBand {
                 y_center: b.1,
                 size: None,
+                v_true: None,
             })
             .collect();
         gbands.sort_by(|a, b| a.y_center.partial_cmp(&b.y_center).unwrap());

@@ -39,6 +39,7 @@ pub fn write_dataset(dir: &std::path::Path) -> Result<()> {
                 .map(|&s| GtBand {
                     y_center: size_to_y(s),
                     size: Some(s),
+                    v_true: None,
                 })
                 .collect(),
         })

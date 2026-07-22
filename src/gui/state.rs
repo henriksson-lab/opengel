@@ -74,6 +74,12 @@ pub struct AppState {
     pub disp_hi: f32,
     /// Invert the displayed image (dark-on-light ↔ light-on-dark).
     pub invert: bool,
+    /// Show the dewarped (rectified) gel: a fixed, straightened view produced by
+    /// resampling through the fitted warp. Rotation/zoom/pan do not apply.
+    pub show_unwarped: bool,
+    /// Fit the gel warp by optical flow (recovers band twist between lanes) when
+    /// running detection.
+    pub optical_flow: bool,
     /// Which captured frame to display: `None` = the merged HDR working image,
     /// `Some(i)` = raw frame `i`. Analysis always uses the merged image.
     pub view_frame: Option<usize>,
@@ -102,6 +108,8 @@ impl AppState {
             disp_lo: 0.0,
             disp_hi: 1.0,
             invert: false,
+            show_unwarped: false,
+            optical_flow: false,
             view_frame: None,
             trace_mode: TraceMode::Intensity,
             selected_lanes: std::collections::BTreeSet::new(),
@@ -144,7 +152,7 @@ impl AppState {
                 continue;
             }
             let mut bands: Vec<&Band> = a.bands.iter().filter(|b| b.lane_id == lane.id).collect();
-            bands.sort_by(|x, y| x.y_center.partial_cmp(&y.y_center).unwrap());
+            bands.sort_by(|x, y| x.v_center.partial_cmp(&y.v_center).unwrap());
             for b in bands {
                 let quant = a.quantifications.iter().find(|q| q.target_id == b.id);
                 let ng = quant
@@ -166,7 +174,7 @@ impl AppState {
                     expanded: false,
                     is_ladder: lane.is_ladder,
                     name,
-                    rf: b.rf.map(|r| format!("{r:.2}")).unwrap_or_else(|| "-".into()),
+                    rf: format!("{:.2}", b.rf()),
                     size: b
                         .size
                         .map(|s| format!("{s:.0} {unit}"))
@@ -351,6 +359,24 @@ impl AppState {
         self.invert = on;
     }
 
+    pub fn set_show_unwarped(&mut self, on: bool) {
+        self.show_unwarped = on;
+    }
+
+    /// The dewarped (rectified) working image and its overlays, in rectified
+    /// `(u, v)` space where lanes are vertical and bands horizontal. `None` when
+    /// there is no working image.
+    pub fn unwarped_view(&self) -> Option<GrayF32> {
+        let work = self.work.as_ref()?;
+        let warp = self
+            .analysis()
+            .map(|a| a.warp_or_identity(work.width() as u32, work.height() as u32))
+            .unwrap_or_else(|| {
+                opengel::core::GelWarp::identity(work.width() as u32, work.height() as u32)
+            });
+        Some(warp.rectify(work, work.width(), work.height()))
+    }
+
     /// Reset the contrast window to full range.
     pub fn reset_display_window(&mut self) {
         self.disp_lo = 0.0;
@@ -395,7 +421,7 @@ impl AppState {
             .bands
             .iter()
             .filter(|b| b.lane_id == assign.lane_id)
-            .filter_map(|b| b.known_size.map(|s| (b.y_center, s)))
+            .filter_map(|b| b.known_size.map(|s| (b.v_center, s)))
             .collect();
         opengel::core::quant::SizingFit::fit(&pts)
     }
@@ -422,15 +448,15 @@ impl AppState {
         };
         let slope = self.cal_slope();
         let fit = self.sizing_fit();
+        let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
+        let h = img.height() as f64;
         let mut out = Vec::new();
         for lane in &a.lanes {
             if !self.selected_lanes.contains(&lane.id) {
                 continue;
             }
-            let inten = subtract_baseline(
-                &lane_row_profile(img, lane.x_min as usize, lane.x_max as usize),
-                25,
-            );
+            let (x0, x1) = lane.px_x_bounds(&warp);
+            let inten = subtract_baseline(&lane_row_profile(img, x0, x1), 25);
             let values: Vec<f64> = inten
                 .iter()
                 .enumerate()
@@ -439,7 +465,7 @@ impl AppState {
                     TraceMode::Ng => v * slope,
                     TraceMode::Molarity => {
                         let ng = v * slope;
-                        match fit.map(|f| f.size_at(y as f64)) {
+                        match fit.map(|f| f.size_at(y as f64 / h)) {
                             Some(size) if size > 0.0 => {
                                 mass_ng_to_nmol(ng, size, self.gel_type).unwrap_or(0.0)
                             }
@@ -494,14 +520,11 @@ impl AppState {
         let cols: [(f64, bool); 4] = [(0.18, true), (0.40, false), (0.60, false), (0.80, false)];
         let mut bid = 0u32;
         for (i, (fx, is_ladder)) in cols.iter().enumerate() {
-            let cx = fx * w;
-            let half = (0.05 * w).max(6.0);
+            let half = (0.05 * w).max(6.0) / w;
             a.lanes.push(Lane {
                 id: i as u32,
-                x_min: (cx - half).max(0.0) as u32,
-                x_max: (cx + half).min(w) as u32,
-                y_min: 0,
-                y_max: h as u32,
+                u_min: (fx - half).max(0.0),
+                u_max: (fx + half).min(1.0),
                 label: Some(if *is_ladder {
                     "Ladder".into()
                 } else {
@@ -518,10 +541,9 @@ impl AppState {
                 a.bands.push(Band {
                     id: bid,
                     lane_id: i as u32,
-                    y_center: fy * h,
-                    y_half_width: (0.012 * h).max(2.0),
+                    v_center: fy,
+                    v_half_width: (0.012 * h).max(2.0) / h,
                     integrated_density: 0.0,
-                    rf: Some(fy),
                     size: None,
                     known_size: None,
                 });
@@ -555,16 +577,19 @@ impl AppState {
             return "No regions to measure — add lanes/bands or use Demo annotation.".into();
         }
         // Background-subtracted densitometry trace per lane.
+        let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
+        let h = img.height() as f64;
         let mut prof: HashMap<u32, Vec<f64>> = HashMap::new();
         for lane in &a.lanes {
-            let raw = lane_row_profile(&img, lane.x_min as usize, lane.x_max as usize);
+            let (x0, x1) = lane.px_x_bounds(&warp);
+            let raw = lane_row_profile(&img, x0, x1);
             prof.insert(lane.id, subtract_baseline(&raw, 25));
         }
         let mut n = 0;
         for b in &mut a.bands {
             if let Some(p) = prof.get(&b.lane_id) {
-                let y0 = (b.y_center - b.y_half_width).max(0.0) as usize;
-                let y1 = ((b.y_center + b.y_half_width) as usize + 1).min(p.len());
+                let y0 = ((b.v_center - b.v_half_width) * h).max(0.0) as usize;
+                let y1 = (((b.v_center + b.v_half_width) * h) as usize + 1).min(p.len());
                 if y0 < y1 {
                     b.integrated_density = p[y0..y1].iter().sum();
                     n += 1;
@@ -732,7 +757,10 @@ impl AppState {
     pub fn analyze(&mut self, force_template: Option<&str>) -> Result<String> {
         let work = self.display_image().ok_or_else(|| anyhow!("no image loaded"))?;
         let work = &work;
-        let params = DetectParams::default();
+        let params = DetectParams {
+            optical_flow_warp: self.optical_flow,
+            ..DetectParams::default()
+        };
 
         let (candidates, min_r2): (Vec<&opengel::core::LadderTemplate>, f64) = match force_template {
             Some(name) => {
@@ -774,16 +802,17 @@ impl AppState {
 
     pub fn add_lane_at(&mut self, nx: f64) -> String {
         self.with_analysis_mut(|a, img| {
-            let w = img.width() as f64;
-            let cx = nx.clamp(0.0, 1.0) * w;
-            let half = (0.04 * w).max(4.0);
+            let (w, h) = (img.width() as u32, img.height() as u32);
+            let warp = a.warp_or_identity(w, h);
+            let cx = nx.clamp(0.0, 1.0) * w as f64;
+            let half = (0.04 * w as f64).max(4.0);
+            let (u_lo, _) = warp.invert((cx - half).max(0.0), 0.0);
+            let (u_hi, _) = warp.invert((cx + half).min(w as f64), 0.0);
             let id = a.lanes.iter().map(|l| l.id).max().map_or(0, |m| m + 1);
             a.lanes.push(Lane {
                 id,
-                x_min: (cx - half).max(0.0) as u32,
-                x_max: (cx + half).min(w) as u32,
-                y_min: 0,
-                y_max: img.height() as u32,
+                u_min: u_lo.min(u_hi),
+                u_max: u_lo.max(u_hi),
                 label: None,
                 is_ladder: false,
             });
@@ -793,8 +822,9 @@ impl AppState {
 
     pub fn delete_lane_near(&mut self, nx: f64) -> String {
         self.with_analysis_mut(|a, img| {
+            let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
             let x = nx.clamp(0.0, 1.0) * img.width() as f64;
-            let Some(pos) = nearest_lane(a, x) else {
+            let Some(pos) = nearest_lane(a, &warp, x) else {
                 return "No lanes.".into();
             };
             let id = a.lanes[pos].id;
@@ -807,8 +837,9 @@ impl AppState {
 
     pub fn toggle_ladder_near(&mut self, nx: f64) -> String {
         self.with_analysis_mut(|a, img| {
+            let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
             let x = nx.clamp(0.0, 1.0) * img.width() as f64;
-            let Some(pos) = nearest_lane(a, x) else {
+            let Some(pos) = nearest_lane(a, &warp, x) else {
                 return "No lanes.".into();
             };
             a.lanes[pos].is_ladder = !a.lanes[pos].is_ladder;
@@ -821,24 +852,26 @@ impl AppState {
 
     pub fn add_band_at(&mut self, nx: f64, ny: f64) -> String {
         self.with_analysis_mut(|a, img| {
-            let x = nx.clamp(0.0, 1.0) * img.width() as f64;
-            let yc = ny.clamp(0.0, 1.0) * img.height() as f64;
-            let Some(pos) = nearest_lane(a, x) else {
+            let (w, h) = (img.width() as u32, img.height() as u32);
+            let warp = a.warp_or_identity(w, h);
+            let x = nx.clamp(0.0, 1.0) * w as f64;
+            let yc = ny.clamp(0.0, 1.0) * h as f64;
+            let Some(pos) = nearest_lane(a, &warp, x) else {
                 return "Add a lane first.".into();
             };
             let lane = &a.lanes[pos];
             let half = 5.0;
-            let density = window_density(img, lane.x_min as usize, lane.x_max as usize, yc, half);
-            let rf = Some((yc - lane.y_min as f64) / (lane.y_max - lane.y_min).max(1) as f64);
+            let (x0, x1) = lane.px_x_bounds(&warp);
+            let density = window_density(img, x0, x1, yc, half);
+            let v_center = ny.clamp(0.0, 1.0);
             let id = a.bands.iter().map(|b| b.id).max().map_or(0, |m| m + 1);
             let lane_id = lane.id;
             a.bands.push(Band {
                 id,
                 lane_id,
-                y_center: yc,
-                y_half_width: half,
+                v_center,
+                v_half_width: half / h as f64,
                 integrated_density: density,
-                rf,
                 size: None,
                 known_size: None,
             });
@@ -848,8 +881,10 @@ impl AppState {
 
     pub fn delete_band_near(&mut self, nx: f64, ny: f64) -> String {
         self.with_analysis_mut(|a, img| {
+            let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
+            let h = img.height() as f64;
             let x = nx.clamp(0.0, 1.0) * img.width() as f64;
-            let y = ny.clamp(0.0, 1.0) * img.height() as f64;
+            let y = ny.clamp(0.0, 1.0) * h;
             let mut best = None;
             let mut best_d = f64::INFINITY;
             for (i, b) in a.bands.iter().enumerate() {
@@ -857,9 +892,9 @@ impl AppState {
                     .lanes
                     .iter()
                     .find(|l| l.id == b.lane_id)
-                    .map(|l| (l.x_min + l.x_max) as f64 / 2.0)
+                    .map(|l| l.px_x_center(&warp))
                     .unwrap_or(x);
-                let d = (lane_cx - x).powi(2) + (b.y_center - y).powi(2);
+                let d = (lane_cx - x).powi(2) + (b.v_center * h - y).powi(2);
                 if d < best_d {
                     best_d = d;
                     best = Some(i);
@@ -1010,7 +1045,7 @@ fn apply_ladder_to_lane(a: &mut Analysis, lane_id: u32, template: &LadderTemplat
         .filter(|(_, b)| b.lane_id == lane_id)
         .map(|(i, _)| i)
         .collect();
-    let positions: Vec<f64> = idxs.iter().map(|&i| a.bands[i].y_center).collect();
+    let positions: Vec<f64> = idxs.iter().map(|&i| a.bands[i].v_center).collect();
     // The user picked this template explicitly, so accept any fit (min_r2 = 0).
     let m = best_template(&positions, std::iter::once(template), 0.0)?;
 
@@ -1046,7 +1081,7 @@ fn resize_sample_lanes(a: &mut Analysis) {
         .bands
         .iter()
         .filter(|b| b.lane_id == assign.lane_id)
-        .filter_map(|b| b.known_size.map(|s| (b.y_center, s)))
+        .filter_map(|b| b.known_size.map(|s| (b.v_center, s)))
         .collect();
     let Some(fit) = opengel::core::quant::SizingFit::fit(&pts) else {
         return;
@@ -1055,19 +1090,19 @@ fn resize_sample_lanes(a: &mut Analysis) {
         a.lanes.iter().filter(|l| l.is_ladder).map(|l| l.id).collect();
     for b in &mut a.bands {
         if !ladder_ids.contains(&b.lane_id) {
-            b.size = Some(fit.size_at(b.y_center));
+            b.size = Some(fit.size_at(b.v_center));
         }
     }
 }
 
-/// Index of the lane whose x-center is nearest `x`.
-fn nearest_lane(a: &Analysis, x: f64) -> Option<usize> {
+/// Index of the lane whose pixel x-center is nearest `x`.
+fn nearest_lane(a: &Analysis, warp: &opengel::core::GelWarp, x: f64) -> Option<usize> {
     a.lanes
         .iter()
         .enumerate()
         .min_by(|(_, l), (_, m)| {
-            let dl = ((l.x_min + l.x_max) as f64 / 2.0 - x).abs();
-            let dm = ((m.x_min + m.x_max) as f64 / 2.0 - x).abs();
+            let dl = (l.px_x_center(warp) - x).abs();
+            let dm = (m.px_x_center(warp) - x).abs();
             dl.partial_cmp(&dm).unwrap()
         })
         .map(|(i, _)| i)

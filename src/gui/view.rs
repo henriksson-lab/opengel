@@ -193,7 +193,15 @@ fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
 /// contrast window, inversion and overlays. Zoom/rotation are applied live by
 /// the UI. Also refreshes the histogram thumbnail for the contrast control.
 pub fn refresh_image(ui: &AppWindow, state: &AppState) {
-    if let Some(work) = state.display_gray() {
+    if state.show_unwarped {
+        // Dewarped: show the rectified gel with overlays in rectified (u,v)
+        // coordinates (lanes vertical, bands horizontal).
+        if let Some(rect) = state.unwarped_view() {
+            let overlays = compute_overlays_unwarped(state);
+            let img = to_slint_image(&rect, state.disp_lo, state.disp_hi, state.invert, &overlays);
+            ui.set_gel_image(img);
+        }
+    } else if let Some(work) = state.display_gray() {
         let overlays = compute_overlays(state);
         let img = to_slint_image(&work, state.disp_lo, state.disp_hi, state.invert, &overlays);
         ui.set_gel_image(img);
@@ -208,12 +216,51 @@ fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
     let (Some(a), Some(work)) = (state.analysis(), state.view_image()) else {
         return out;
     };
-    let (w, h) = (work.width().max(1) as f32, work.height().max(1) as f32);
+    let w = work.width().max(1) as f32;
+    // Overlays are axis-aligned bounding rectangles of each lane/band footprint,
+    // derived from the fitted warp (identity when none). Drawing the true curved
+    // strip/smile outline is a later refinement.
+    let warp = a.warp_or_identity(work.width() as u32, work.height() as u32);
+    for lane in &a.lanes {
+        let (x0, x1) = lane.px_x_bounds(&warp);
+        out.push(OverlayBox {
+            x: x0 as f32 / w,
+            y: 0.0,
+            w: (x1 - x0) as f32 / w,
+            h: 1.0,
+            ladder: lane.is_ladder,
+            is_lane: true,
+        });
+    }
+    for b in &a.bands {
+        if let Some(lane) = a.lanes.iter().find(|l| l.id == b.lane_id) {
+            let (x0, x1) = lane.px_x_bounds(&warp);
+            out.push(OverlayBox {
+                x: x0 as f32 / w,
+                y: (b.v_center - b.v_half_width) as f32,
+                w: (x1 - x0) as f32 / w,
+                h: (2.0 * b.v_half_width) as f32,
+                ladder: lane.is_ladder,
+                is_lane: false,
+            });
+        }
+    }
+    out
+}
+
+/// Overlays for the dewarped view: in rectified space the lane strip and band
+/// footprint are axis-aligned, so `(u, v)` map directly to the overlay's
+/// normalized rectangle.
+fn compute_overlays_unwarped(state: &AppState) -> Vec<OverlayBox> {
+    let mut out = Vec::new();
+    let Some(a) = state.analysis() else {
+        return out;
+    };
     for lane in &a.lanes {
         out.push(OverlayBox {
-            x: lane.x_min as f32 / w,
+            x: lane.u_min as f32,
             y: 0.0,
-            w: (lane.x_max - lane.x_min) as f32 / w,
+            w: (lane.u_max - lane.u_min) as f32,
             h: 1.0,
             ladder: lane.is_ladder,
             is_lane: true,
@@ -222,10 +269,10 @@ fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
     for b in &a.bands {
         if let Some(lane) = a.lanes.iter().find(|l| l.id == b.lane_id) {
             out.push(OverlayBox {
-                x: lane.x_min as f32 / w,
-                y: ((b.y_center - b.y_half_width) as f32) / h,
-                w: (lane.x_max - lane.x_min) as f32 / w,
-                h: (2.0 * b.y_half_width as f32) / h,
+                x: lane.u_min as f32,
+                y: (b.v_center - b.v_half_width) as f32,
+                w: (lane.u_max - lane.u_min) as f32,
+                h: (2.0 * b.v_half_width) as f32,
                 ladder: lane.is_ladder,
                 is_lane: false,
             });

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#12333b"/>
+      <stop offset="1" stop-color="#0a1f24"/>
+    </linearGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fe3c8"/>
+      <stop offset="1" stop-color="#39c6a0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded-square background -->
+  <rect x="64" y="64" width="896" height="896" rx="180" fill="url(#bg)"/>
+
+  <!-- gel window -->
+  <rect x="208" y="176" width="608" height="672" rx="28" fill="#06181c"/>
+
+  <!-- four lanes, each with a few horizontal bands (brighter = more sample) -->
+  <g fill="url(#band)">
+    <!-- lane 1 (ladder: many rungs) -->
+    <rect x="256" y="248" width="96" height="26" rx="9" opacity="0.95"/>
+    <rect x="256" y="322" width="96" height="22" rx="9" opacity="0.85"/>
+    <rect x="256" y="404" width="96" height="20" rx="9" opacity="0.75"/>
+    <rect x="256" y="496" width="96" height="20" rx="9" opacity="0.70"/>
+    <rect x="256" y="596" width="96" height="22" rx="9" opacity="0.80"/>
+    <rect x="256" y="704" width="96" height="26" rx="9" opacity="0.95"/>
+
+    <!-- lane 2 -->
+    <rect x="392" y="360" width="96" height="30" rx="10" opacity="0.95"/>
+    <rect x="392" y="520" width="96" height="24" rx="10" opacity="0.80"/>
+    <rect x="392" y="648" width="96" height="20" rx="10" opacity="0.60"/>
+
+    <!-- lane 3 -->
+    <rect x="536" y="300" width="96" height="26" rx="10" opacity="0.85"/>
+    <rect x="536" y="470" width="96" height="34" rx="10" opacity="1.0"/>
+
+    <!-- lane 4 -->
+    <rect x="672" y="404" width="96" height="24" rx="10" opacity="0.80"/>
+    <rect x="672" y="556" width="96" height="28" rx="10" opacity="0.90"/>
+    <rect x="672" y="700" width="96" height="20" rx="10" opacity="0.60"/>
+  </g>
+</svg>

@@ -105,7 +105,7 @@ fn pipeline_identifies_ladder_and_sizes_bands() {
         .iter()
         .filter(|b| b.lane_id == ladder_lane.id)
         .collect();
-    ladder_bands.sort_by(|a, b| a.y_center.partial_cmp(&b.y_center).unwrap());
+    ladder_bands.sort_by(|a, b| a.v_center.partial_cmp(&b.v_center).unwrap());
     assert_eq!(ladder_bands.len(), 5);
     for (band, &y) in ladder_bands.iter().zip(&ladder_ys()) {
         let expected = ladder_size(y);
@@ -126,7 +126,7 @@ fn pipeline_identifies_ladder_and_sizes_bands() {
     }
     // Within a sample lane, larger y => smaller size.
     sample.retain(|b| b.lane_id == 1);
-    sample.sort_by(|a, b| a.y_center.partial_cmp(&b.y_center).unwrap());
+    sample.sort_by(|a, b| a.v_center.partial_cmp(&b.v_center).unwrap());
     for w in sample.windows(2) {
         assert!(w[0].size.unwrap() > w[1].size.unwrap());
     }
@@ -143,7 +143,7 @@ fn eval_harness_scores_perfect_on_ground_truth() {
         x_max: 40,
         is_ladder: true,
         ladder_name: Some("test-ladder".into()),
-        bands: ladder_ys().iter().map(|&y| GtBand { y_center: y, size: None }).collect(),
+        bands: ladder_ys().iter().map(|&y| GtBand { y_center: y, size: None, v_true: None }).collect(),
     }];
     for &x in &[70u32, 110, 150] {
         lanes.push(GtLane {
@@ -153,7 +153,7 @@ fn eval_harness_scores_perfect_on_ground_truth() {
             ladder_name: None,
             bands: [70.0, 150.0, 210.0]
                 .iter()
-                .map(|&y| GtBand { y_center: y, size: None })
+                .map(|&y| GtBand { y_center: y, size: None, v_true: None })
                 .collect(),
         });
     }

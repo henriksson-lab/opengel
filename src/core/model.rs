@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::warp::GelWarp;
+
 /// The kind of gel, which determines molarity conversion and which ladder
 /// templates are applicable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,17 +80,16 @@ pub struct GelImage {
     pub meta: CaptureMeta,
 }
 
-/// A lane: a vertical strip of the gel bounded in x. Bands migrate downward
-/// (increasing y) within it.
+/// A lane, expressed in the gel's rectified coordinate space: a `u`-interval
+/// (cross-lane axis). Its image footprint is the curved strip
+/// `warp.eval([u_min, u_max] × [0, 1])`. Under the identity warp this is just a
+/// vertical pixel column `[u_min·W, u_max·W]`, recovering the naive rectangle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lane {
     pub id: u32,
-    /// Left/right pixel bounds (inclusive left, exclusive right).
-    pub x_min: u32,
-    pub x_max: u32,
-    /// Top/bottom pixel bounds of the lane's active region.
-    pub y_min: u32,
-    pub y_max: u32,
+    /// Left/right bounds along the cross-lane axis `u`, in `[0, 1]`.
+    pub u_min: f64,
+    pub u_max: f64,
     #[serde(default)]
     pub label: Option<String>,
     /// True when this lane has been identified/assigned as a ladder.
@@ -96,26 +97,66 @@ pub struct Lane {
     pub is_ladder: bool,
 }
 
-/// A detected band within a lane.
+impl Lane {
+    /// Cross-lane center `u`.
+    pub fn u_center(&self) -> f64 {
+        0.5 * (self.u_min + self.u_max)
+    }
+
+    /// Pixel x-bounds of the lane strip (evaluated at the top of the gel),
+    /// via `warp`. Use for densitometry columns and overlay drawing.
+    pub fn px_x_bounds(&self, warp: &GelWarp) -> (usize, usize) {
+        let x0 = warp.eval(self.u_min, 0.0).0;
+        let x1 = warp.eval(self.u_max, 0.0).0;
+        (x0.min(x1).max(0.0) as usize, x0.max(x1).max(0.0) as usize)
+    }
+
+    /// Pixel x of the lane center (at the top of the gel).
+    pub fn px_x_center(&self, warp: &GelWarp) -> f64 {
+        warp.eval(self.u_center(), 0.0).0
+    }
+}
+
+/// A band within a lane, at an iso-migration coordinate `v_center` (the
+/// rectified migration axis). Its image footprint is the smile curve
+/// `warp.eval(u, v_center)` over the lane's `u`-range. Because `v` *is* the
+/// rectified migration coordinate, the retention factor **Rf ≡ v_center**.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Band {
     pub id: u32,
     pub lane_id: u32,
-    /// Center y (pixels) of the band peak.
-    pub y_center: f64,
-    /// Peak half-extent in pixels (band vertical spread).
-    pub y_half_width: f64,
+    /// Migration coordinate of the band peak, in `[0, 1]` (= Rf).
+    pub v_center: f64,
+    /// Peak half-extent along `v` (band spread in migration).
+    pub v_half_width: f64,
     /// Background-subtracted integrated density (area under the peak).
     pub integrated_density: f64,
-    /// Retention factor in [0,1] once the lane extent is known.
-    #[serde(default)]
-    pub rf: Option<f64>,
     /// Estimated size (bp/nt/Da) from ladder calibration.
     #[serde(default)]
     pub size: Option<f64>,
     /// Known size when this band belongs to a ladder lane.
     #[serde(default)]
     pub known_size: Option<f64>,
+}
+
+impl Band {
+    /// Retention factor — identical to `v_center` by construction, kept as a
+    /// named accessor for call sites that speak in Rf.
+    pub fn rf(&self) -> f64 {
+        self.v_center
+    }
+
+    /// Pixel y of the band peak along the lane at cross-lane position `u`.
+    pub fn px_y_center(&self, warp: &GelWarp, u: f64) -> f64 {
+        warp.eval(u, self.v_center).1
+    }
+
+    /// Pixel half-extent of the band along migration at `u`.
+    pub fn px_y_half(&self, warp: &GelWarp, u: f64) -> f64 {
+        let y0 = warp.eval(u, (self.v_center - self.v_half_width).max(0.0)).1;
+        let y1 = warp.eval(u, (self.v_center + self.v_half_width).min(1.0)).1;
+        ((y1 - y0).abs() / 2.0).max(0.5)
+    }
 }
 
 /// A free-form region (spot/blob) not necessarily tied to a lane. Stored as an
@@ -227,6 +268,11 @@ pub enum TargetKind {
 /// The full analysis state (serialized as `analysis.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Analysis {
+    /// Fitted gel warp surface mapping rectified `(u, v)` → image pixels. `None`
+    /// means the identity warp (naive rectangle); lanes/bands then map linearly
+    /// to pixels via the image dimensions.
+    #[serde(default)]
+    pub warp: Option<GelWarp>,
     #[serde(default)]
     pub lanes: Vec<Lane>,
     #[serde(default)]
@@ -239,6 +285,16 @@ pub struct Analysis {
     pub calibration: Option<Calibration>,
     #[serde(default)]
     pub quantifications: Vec<Quantification>,
+}
+
+impl Analysis {
+    /// The effective warp for an image of the given size: the fitted warp if
+    /// present, else the identity warp (naive rectangle).
+    pub fn warp_or_identity(&self, width: u32, height: u32) -> GelWarp {
+        self.warp
+            .clone()
+            .unwrap_or_else(|| GelWarp::identity(width, height))
+    }
 }
 
 /// Current on-disk format version.

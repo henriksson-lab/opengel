@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.opengel.gel+zip">
+    <comment>OpenGel gel project</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.gel.zip"/>
+    <icon name="opengel"/>
+  </mime-type>
+</mime-info>

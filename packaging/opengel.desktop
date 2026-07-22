@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OpenGel
+GenericName=Gel Image Analyzer
+Comment=Capture and quantify gel electrophoresis images
+Exec=opengel %f
+Icon=opengel
+Terminal=false
+Categories=Science;
+MimeType=application/vnd.opengel.gel+zip;
+StartupWMClass=opengel
+Keywords=gel;electrophoresis;DNA;RNA;protein;densitometry;ladder;

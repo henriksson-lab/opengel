@@ -28,10 +28,8 @@ fn gel_zip_roundtrip() {
     // Add a lane so we exercise analysis serialization too.
     doc.project.analysis.lanes.push(opengel::core::Lane {
         id: 0,
-        x_min: 2,
-        x_max: 14,
-        y_min: 0,
-        y_max: 12,
+        u_min: 0.125,
+        u_max: 0.875,
         label: Some("L1".into()),
         is_ladder: true,
     });

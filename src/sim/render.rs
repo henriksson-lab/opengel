@@ -9,6 +9,7 @@
 //! centers, so it stays exact under every effect.
 
 use crate::core::ladders;
+use crate::core::warp::GelWarp;
 use crate::detect::eval::{GroundTruth, GtBand, GtLane};
 use image::{DynamicImage, GrayImage, Luma};
 
@@ -81,6 +82,9 @@ pub struct RenderedGel {
     pub truth: GroundTruth,
     /// The rotation applied (degrees); auto-straighten should recover ~this.
     pub rotation_deg: f64,
+    /// The true canonical→image distortion, baked as a `GelWarp` (the exact
+    /// geometry a detector's warp fit should recover).
+    pub true_warp: GelWarp,
     pub config: SimConfig,
 }
 
@@ -110,7 +114,9 @@ fn build_scene(cfg: &SimConfig, r: &mut Rng) -> (Vec<SceneLane>, Vec<SceneBand>)
     let mut bands = Vec::new();
     for li in 0..n_lanes {
         let x = left + spacing * li as f64;
-        let is_ladder = li == 0;
+        // Second ladder mid-gel (not the opposite edge): a symmetric edge would
+        // have the *same* smile offset as lane 0, leaving no cross-lane signal.
+        let is_ladder = li == 0 || (cfg.two_ladders && li == n_lanes / 2);
         lanes.push(SceneLane {
             is_ladder,
             ladder_name: is_ladder.then(|| cfg.ladder_name.clone()),
@@ -216,12 +222,26 @@ pub fn simulate(cfg: &SimConfig) -> RenderedGel {
     }
 
     let truth = build_truth(cfg, &lanes, &bands, &xform);
+    let true_warp = bake_warp(&xform, w, h);
     RenderedGel {
         image: DynamicImage::ImageLuma8(img),
         truth,
         rotation_deg: cfg.rotation_deg,
+        true_warp,
         config: cfg.clone(),
     }
+}
+
+/// Bake the canonical→image [`Xform`] into a `GelWarp`: sample a dense grid over
+/// the canonical gel `(u, v) → (u·w, v·h)` and forward-map each node. A degree-1
+/// grid interpolates its nodes exactly, so the smile/wobble/rotation is captured
+/// faithfully (piecewise-linear between the dense samples).
+fn bake_warp(xform: &Xform, width: u32, height: u32) -> GelWarp {
+    let (w, h) = (width as f64, height as f64);
+    GelWarp::from_grid_with_degree(16, 16, 1, 1, |u, v| {
+        let (fx, fy) = xform.forward(u * w, v * h);
+        [fx, fy]
+    })
 }
 
 /// Forward-map band centers to build image-space ground truth. Bands mapped
@@ -245,6 +265,9 @@ fn build_truth(
             gt_bands.push(GtBand {
                 y_center: fy,
                 size: Some(b.size),
+                // Canonical (smile-free) migration: the band's y before warping,
+                // normalized by the gel height.
+                v_true: Some(b.y / h),
             });
             xs.push(fx);
         }

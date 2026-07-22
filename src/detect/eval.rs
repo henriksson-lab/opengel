@@ -37,6 +37,11 @@ pub struct GtBand {
     pub y_center: f64,
     #[serde(default)]
     pub size: Option<f64>,
+    /// True rectified migration `v ∈ [0,1]` (canonical, smile-free). Filled by
+    /// the simulator, which knows each band's undistorted position; used to
+    /// score how well a fitted warp recovers migration. `None` for real gels.
+    #[serde(default)]
+    pub v_true: Option<f64>,
 }
 
 /// Metrics for a single evaluated image.
@@ -77,6 +82,69 @@ impl EvalMetrics {
         } else {
             2.0 * p * r / (p + r)
         }
+    }
+}
+
+/// Warp-recovery error: mean absolute difference between the migration a `warp`
+/// assigns to each ground-truth band and the band's true (smile-free) migration.
+///
+/// For each GT band the pixel position is `(lane center x, y_center)`; the warp
+/// inverts it to `v_pred`, compared against `v_true`. The identity warp scores
+/// the raw smile/rotation distortion; a well-fitted warp drives this toward 0.
+/// Returns `None` if no band carries `v_true`.
+pub fn warp_migration_error(warp: &crate::core::warp::GelWarp, gt: &GroundTruth) -> Option<f64> {
+    let mut sum = 0.0;
+    let mut n = 0usize;
+    for lane in &gt.lanes {
+        let cx = (lane.x_min as f64 + lane.x_max as f64) / 2.0;
+        for band in &lane.bands {
+            if let Some(v_true) = band.v_true {
+                let (_, v_pred) = warp.invert(cx, band.y_center);
+                sum += (v_pred - v_true).abs();
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        None
+    } else {
+        Some(sum / n as f64)
+    }
+}
+
+/// Cross-lane smile consistency: for each ladder size appearing in ≥2 lanes,
+/// the spread (max − min) of the migration `v` the `warp` assigns to those
+/// same-size bands. Averaged over sizes. A warp that removes smile maps every
+/// occurrence of a rung to the same `v`, driving this toward 0. Unlike
+/// [`warp_migration_error`] this needs no ground-truth `v_true` — only that the
+/// same size is loaded in multiple lanes — so it scores a *fitted* warp.
+pub fn iso_migration_spread(warp: &crate::core::warp::GelWarp, gt: &GroundTruth) -> Option<f64> {
+    let mut groups: Vec<(f64, Vec<f64>)> = Vec::new();
+    for lane in &gt.lanes {
+        let cx = (lane.x_min as f64 + lane.x_max as f64) / 2.0;
+        for b in &lane.bands {
+            if let Some(s) = b.size {
+                let (_, v) = warp.invert(cx, b.y_center);
+                match groups.iter_mut().find(|(gs, _)| (*gs - s).abs() < 1e-6) {
+                    Some((_, vs)) => vs.push(v),
+                    None => groups.push((s, vec![v])),
+                }
+            }
+        }
+    }
+    let spreads: Vec<f64> = groups
+        .iter()
+        .filter(|(_, vs)| vs.len() >= 2)
+        .map(|(_, vs)| {
+            let hi = vs.iter().cloned().fold(f64::MIN, f64::max);
+            let lo = vs.iter().cloned().fold(f64::MAX, f64::min);
+            hi - lo
+        })
+        .collect();
+    if spreads.is_empty() {
+        None
+    } else {
+        Some(spreads.iter().sum::<f64>() / spreads.len() as f64)
     }
 }
 
@@ -143,7 +211,7 @@ pub fn evaluate(
     let mut abs_err_sum = 0.0;
     for (gi, pi) in &lane_pairs {
         let gt_bands = &gt.lanes[*gi].bands;
-        let pred_bands: Vec<&crate::core::model::Band> = det
+        let pred_bands: Vec<&crate::detect::detector::DetBand> = det
             .bands
             .iter()
             .filter(|b| b.lane_id == det.lanes[*pi].id)

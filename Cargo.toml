@@ -7,6 +7,10 @@ license = "MIT OR Apache-2.0"
 authors = ["OpenGel contributors"]
 repository = "https://github.com/opengel/opengel"
 build = "build.rs"
+# Publish only what builds the crate — src/ (incl. the .slint UI and bundled
+# ladder JSON), build.rs, tests and the README. This keeps the multi-GB image
+# datasets and other repo-only files (assets/, packaging/, Makefile) out.
+include = ["/src", "/build.rs", "/tests", "/README.md"]
 
 [lib]
 name = "opengel"

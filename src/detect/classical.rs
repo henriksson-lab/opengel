@@ -6,10 +6,9 @@
 //!    to get a vertical densitometry trace; subtract a rolling-ball baseline;
 //!    detect and integrate peaks as bands.
 
-use crate::core::model::{Band, Lane};
 use crate::core::GrayF32;
 
-use crate::detect::detector::{DetectParams, Detection, GelDetector};
+use crate::detect::detector::{DetBand, DetLane, DetectParams, Detection, GelDetector};
 use crate::detect::signal::{find_peaks, smooth, subtract_baseline};
 
 pub struct ClassicalDetector;
@@ -37,7 +36,6 @@ impl GelDetector for ClassicalDetector {
         } else {
             img.inverted()
         };
-        let h = work.height();
         let lanes = detect_lanes(&work, params);
 
         let mut bands = Vec::new();
@@ -45,20 +43,13 @@ impl GelDetector for ClassicalDetector {
         for lane in &lanes {
             for b in detect_bands_in_lane(&work, lane, params) {
                 let (y_center, y_half, area) = b;
-                let rf = if h > 1 {
-                    Some((y_center - lane.y_min as f64) / (lane.y_max - lane.y_min).max(1) as f64)
-                } else {
-                    None
-                };
-                bands.push(Band {
+                bands.push(DetBand {
                     id: band_id,
                     lane_id: lane.id,
+                    x_center: lane.x_center(),
                     y_center,
                     y_half_width: y_half,
                     integrated_density: area,
-                    rf,
-                    size: None,
-                    known_size: None,
                 });
                 band_id += 1;
             }
@@ -94,7 +85,7 @@ pub fn lane_row_profile(img: &GrayF32, x_min: usize, x_max: usize) -> Vec<f64> {
     profile
 }
 
-fn detect_lanes(img: &GrayF32, params: &DetectParams) -> Vec<Lane> {
+fn detect_lanes(img: &GrayF32, params: &DetectParams) -> Vec<DetLane> {
     let raw = column_profile(img);
     let profile = smooth(&raw, params.column_smooth);
     let max = profile.iter().cloned().fold(0.0f64, f64::max);
@@ -115,13 +106,12 @@ fn detect_lanes(img: &GrayF32, params: &DetectParams) -> Vec<Lane> {
     peaks
         .into_iter()
         .enumerate()
-        .map(|(i, p)| Lane {
+        .map(|(i, p)| DetLane {
             id: i as u32,
             x_min: p.left as u32,
             x_max: (p.right as u32 + 1).min(img.width() as u32),
             y_min: 0,
             y_max: h,
-            label: None,
             is_ladder: false,
         })
         .collect()
@@ -130,7 +120,7 @@ fn detect_lanes(img: &GrayF32, params: &DetectParams) -> Vec<Lane> {
 /// Returns `(y_center, y_half_width, integrated_density)` per band.
 fn detect_bands_in_lane(
     img: &GrayF32,
-    lane: &Lane,
+    lane: &DetLane,
     params: &DetectParams,
 ) -> Vec<(f64, f64, f64)> {
     let raw = lane_row_profile(img, lane.x_min as usize, lane.x_max as usize);

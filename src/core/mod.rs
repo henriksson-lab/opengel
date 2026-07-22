@@ -16,6 +16,7 @@ pub mod imagef32;
 pub mod ladders;
 pub mod model;
 pub mod quant;
+pub mod warp;
 
 pub use format::GelDocument;
 pub use imagef32::GrayF32;
@@ -23,3 +24,4 @@ pub use model::{
     Analysis, Band, Blob, Calibration, CaptureMeta, GelImage, GelProject, GelType, Lane,
     LadderAssignment, LadderBand, LadderTemplate, Quantification, TargetKind, FORMAT_VERSION,
 };
+pub use warp::GelWarp;

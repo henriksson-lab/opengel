@@ -43,6 +43,9 @@ enum Command {
         /// Minimum semi-log R² to accept a ladder identification.
         #[arg(long, default_value_t = 0.9)]
         min_r2: f64,
+        /// Fit the gel warp by optical flow (recovers band twist between lanes).
+        #[arg(long)]
+        optical_flow: bool,
     },
     /// Evaluate the classical detector over a directory of `*.gt.json` +
     /// referenced images.
@@ -88,11 +91,12 @@ fn main() -> Result<()> {
         Command::Info { path } => cmd_info(&path),
         Command::Ladders { gel_type } => cmd_ladders(gel_type.as_deref()),
         Command::Analyze {
+            optical_flow,
             path,
             gel_type,
             out,
             min_r2,
-        } => cmd_analyze(&path, gel_type.as_deref(), out.as_deref(), min_r2),
+        } => cmd_analyze(&path, gel_type.as_deref(), out.as_deref(), min_r2, optical_flow),
         Command::Eval { dir } => cmd_eval(&dir),
         Command::MakeDemo { out } => demo::write_demo(&out),
         Command::MakeDataset { dir } => demo::write_dataset(&dir),
@@ -200,6 +204,7 @@ fn cmd_analyze(
     gel_type: Option<&str>,
     out: Option<&std::path::Path>,
     min_r2: f64,
+    optical_flow: bool,
 ) -> Result<()> {
     let gt_override = gel_type.map(parse_gel_type).transpose()?;
     let mut doc = load_or_import(path, gt_override.unwrap_or(GelType::Dna))?;
@@ -209,7 +214,10 @@ fn cmd_analyze(
     let gt = doc.project.gel_type;
     let img = work::working_image(&doc).context("no images to analyze")?;
 
-    let params = DetectParams::default();
+    let params = DetectParams {
+        optical_flow_warp: optical_flow,
+        ..DetectParams::default()
+    };
     let analysis = opengel::detect::analyze(&img, gt, &params, &[], min_r2);
     println!(
         "detected {} lanes, {} bands",

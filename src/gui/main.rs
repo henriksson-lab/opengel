@@ -89,6 +89,7 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_analyze(move || {
             let ui = ui_weak.unwrap();
+            state.borrow_mut().optical_flow = ui.get_optical_flow();
             match state.borrow_mut().analyze(None) {
                 Ok(msg) => ui.set_status(msg.into()),
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
@@ -218,6 +219,7 @@ fn main() -> anyhow::Result<()> {
                 let mut s = state.borrow_mut();
                 s.set_display_window(ui.get_disp_lo(), ui.get_disp_hi());
                 s.set_invert(ui.get_invert());
+                s.set_show_unwarped(ui.get_show_unwarped());
             }
             view::refresh_image(&ui, &state.borrow());
         });

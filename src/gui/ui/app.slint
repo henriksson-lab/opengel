@@ -58,11 +58,14 @@ export component AppWindow inherits Window {
     in-out property <float> disp-lo: 0.0;     // contrast window, fractions of [min,max]
     in-out property <float> disp-hi: 1.0;
     in-out property <bool> invert: false;
+    in-out property <bool> show-unwarped: false;   // fixed dewarped (rectified) view
+    in-out property <bool> optical-flow: false;     // fit warp by optical flow on detect
     in-out property <string> volume-ul: "10";
     in-out property <float> rotation: 0;      // degrees, live display rotation
     in-out property <float> zoom: 1.0;
     in-out property <length> pan-x: 0px;
     in-out property <length> pan-y: 0px;
+    property <float> hover-x: -1;             // pointer x (fraction) for the ruler line
     in-out property <float> click-x: -1;      // last click, normalized (viewport)
     in-out property <float> click-y: -1;
     // Trace tab.
@@ -193,28 +196,40 @@ export component AppWindow inherits Window {
                 clip: true;
 
                 // Zoom + pan container; the gel image (with overlays composited
-                // in) rotates live via the Image's rotation-angle.
+                // in) rotates live via the Image's rotation-angle. In the
+                // dewarped view the image is shown fixed (no zoom/pan/rotation).
                 Rectangle {
-                    width: parent.width * root.zoom;
-                    height: parent.height * root.zoom;
-                    x: (parent.width - self.width) / 2 + root.pan-x;
-                    y: (parent.height - self.height) / 2 + root.pan-y;
+                    width: root.show-unwarped ? parent.width : parent.width * root.zoom;
+                    height: root.show-unwarped ? parent.height : parent.height * root.zoom;
+                    x: root.show-unwarped ? 0px : (parent.width - self.width) / 2 + root.pan-x;
+                    y: root.show-unwarped ? 0px : (parent.height - self.height) / 2 + root.pan-y;
 
                     Image {
                         source: root.gel-image;
                         image-fit: contain;
                         width: 100%;
                         height: 100%;
-                        transform-rotation: root.rotation * 1deg;
+                        transform-rotation: root.show-unwarped ? 0deg : root.rotation * 1deg;
                     }
                 }
 
-                // Pointer layer (topmost) for pan / zoom / click.
+                // Hover ruler: a vertical line following the pointer. Handy in
+                // the dewarped view for reading off lane positions.
+                Rectangle {
+                    visible: ta.has-hover && root.hover-x >= 0;
+                    x: root.hover-x * parent.width - 0.5px;
+                    width: 1px;
+                    height: 100%;
+                    background: #ff5544;
+                }
+
+                // Pointer layer (topmost) for pan / zoom / click / hover.
                 ta := TouchArea {
                     width: 100%;
                     height: 100%;
                     property <length> start-pan-x;
                     property <length> start-pan-y;
+                    changed mouse-x => { root.hover-x = self.mouse-x / self.width; }
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
                             self.start-pan-x = root.pan-x;
@@ -222,11 +237,15 @@ export component AppWindow inherits Window {
                         }
                     }
                     moved => {
-                        root.pan-x = self.start-pan-x + (self.mouse-x - self.pressed-x);
-                        root.pan-y = self.start-pan-y + (self.mouse-y - self.pressed-y);
+                        if (!root.show-unwarped) {
+                            root.pan-x = self.start-pan-x + (self.mouse-x - self.pressed-x);
+                            root.pan-y = self.start-pan-y + (self.mouse-y - self.pressed-y);
+                        }
                     }
                     scroll-event(e) => {
-                        root.zoom = max(0.2, min(8.0, root.zoom * (1.0 + (e.delta-y / 1px) / 400)));
+                        if (!root.show-unwarped) {
+                            root.zoom = max(0.2, min(8.0, root.zoom * (1.0 + (e.delta-y / 1px) / 400)));
+                        }
                         return EventResult.accept;
                     }
                     clicked => {
@@ -284,10 +303,22 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                CheckBox {
-                    text: "Invert colors";
-                    checked <=> root.invert;
-                    toggled => { root.display-changed(); }
+                VerticalLayout {
+                    spacing: 4px;
+                    CheckBox {
+                        text: "Invert colors";
+                        checked <=> root.invert;
+                        toggled => { root.display-changed(); }
+                    }
+                    CheckBox {
+                        text: "Show unwarped";
+                        checked <=> root.show-unwarped;
+                        toggled => { root.display-changed(); }
+                    }
+                    CheckBox {
+                        text: "Optical-flow dewarp";
+                        checked <=> root.optical-flow;
+                    }
                 }
             }
         }

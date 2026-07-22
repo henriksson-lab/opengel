@@ -7,10 +7,9 @@
 //! evaluation harness benchmark the blob-first approach against the classical
 //! detector on identical ground truth.
 
-use crate::core::model::{Band, Lane};
 use crate::core::GrayF32;
 
-use crate::detect::detector::{DetectParams, Detection, GelDetector};
+use crate::detect::detector::{DetBand, DetLane, DetectParams, Detection, GelDetector};
 
 /// A blob/mask segmenter. Returns blob bounding boxes as
 /// `(x_min, y_min, x_max, y_max)` in pixels (x_max/y_max exclusive).
@@ -64,13 +63,13 @@ impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
         blobs.sort_by_key(|b| (b.0 + b.2) / 2);
 
         let h = work.height() as u32;
-        let mut lanes: Vec<Lane> = Vec::new();
-        let mut bands: Vec<Band> = Vec::new();
+        let mut lanes: Vec<DetLane> = Vec::new();
+        let mut bands: Vec<DetBand> = Vec::new();
         let mut lane_blobs: Vec<(u32, u32, u32, u32)> = Vec::new();
         let mut band_id = 0u32;
 
-        let flush = |lanes: &mut Vec<Lane>,
-                     bands: &mut Vec<Band>,
+        let flush = |lanes: &mut Vec<DetLane>,
+                     bands: &mut Vec<DetBand>,
                      band_id: &mut u32,
                      group: &[(u32, u32, u32, u32)]| {
             if group.is_empty() {
@@ -79,13 +78,12 @@ impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
             let lane_id = lanes.len() as u32;
             let x_min = group.iter().map(|b| b.0).min().unwrap();
             let x_max = group.iter().map(|b| b.2).max().unwrap();
-            lanes.push(Lane {
+            lanes.push(DetLane {
                 id: lane_id,
                 x_min,
                 x_max,
                 y_min: 0,
                 y_max: h,
-                label: None,
                 is_ladder: false,
             });
             let mut sorted = group.to_vec();
@@ -93,15 +91,13 @@ impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
             for b in sorted {
                 let y_center = (b.1 + b.3) as f64 / 2.0;
                 let y_half = (b.3 as f64 - b.1 as f64) / 2.0;
-                bands.push(Band {
+                bands.push(DetBand {
                     id: *band_id,
                     lane_id,
+                    x_center: (b.0 as f64 + b.2 as f64) / 2.0,
                     y_center,
                     y_half_width: y_half.max(0.5),
                     integrated_density: 0.0, // filled by caller (needs img)
-                    rf: if h > 1 { Some(y_center / h as f64) } else { None },
-                    size: None,
-                    known_size: None,
                 });
                 *band_id += 1;
             }

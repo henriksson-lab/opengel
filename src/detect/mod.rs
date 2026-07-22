@@ -13,6 +13,7 @@ pub mod cellpose;
 pub mod classical;
 pub mod detector;
 pub mod eval;
+pub mod flow;
 pub mod ladder_match;
 pub mod orient;
 pub mod pipeline;

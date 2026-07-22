@@ -12,6 +12,9 @@ pub struct SimConfig {
     /// Built-in ladder used for the ladder lane.
     pub ladder_name: String,
     pub n_sample_lanes: usize,
+    /// When true, the last lane also loads the ladder — giving matched rungs
+    /// across ≥2 lanes so the detector can fit (and be scored on) gel smile.
+    pub two_ladders: bool,
     pub seed: u64,
 
     // ---- geometric effects ----
@@ -42,6 +45,7 @@ impl SimConfig {
             gel_type: GelType::Dna,
             ladder_name: "NEB 1 kb DNA Ladder".to_string(),
             n_sample_lanes: 4,
+            two_ladders: false,
             seed,
             rotation_deg: 0.0,
             smile_px: 0.0,
@@ -63,6 +67,7 @@ impl SimConfig {
             gel_type: GelType::Dna,
             ladder_name: "NEB 1 kb DNA Ladder".to_string(),
             n_sample_lanes: 3 + (r.range(0.0, 3.0) as usize),
+            two_ladders: false,
             seed,
             rotation_deg: r.range(-50.0, 50.0),
             smile_px: r.range(0.0, 18.0),
