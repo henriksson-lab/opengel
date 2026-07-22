@@ -18,6 +18,6 @@ pub mod config;
 pub mod render;
 pub mod rng;
 
-pub use batch::{simulate_batch, simulate_random_batch, write_dataset};
-pub use config::SimConfig;
+pub use batch::{simulate_batch, simulate_random_batch, simulate_random_batch_with, write_dataset};
+pub use config::{GelParams, LaneContent, SimConfig, SimLane, WarpMode};
 pub use render::{simulate, RenderedGel};

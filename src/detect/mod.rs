@@ -15,10 +15,12 @@ pub mod detector;
 pub mod eval;
 pub mod flow;
 pub mod ladder_match;
+pub mod mask_segment;
 pub mod orient;
 pub mod pipeline;
 pub mod signal;
 
 pub use classical::ClassicalDetector;
 pub use detector::{DetectParams, Detection, GelDetector};
-pub use pipeline::analyze;
+pub use mask_segment::{mask_to_boxes, MaskSegmenter};
+pub use pipeline::{analyze, analyze_detection};

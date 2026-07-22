@@ -46,6 +46,26 @@ pub struct GelWarp {
     pub knots_v: Vec<f64>,
 }
 
+/// A single fit constraint for [`GelWarp::fit`]: the parametric point `(u, v)`
+/// should map to the image point `(x, y)`.
+#[derive(Debug, Clone, Copy)]
+pub struct Anchor {
+    pub u: f64,
+    pub v: f64,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Accumulate `scale * (stencil · stencilᵀ)` into `m` — a rank-1 update per
+/// 2nd-difference row, used by [`GelWarp::fit`]'s smoothing term.
+fn add_stencil(m: &mut [Vec<f64>], idx: &[usize], coeff: &[f64], scale: f64) {
+    for a in 0..idx.len() {
+        for b in 0..idx.len() {
+            m[idx[a]][idx[b]] += scale * coeff[a] * coeff[b];
+        }
+    }
+}
+
 /// Cox–de Boor basis functions of `degree` that are non-zero at parameter `t`,
 /// for a clamped knot vector. Returns `(span, values)` where `values[k]` is the
 /// basis function of control point `span - degree + k`.
@@ -369,6 +389,119 @@ impl GelWarp {
     /// This corrects lane spacing/ordering today; smile (per-column `v` warp)
     /// is layered on later from matched ladder rungs — the correspondence
     /// machinery in [`GelWarp::from_grid`] already supports it.
+    /// Uniform identity lattice of size `nu × nv` spanning `[0,w] × [0,h]`
+    /// (origin-compatible constructor: `eval(u,v) ≈ (u·w, v·h)`). Used by the
+    /// renderer and the GUI warp-grid editor.
+    pub fn identity_grid(w: f64, h: f64, nu: usize, nv: usize) -> Self {
+        GelWarp::from_grid(nu.max(2), nv.max(2), |u, v| [u * w, v * h])
+    }
+
+    /// Grid size as `(nu, nv)`.
+    pub fn grid_size(&self) -> (usize, usize) {
+        (self.nu, self.nv)
+    }
+
+    /// Control point at lattice index `(iu, iv)` as `(x, y)`.
+    pub fn control_point(&self, iu: usize, iv: usize) -> (f64, f64) {
+        let c = self.ctrl[iv * self.nu + iu];
+        (c[0], c[1])
+    }
+
+    /// Set the control point at lattice index `(iu, iv)`.
+    pub fn set_control_point(&mut self, iu: usize, iv: usize, x: f64, y: f64) {
+        self.ctrl[iv * self.nu + iu] = [x, y];
+    }
+
+    /// Polyline (`n` points) of the iso-`v` curve (constant migration, sampled
+    /// across lanes).
+    pub fn iso_v(&self, v: f64, n: usize) -> Vec<(f64, f64)> {
+        if n == 0 {
+            return Vec::new();
+        }
+        if n == 1 {
+            return vec![self.eval(0.5, v)];
+        }
+        (0..n).map(|i| self.eval(i as f64 / (n - 1) as f64, v)).collect()
+    }
+
+    /// Polyline (`n` points) of the iso-`u` curve (one lane's path down the gel).
+    pub fn iso_u(&self, u: f64, n: usize) -> Vec<(f64, f64)> {
+        if n == 0 {
+            return Vec::new();
+        }
+        if n == 1 {
+            return vec![self.eval(u, 0.5)];
+        }
+        (0..n).map(|i| self.eval(u, i as f64 / (n - 1) as f64)).collect()
+    }
+
+    /// Least-squares fit of an `nu × nv` control lattice to `(u,v)→(x,y)`
+    /// [`Anchor`]s, with 2nd-difference smoothing (`lambda`) plus a small pull
+    /// toward the identity lattice so the normal matrix stays SPD even when the
+    /// anchors under-constrain an axis (e.g. a single lane).
+    pub fn fit(anchors: &[Anchor], w: f64, h: f64, nu: usize, nv: usize, lambda: f64) -> Self {
+        let base = GelWarp::identity_grid(w, h, nu, nv);
+        let (nu, nv) = (base.nu, base.nv);
+        let n = nu * nv;
+        let mut m = vec![vec![0.0; n]; n];
+        let mut bx = vec![0.0; n];
+        let mut by = vec![0.0; n];
+
+        // Data term.
+        for a in anchors {
+            let bu = full_basis(a.u, base.degree_u, &base.knots_u, nu);
+            let bv = full_basis(a.v, base.degree_v, &base.knots_v, nv);
+            let mut nz: Vec<(usize, f64)> = Vec::new();
+            for iv in 0..nv {
+                if bv[iv] == 0.0 {
+                    continue;
+                }
+                for iu in 0..nu {
+                    let wgt = bv[iv] * bu[iu];
+                    if wgt != 0.0 {
+                        nz.push((iv * nu + iu, wgt));
+                    }
+                }
+            }
+            for &(i, wi) in &nz {
+                bx[i] += wi * a.x;
+                by[i] += wi * a.y;
+                for &(j, wj) in &nz {
+                    m[i][j] += wi * wj;
+                }
+            }
+        }
+
+        // 2nd-difference smoothing along u and v.
+        if lambda != 0.0 {
+            for iv in 0..nv {
+                for iu in 1..nu.saturating_sub(1) {
+                    let idx = [iv * nu + (iu - 1), iv * nu + iu, iv * nu + (iu + 1)];
+                    add_stencil(&mut m, &idx, &[1.0, -2.0, 1.0], lambda);
+                }
+            }
+            for iu in 0..nu {
+                for iv in 1..nv.saturating_sub(1) {
+                    let idx = [(iv - 1) * nu + iu, iv * nu + iu, (iv + 1) * nu + iu];
+                    add_stencil(&mut m, &idx, &[1.0, -2.0, 1.0], lambda);
+                }
+            }
+        }
+
+        // Identity pull (removes any remaining null space).
+        let eps = 1e-6;
+        for i in 0..n {
+            m[i][i] += eps;
+            bx[i] += eps * base.ctrl[i][0];
+            by[i] += eps * base.ctrl[i][1];
+        }
+
+        let cx = solve_linear(m.clone(), bx);
+        let cy = solve_linear(m, by);
+        let ctrl = (0..n).map(|i| [cx[i], cy[i]]).collect();
+        GelWarp { ctrl, ..base }
+    }
+
     pub fn fit_grid(lane_centers_px: &[f64], width: u32, height: u32) -> Self {
         let (w, h) = (width as f64, height as f64);
         if lane_centers_px.len() < 2 {

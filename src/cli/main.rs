@@ -46,6 +46,10 @@ enum Command {
         /// Fit the gel warp by optical flow (recovers band twist between lanes).
         #[arg(long)]
         optical_flow: bool,
+        /// Use an external band-segmentation **mask** image (e.g. GelGenie's
+        /// output) instead of the classical detector. Foreground = bands.
+        #[arg(long)]
+        mask: Option<PathBuf>,
     },
     /// Evaluate the classical detector over a directory of `*.gt.json` +
     /// referenced images.
@@ -70,6 +74,9 @@ enum Command {
         /// Disable rotation (upright gels, for pure detection benchmarking).
         #[arg(long)]
         upright: bool,
+        /// Warp model: `nurbs` (default) or `smilewobble` (fast analytic).
+        #[arg(long, default_value = "nurbs")]
+        warp_mode: String,
         /// Run the evaluation harness after generating.
         #[arg(long)]
         eval: bool,
@@ -91,12 +98,20 @@ fn main() -> Result<()> {
         Command::Info { path } => cmd_info(&path),
         Command::Ladders { gel_type } => cmd_ladders(gel_type.as_deref()),
         Command::Analyze {
-            optical_flow,
             path,
             gel_type,
             out,
             min_r2,
-        } => cmd_analyze(&path, gel_type.as_deref(), out.as_deref(), min_r2, optical_flow),
+            optical_flow,
+            mask,
+        } => cmd_analyze(
+            &path,
+            gel_type.as_deref(),
+            out.as_deref(),
+            min_r2,
+            optical_flow,
+            mask.as_deref(),
+        ),
         Command::Eval { dir } => cmd_eval(&dir),
         Command::MakeDemo { out } => demo::write_demo(&out),
         Command::MakeDataset { dir } => demo::write_dataset(&dir),
@@ -110,8 +125,17 @@ fn main() -> Result<()> {
             count,
             seed,
             upright,
+            warp_mode,
             eval,
-        } => cmd_simulate(&dir, count, seed, upright, eval),
+        } => cmd_simulate(&dir, count, seed, upright, &warp_mode, eval),
+    }
+}
+
+fn parse_warp_mode(s: &str) -> Result<opengel::sim::WarpMode> {
+    match s.to_lowercase().replace(['-', '_'], "").as_str() {
+        "nurbs" => Ok(opengel::sim::WarpMode::Nurbs),
+        "smilewobble" | "smile" | "analytic" => Ok(opengel::sim::WarpMode::SmileWobble),
+        other => anyhow::bail!("unknown warp mode `{other}` (expected nurbs|smilewobble)"),
     }
 }
 
@@ -205,6 +229,7 @@ fn cmd_analyze(
     out: Option<&std::path::Path>,
     min_r2: f64,
     optical_flow: bool,
+    mask: Option<&std::path::Path>,
 ) -> Result<()> {
     let gt_override = gel_type.map(parse_gel_type).transpose()?;
     let mut doc = load_or_import(path, gt_override.unwrap_or(GelType::Dna))?;
@@ -218,7 +243,20 @@ fn cmd_analyze(
         optical_flow_warp: optical_flow,
         ..DetectParams::default()
     };
-    let analysis = opengel::detect::analyze(&img, gt, &params, &[], min_r2);
+    let analysis = if let Some(mask_path) = mask {
+        // Mask-driven detection (e.g. a GelGenie segmentation mask): the mask's
+        // connected components become bands, clustered into lanes, then run
+        // through the same ladder-ID + sizing pipeline as any detector.
+        use opengel::detect::detector::GelDetector;
+        let mask_img = image::open(mask_path)
+            .with_context(|| format!("opening mask {}", mask_path.display()))?;
+        let mask_gray = opengel::core::GrayF32::from_dynamic(&mask_img);
+        let segmenter = opengel::detect::MaskSegmenter::new(mask_gray);
+        let det = opengel::detect::cellpose::CellposeDetector::new(segmenter).detect(&img, &params);
+        opengel::detect::analyze_detection(det, &img, gt, &params, &[], min_r2)
+    } else {
+        opengel::detect::analyze(&img, gt, &params, &[], min_r2)
+    };
     println!(
         "detected {} lanes, {} bands",
         analysis.lanes.len(),
@@ -241,13 +279,16 @@ fn cmd_simulate(
     count: usize,
     seed: u64,
     upright: bool,
+    warp_mode: &str,
     eval: bool,
 ) -> Result<()> {
-    let gels = opengel::sim::simulate_random_batch(count, seed, upright);
+    let mode = parse_warp_mode(warp_mode)?;
+    let gels = opengel::sim::simulate_random_batch_with(count, seed, upright, mode);
     let n = opengel::sim::write_dataset(dir, &gels)?;
     println!(
-        "rendered {n} simulated gels{} to {}",
+        "rendered {n} simulated gels{} ({:?} warp) to {}",
         if upright { " (upright)" } else { " (rotated ≤50°)" },
+        mode,
         dir.display()
     );
     if eval {

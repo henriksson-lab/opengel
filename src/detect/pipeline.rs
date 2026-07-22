@@ -166,8 +166,24 @@ pub fn analyze(
     candidates: &[&LadderTemplate],
     min_r2: f64,
 ) -> Analysis {
-    let detector = ClassicalDetector::new();
-    let det = detector.detect(img, params);
+    let det = ClassicalDetector::new().detect(img, params);
+    analyze_detection(det, img, gel_type, params, candidates, min_r2)
+}
+
+/// Ladder ID + sizing from an already-computed pixel-space [`Detection`]. Fits
+/// the gel warp from the detection, lifts lanes/bands into rectified `(u, v)`,
+/// refines densities on the straightened gel, then identifies the ladder and
+/// sizes bands. Lets any detector (classical, Cellpose, or a mask-driven /
+/// GelGenie segmenter — see [`crate::detect::mask_segment`]) feed the full
+/// pipeline.
+pub fn analyze_detection(
+    det: crate::detect::detector::Detection,
+    img: &GrayF32,
+    gel_type: GelType,
+    params: &DetectParams,
+    candidates: &[&LadderTemplate],
+    min_r2: f64,
+) -> Analysis {
     let (w, h) = (img.width() as u32, img.height() as u32);
 
     // Candidate templates: caller-provided or built-ins for this gel type.

@@ -38,20 +38,22 @@ impl GrayF32 {
     /// 16-bit inputs divide by 65535, 8-bit by 255. RGB is converted to luma.
     pub fn from_dynamic(img: &DynamicImage) -> Self {
         let (w, h) = (img.width() as usize, img.height() as usize);
-        let mut data = Array2::<f32>::zeros((h, w));
-        match img {
+        // Fill from the contiguous (row-major) luma buffer in one tight pass.
+        // Per-element `Array2[[y, x]]` indexing here is ~100× slower and was a
+        // real bottleneck for live preview frames.
+        let flat: Vec<f32> = match img {
             DynamicImage::ImageLuma16(buf) => {
-                for (x, y, p) in buf.enumerate_pixels() {
-                    data[[y as usize, x as usize]] = p.0[0] as f32 / 65535.0;
-                }
+                buf.as_raw().iter().map(|&v| v as f32 / 65535.0).collect()
             }
-            other => {
-                let luma = other.to_luma8();
-                for (x, y, p) in luma.enumerate_pixels() {
-                    data[[y as usize, x as usize]] = p.0[0] as f32 / 255.0;
-                }
-            }
-        }
+            other => other
+                .to_luma8()
+                .as_raw()
+                .iter()
+                .map(|&b| b as f32 / 255.0)
+                .collect(),
+        };
+        let data = Array2::from_shape_vec((h, w), flat)
+            .unwrap_or_else(|_| Array2::<f32>::zeros((h, w)));
         GrayF32 { data }
     }
 

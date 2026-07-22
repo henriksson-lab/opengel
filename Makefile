@@ -25,6 +25,11 @@ MIMEPKGDIR := $(MIMEDIR)/packages
 # The window's Wayland app_id / X11 WM_CLASS; the icon PNG/SVG and the .desktop
 # StartupWMClass are all keyed to this name so the desktop finds the icon.
 LINUX_APP_ID := opengel
+# Extra cargo flags for the Linux release build. Camera capture is opt-in on
+# Linux (needs libv4l-dev at build time; adds a libv4l-0 runtime dep), so the
+# packaged app enables it by default to match the always-on capture on macOS /
+# Windows. Override with `make deb CARGO_BUILD_FLAGS=` to build without a camera.
+CARGO_BUILD_FLAGS ?= --features camera
 DEB_NAME := opengel
 DEB_ARCH ?= $(shell dpkg --print-architecture 2>/dev/null || printf 'amd64')
 # make deb derives ELF shared-library dependencies with dpkg-shlibdeps, including
@@ -45,7 +50,7 @@ DEB_FILE := target/deb/$(DEB_NAME)_$(APP_VERSION)_$(DEB_ARCH).deb
 # (any size, no rasterizer needed) plus the committed 256px PNG as a fallback for
 # themes that ignore SVG.
 install:
-	cargo build --release
+	cargo build --release $(CARGO_BUILD_FLAGS)
 	install -Dm755 "$(APP_BINARY)" "$(BINDIR)/$(LINUX_APP_ID)"
 	install -Dm755 "$(CLI_BINARY)" "$(BINDIR)/gel"
 	install -Dm644 packaging/opengel.desktop \
@@ -277,6 +282,8 @@ osx-bundle:
 		'  <string>11.0</string>' \
 		'  <key>NSHighResolutionCapable</key>' \
 		'  <true/>' \
+		'  <key>NSCameraUsageDescription</key>' \
+		'  <string>OpenGel captures gel images from a connected camera.</string>' \
 		'  <key>UTExportedTypeDeclarations</key>' \
 		'  <array>' \
 		'    <dict>' \

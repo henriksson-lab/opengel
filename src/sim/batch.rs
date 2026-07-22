@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::sim::config::SimConfig;
+use crate::sim::config::{SimConfig, WarpMode};
 use crate::sim::render::{simulate, RenderedGel};
 
 /// Render many configs in parallel across worker threads (rayon).
@@ -15,14 +15,26 @@ pub fn simulate_batch(configs: &[SimConfig]) -> Vec<RenderedGel> {
 /// Render `count` randomized gels (seeds `seed_base..seed_base+count`) in
 /// parallel. `upright` disables rotation (for pure detection benchmarking).
 pub fn simulate_random_batch(count: usize, seed_base: u64, upright: bool) -> Vec<RenderedGel> {
+    simulate_random_batch_with(count, seed_base, upright, WarpMode::default())
+}
+
+/// Like [`simulate_random_batch`] but with an explicit warp model.
+pub fn simulate_random_batch_with(
+    count: usize,
+    seed_base: u64,
+    upright: bool,
+    warp_mode: WarpMode,
+) -> Vec<RenderedGel> {
     let configs: Vec<SimConfig> = (0..count as u64)
         .map(|i| {
             let seed = seed_base + i;
-            if upright {
+            let mut c = if upright {
                 SimConfig::randomized_upright(seed)
             } else {
                 SimConfig::randomized(seed)
-            }
+            };
+            c.gel.warp_mode = warp_mode;
+            c
         })
         .collect();
     simulate_batch(&configs)
