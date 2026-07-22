@@ -240,10 +240,26 @@ pub fn analyze_detection(
     let warp = if params.optical_flow_warp {
         crate::detect::flow::fit_flow_warp(&work, w, h, params.flow_smoothness)
     } else {
-        template0
-            .and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, w, h))
-            .unwrap_or(coarse)
+        let smile = template0.and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, w, h));
+        eprintln!(
+            "[warp-dbg] lanes={} template0={:?} smile_fit={}",
+            det.lanes.len(),
+            template0.map(|t| &t.name),
+            smile.is_some()
+        );
+        smile.unwrap_or(coarse)
     };
+    {
+        let mut maxdev = 0.0f64;
+        for j in 0..=8 {
+            for i in 0..=8 {
+                let (u, v) = (i as f64 / 8.0, j as f64 / 8.0);
+                let (x, y) = warp.eval(u, v);
+                maxdev = maxdev.max((x - u * w as f64).abs()).max((y - v * h as f64).abs());
+            }
+        }
+        eprintln!("[warp-dbg] max deviation from identity (px): {maxdev:.3}");
+    }
 
     let (lanes, mut bands) = det.to_model(&warp);
 
@@ -310,4 +326,18 @@ pub fn analyze_detection(
     }
 
     analysis
+}
+
+#[cfg(test)]
+mod warp_dbg {
+    #[test]
+    fn demo_warp_deviation() {
+        let doc = crate::core::demo::demo_document_annotated();
+        let img = doc.working_image().unwrap();
+        let params = crate::detect::detector::DetectParams::default();
+        let a = super::analyze(&img, crate::core::GelType::Dna, &params, &[], 0.9);
+        eprintln!("[warp-dbg] result lanes={} bands={} ladder_assign={}",
+            a.lanes.len(), a.bands.len(), a.ladder_assignments.len());
+        assert!(false, "diagnostic");
+    }
 }

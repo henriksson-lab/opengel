@@ -1316,7 +1316,13 @@ impl AppState {
             .display_image()
             .ok_or_else(|| anyhow!("no image loaded"))?;
         let work = &work;
-        let params = DetectParams::default();
+        // Honor the "Optical-flow dewarp" toggle: without it the warp comes from
+        // ladder-rung smile fitting (needs a matched ladder across lanes), which
+        // falls back to a near-identity coarse warp when no smile is recovered.
+        let params = DetectParams {
+            optical_flow_warp: self.optical_flow,
+            ..DetectParams::default()
+        };
 
         let (candidates, min_r2): (Vec<&opengel::core::LadderTemplate>, f64) = match force_template
         {
@@ -1909,3 +1915,4 @@ mod tests {
             .all(|n| opengel::core::ladders::by_name(n).is_some()));
     }
 }
+

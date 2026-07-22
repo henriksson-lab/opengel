@@ -71,6 +71,12 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
         })
         .collect();
     ui.set_tree_rows(ModelRc::new(VecModel::from(tree)));
+    // Re-detection overwrites annotations; the Detect button warns first when any exist.
+    ui.set_has_annotations(
+        state
+            .analysis()
+            .is_some_and(|a| !a.lanes.is_empty() || !a.bands.is_empty()),
+    );
     refresh_image(ui, state);
     refresh_trace(ui, state);
 }
