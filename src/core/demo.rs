@@ -146,6 +146,7 @@ fn analysis_from_truth(truth: &GroundTruth) -> Analysis {
                 integrated_density: 0.0,
                 size: None,
                 known_size: None,
+                angle: 0.0,
             });
             bid += 1;
         }

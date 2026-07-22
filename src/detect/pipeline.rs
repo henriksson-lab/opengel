@@ -145,8 +145,13 @@ fn fit_smile_warp(
     xs.push(0.0);
     xs.extend_from_slice(&lane_centers);
     xs.push(w);
-    let extra_vertical_edges = params.extra_vertical_edges.max(2);
-    let nv = (fronts.len() + extra_vertical_edges).max(3);
+    // Control-row count is fixed and low: the ladder fronts are least-squares
+    // *data* (see `corr` below), not control rows. Pinning one row per front
+    // (fronts can be 10+) over-parameterizes the surface — it clutters the grid
+    // with knots and overfits band-position noise into a wiggly warp. A smile is
+    // a smooth, low-order distortion in v, so a few interior rows suffice; all
+    // fronts still constrain them. `extra_vertical_edges` tunes the count.
+    let nv = (params.extra_vertical_edges + 1).max(3);
     let prior = GelWarp::from_grid(nu, nv, |u, v| {
         let f = u * (nu - 1) as f64;
         let i0 = (f.floor() as usize).min(nu - 1);
@@ -327,3 +332,7 @@ fn best_ladder_match(a: &LadderMatch, b: &LadderMatch) -> std::cmp::Ordering {
         .cmp(&b.pairs.len())
         .then_with(|| a.r2.partial_cmp(&b.r2).unwrap())
 }
+
+
+
+

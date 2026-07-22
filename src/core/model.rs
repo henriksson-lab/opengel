@@ -137,6 +137,11 @@ pub struct Band {
     /// Known size when this band belongs to a ladder lane.
     #[serde(default)]
     pub known_size: Option<f64>,
+    /// Local band tilt (radians) measured from intensity moments in the raw
+    /// image: the angle of the band's long axis from horizontal. Drives the
+    /// rotated annotation box and constrains the gel warp. 0 = horizontal.
+    #[serde(default)]
+    pub angle: f64,
 }
 
 impl Band {

@@ -508,6 +508,12 @@ fn warped_lane_polygon(
     pts
 }
 
+/// Band annotation box: a rectangle spanning the lane width and the band's
+/// thickness, **rotated to the band's measured tilt** (`band.angle`) and centered
+/// at the band's image position. The angle comes from the band's own intensity
+/// moments (the reliable orientation cue), so the box hugs the real band even
+/// where the fitted warp is imperfect. Center and lane width still come from the
+/// warp so the box tracks the rectified lane geometry.
 fn warped_band_polygon(
     warp: &opengel::core::warp::GelWarp,
     lane: &opengel::core::model::Lane,
@@ -515,21 +521,26 @@ fn warped_band_polygon(
     w: f64,
     h: f64,
 ) -> Vec<(f32, f32)> {
-    const N: usize = 12;
-    let v0 = (band.v_center - band.v_half_width).clamp(0.0, 1.0);
-    let v1 = (band.v_center + band.v_half_width).clamp(0.0, 1.0);
-    let mut pts = Vec::with_capacity(N * 2);
-    for i in 0..N {
-        let t = i as f64 / (N - 1) as f64;
-        let u = lane.u_min + (lane.u_max - lane.u_min) * t;
-        pts.push(norm_point(warp.eval(u, v0), w, h));
-    }
-    for i in (0..N).rev() {
-        let t = i as f64 / (N - 1) as f64;
-        let u = lane.u_min + (lane.u_max - lane.u_min) * t;
-        pts.push(norm_point(warp.eval(u, v1), w, h));
-    }
-    pts
+    let u_c = (lane.u_min + lane.u_max) * 0.5;
+    let v = band.v_center.clamp(0.0, 1.0);
+    // Center + lane-width vector, in image pixels, from the warp.
+    let (cxp, cyp) = warp.eval(u_c, v);
+    let (lxp, lyp) = warp.eval(lane.u_min, v);
+    let (rxp, ryp) = warp.eval(lane.u_max, v);
+    let half_w = 0.5 * ((rxp - lxp).hypot(ryp - lyp));
+    // Band thickness in pixels (v maps ~linearly to y at scale h).
+    let half_h = (band.v_half_width * h).max(1.0);
+    // Long axis along the measured tilt; short axis perpendicular.
+    let (sa, ca) = band.angle.sin_cos();
+    let (ax, ay) = (ca * half_w, sa * half_w); // along band
+    let (px, py) = (-sa * half_h, ca * half_h); // across band
+    let corners = [
+        (cxp - ax - px, cyp - ay - py),
+        (cxp + ax - px, cyp + ay - py),
+        (cxp + ax + px, cyp + ay + py),
+        (cxp - ax + px, cyp - ay + py),
+    ];
+    corners.iter().map(|&p| norm_point(p, w, h)).collect()
 }
 
 fn norm_point((x, y): (f64, f64), w: f64, h: f64) -> (f32, f32) {

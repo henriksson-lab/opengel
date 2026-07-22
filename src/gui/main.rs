@@ -23,17 +23,70 @@ fn main() -> anyhow::Result<()> {
     let ui = AppWindow::new()?;
     let state = Rc::new(RefCell::new(AppState::new()));
 
-    // CLI: `opengel [PATH] [--demo]`. `--demo` loads the synthetic demo gel;
-    // otherwise a positional path is opened immediately if given.
+    // CLI: `opengel [PATH] [FLAGS]`.
+    //   --demo            load the synthetic demo gel instead of a path
+    //   --detect          run lane/band detection (fits the NURBS warp) on startup
+    //   --optical-flow    fit the warp by optical flow (implies + used by --detect)
+    //   --show-warp       overlay the NURBS warp grid
+    //   --show-unwarped   show the rectified (dewarped) view
+    //   --invert          invert display colors
+    // The view toggles set both app state (drives rendering) and the matching UI
+    // property (so the checkboxes reflect the startup state) — handy for scripted
+    // screenshots.
     {
         let args: Vec<String> = std::env::args().skip(1).collect();
-        if args.iter().any(|a| a == "--demo") {
+        let has = |name: &str| args.iter().any(|a| a == name);
+        // Value of `--flag=VALUE` or `--flag VALUE`.
+        let value = |name: &str| -> Option<String> {
+            for (i, a) in args.iter().enumerate() {
+                if let Some(v) = a.strip_prefix(&format!("{name}=")) {
+                    return Some(v.to_string());
+                }
+                if a == name {
+                    return args.get(i + 1).cloned();
+                }
+            }
+            None
+        };
+
+        // Load the document first (demo or positional path).
+        if has("--demo") {
             let msg = state.borrow_mut().load_demo();
             ui.set_status(msg.into());
         } else if let Some(path) = args.iter().find(|a| !a.starts_with("--")) {
             if let Err(e) = state.borrow_mut().open_path(std::path::Path::new(path)) {
                 ui.set_status(format!("Open failed: {e}").into());
             }
+        }
+
+        // View + analysis toggles.
+        let optical_flow = has("--optical-flow");
+        state.borrow_mut().optical_flow = optical_flow;
+        ui.set_optical_flow(optical_flow);
+
+        if has("--invert") {
+            state.borrow_mut().set_invert(true);
+            ui.set_invert(true);
+        }
+        // `--transparency PCT` (0 = opaque overlays, 100 = fully transparent).
+        if let Some(pct) = value("--transparency").and_then(|s| s.parse::<f32>().ok()) {
+            let alpha = (1.0 - pct / 100.0).clamp(0.0, 1.0);
+            state.borrow_mut().set_annotation_alpha(alpha);
+            ui.set_annotation_alpha(alpha);
+        }
+        if has("--detect") {
+            match state.borrow_mut().analyze(None) {
+                Ok(msg) => ui.set_status(msg.into()),
+                Err(e) => ui.set_status(format!("Detect failed: {e}").into()),
+            }
+        }
+        if has("--show-warp") {
+            state.borrow_mut().set_show_warp(true);
+            ui.set_show_warp(true);
+        }
+        if has("--show-unwarped") {
+            state.borrow_mut().set_show_unwarped(true);
+            ui.set_show_unwarped(true);
         }
     }
     view::refresh(&ui, &state.borrow());

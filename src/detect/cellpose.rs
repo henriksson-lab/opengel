@@ -98,6 +98,7 @@ impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
                     y_center,
                     y_half_width: y_half.max(0.5),
                     integrated_density: 0.0, // filled by caller (needs img)
+                    angle: 0.0,              // mask segmenters don't measure tilt
                 });
                 *band_id += 1;
             }

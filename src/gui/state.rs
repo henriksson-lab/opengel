@@ -1450,6 +1450,7 @@ impl AppState {
                 integrated_density: density,
                 size: None,
                 known_size: None,
+                angle: 0.0,
             });
             format!("Added band {id} to lane {lane_id}.")
         })

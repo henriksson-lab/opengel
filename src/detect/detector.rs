@@ -102,6 +102,9 @@ pub struct DetBand {
     pub y_half_width: f64,
     /// Background-subtracted integrated density.
     pub integrated_density: f64,
+    /// Local band tilt (radians) from intensity moments — the angle of the
+    /// band's long axis from horizontal in the raw image. 0 = horizontal.
+    pub angle: f64,
 }
 
 /// Output of a detection pass, in raw pixel coordinates.
@@ -154,6 +157,7 @@ impl Detection {
                     integrated_density: b.integrated_density,
                     size: None,
                     known_size: None,
+                    angle: b.angle,
                 }
             })
             .collect();
