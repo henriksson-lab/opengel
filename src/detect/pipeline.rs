@@ -175,6 +175,151 @@ fn fit_smile_warp(
     ))
 }
 
+/// Fit the gel warp so its iso-migration lines **follow the measured band
+/// tilts**. Each band contributes two correspondences — its left and right ends,
+/// offset from the band center by half the lane width along the band's angle — so
+/// the surface is pinned to the band's position *and* local slope. Bands span the
+/// full height and every lane, so this constrains the smile everywhere, unlike
+/// the ladder-rung fit (only at matched rungs) — no ladder needed. Columns sit at
+/// the lane centers (+ gel edges); a few `v` rows keep the surface smooth, with
+/// regularization filling the gaps between bands. `None` if there are too few
+/// bands to constrain a fit.
+#[allow(clippy::too_many_arguments)]
+fn fit_band_warp(
+    det: &crate::detect::detector::Detection,
+    b0: &[Band],
+    per_lane0: &BTreeMap<u32, Vec<usize>>,
+    template0: Option<&LadderTemplate>,
+    min_r2: f64,
+    dims: (u32, u32),
+    params: &DetectParams,
+) -> Option<GelWarp> {
+    use std::collections::HashMap;
+    let (width, height) = dims;
+    let (w, h) = (width as f64, height as f64);
+    let lane_centers: Vec<f64> = det.lanes.iter().map(|l| l.x_center()).collect();
+    if lane_centers.is_empty() || det.bands.len() < 2 {
+        return None;
+    }
+    let lane_pos: HashMap<u32, usize> =
+        det.lanes.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
+
+    // Rung alignment: matched ladder rungs of the same size across ≥2 lanes must
+    // share one migration `v`, so the warp straightens the smile for cross-lane
+    // quantification (not just following per-band tilts). Build band_id → shared v.
+    let mut shared_v: HashMap<u32, f64> = HashMap::new();
+    if let Some(template) = template0 {
+        let strict_r2 = min_r2.max(0.9);
+        let min_rungs = (0.6 * template.bands.len() as f64).ceil() as usize;
+        let mut by_size: Vec<(f64, Vec<(u32, f64)>)> = Vec::new();
+        for idxs in per_lane0.values() {
+            let positions: Vec<f64> = idxs.iter().map(|&i| b0[i].v_center).collect();
+            let Some(m) = best_template(&positions, std::iter::once(template), strict_r2) else {
+                continue;
+            };
+            if m.pairs.len() < min_rungs.max(3) {
+                continue;
+            }
+            for pair in &m.pairs {
+                let Some(&bi) = idxs.get(pair.band_index) else {
+                    continue;
+                };
+                let entry = (det.bands[bi].id, b0[bi].v_center);
+                match by_size.iter_mut().find(|(s, _)| (*s - pair.size).abs() < 1e-6) {
+                    Some((_, pts)) => pts.push(entry),
+                    None => by_size.push((pair.size, vec![entry])),
+                }
+            }
+        }
+        for (_, pts) in by_size.into_iter().filter(|(_, p)| p.len() >= 2) {
+            let mean_v = pts.iter().map(|(_, v)| v).sum::<f64>() / pts.len() as f64;
+            for (id, _) in pts {
+                shared_v.insert(id, mean_v);
+            }
+        }
+    }
+    // Lane *anchors* fix each lane's cross-lane position in u, independent of the
+    // control-grid resolution: gel edges at u=0/1, lane p at u=(p+1)/(base_nu-1).
+    // Extra horizontal edges only densify the grid (more bending freedom between
+    // lanes); they must not move where a lane sits in u, or the band
+    // correspondences below would drift.
+    let base_nu = lane_centers.len() + 2; // gel edges + one column per lane
+    let du_lane = 1.0 / (base_nu - 1) as f64; // u-spacing between adjacent anchors
+    let mut anchor_u = Vec::with_capacity(base_nu);
+    let mut anchor_x = Vec::with_capacity(base_nu);
+    anchor_u.push(0.0);
+    anchor_x.push(0.0);
+    for (p, &xc) in lane_centers.iter().enumerate() {
+        anchor_u.push((p + 1) as f64 * du_lane);
+        anchor_x.push(xc);
+    }
+    anchor_u.push(1.0);
+    anchor_x.push(w);
+    // Piecewise-linear prior x at any u, interpolating the lane/edge anchors.
+    let prior_x = |u: f64| -> f64 {
+        let u = u.clamp(0.0, 1.0);
+        let mut k = 0;
+        while k + 1 < anchor_u.len() && anchor_u[k + 1] < u {
+            k += 1;
+        }
+        let (u0, u1) = (anchor_u[k], anchor_u[k + 1]);
+        let (x0, x1) = (anchor_x[k], anchor_x[k + 1]);
+        let frac = if (u1 - u0).abs() < 1e-12 {
+            0.0
+        } else {
+            (u - u0) / (u1 - u0)
+        };
+        x0 + (x1 - x0) * frac
+    };
+    // Grid resolution: densify by the requested extra edges (0 = one col/lane).
+    let nu = base_nu + params.extra_horizontal_edges;
+    let nv = (params.extra_vertical_edges + 3).max(4);
+    let prior = GelWarp::from_grid(nu, nv, |u, v| [prior_x(u), v * h]);
+
+    // Pin the top (v=0) and bottom (v=1) control rows to the image boundary at
+    // every column, so the migration axis spans the image and — crucially — the
+    // outer knots stay on-screen and grabbable (bands don't reach the very top/
+    // bottom, so without this the edge rows float past the border and the user
+    // can only grab inner knots, and normalize-inner never fires).
+    let mut corr: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(det.bands.len() * 2 + nu * 2);
+    for iu in 0..nu {
+        let u = iu as f64 / (nu - 1) as f64;
+        let x = prior_x(u);
+        corr.push((u, 0.0, x, 0.0));
+        corr.push((u, 1.0, x, h));
+    }
+
+    // Two correspondences per band, at the lane's left/right in the *prior*
+    // x-geometry (so the u→x map is never distorted); only the migration y is
+    // shaped, sloped by the band's measured tilt so the iso-v line follows it.
+    for (i, db) in det.bands.iter().enumerate() {
+        let Some(&p) = lane_pos.get(&db.lane_id) else {
+            continue;
+        };
+        let u_c = (p + 1) as f64 * du_lane;
+        // Matched rungs share a common v (straighten); others keep their own.
+        let v = shared_v
+            .get(&db.id)
+            .copied()
+            .unwrap_or(b0[i].v_center)
+            .clamp(0.0, 1.0);
+        let t = db.angle.tan();
+        let u_l = (u_c - du_lane * 0.45).max(0.0);
+        let u_r = (u_c + du_lane * 0.45).min(1.0);
+        let (xl, xr) = (prior_x(u_l), prior_x(u_r));
+        corr.push((u_l, v, xl, db.y_center + (xl - db.x_center) * t));
+        corr.push((u_r, v, xr, db.y_center + (xr - db.x_center) * t));
+    }
+    if corr.len() < 4 {
+        return None;
+    }
+    Some(prior.refine_least_squares_with_spacing(
+        &corr,
+        params.warp_regularization,
+        params.row_spacing_weight,
+    ))
+}
+
 /// Run classical detection + ladder identification + sizing.
 ///
 /// `candidates` are the ladder templates to consider (defaults to the built-ins
@@ -251,9 +396,14 @@ pub fn analyze_detection(
     let warp = if params.optical_flow_warp {
         crate::detect::flow::fit_flow_warp(&work, w, h, params.flow_smoothness)
     } else {
-        let smile = template0
-            .and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, (w, h), params));
-        smile.unwrap_or(coarse)
+        // Make the grid follow the measured band tilts (full height, between
+        // lanes — no ladder needed). Fall back to the ladder-rung smile, then to
+        // the coarse lane-only warp.
+        fit_band_warp(&det, &b0, &per_lane0, template0, min_r2, (w, h), params)
+            .or_else(|| {
+                template0.and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, (w, h), params))
+            })
+            .unwrap_or(coarse)
     };
 
     let (lanes, mut bands) = det.to_model(&warp);
@@ -332,6 +482,8 @@ fn best_ladder_match(a: &LadderMatch, b: &LadderMatch) -> std::cmp::Ordering {
         .cmp(&b.pairs.len())
         .then_with(|| a.r2.partial_cmp(&b.r2).unwrap())
 }
+
+
 
 
 

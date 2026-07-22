@@ -9,6 +9,13 @@
 //! rotation (≤ 50°), overexposure (saturation clipping), run-out-of-frame
 //! cropping, and Poisson shot noise. Batches render in parallel via rayon.
 //!
+//! **"Smile" is a test-only concept.** It lives here so tests can bake a *known*
+//! migration bow into synthetic gels and measure how well a fit removes it (see
+//! `detect::eval::iso_migration_spread` / `warp_migration_error`). Production
+//! code — detection, warp fitting, the GUI — models distortion **only** as the
+//! NURBS `GelWarp`; do not reintroduce smile as a modeling concept outside the
+//! simulator and its tests.
+//!
 //! * [`config::SimConfig`] — scene + effect parameters (`clean`, `randomized`).
 //! * [`render::simulate`] — render one gel → [`render::RenderedGel`].
 //! * [`batch`] — parallel batch rendering and dataset export.

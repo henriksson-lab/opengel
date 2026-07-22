@@ -6,7 +6,7 @@
 //! **wells**, dim gel **autofluorescence**, and the gel sitting **inside a
 //! larger camera frame** (a dark border), with flat-topped rectangular bands.
 //!
-//! The scene is a fixed, upright 8-lane DNA gel with three NEB 1 kb ladder lanes
+//! The scene is a fixed, upright 8-lane DNA gel with three 1 kb ladder lanes
 //! (indices 0, 4, 7) and five sample lanes with fixed band sizes.
 //! [`demo_document`] renders it as one 3-frame HDR exposure bracket (identical
 //! scene, three brightnesses), and [`demo_document_annotated`] additionally
@@ -78,8 +78,14 @@ fn demo_config(exposure: f64) -> SimConfig {
         diffusion: 1.5,
         migration_compression: 0.3,
     };
-    // Three NEB 1 kb ladder lanes at 0, 4, 7; five sample lanes between them.
-    let ladder = "NEB 1 kb DNA Ladder";
+    // Three ladder lanes at 0, 4, 7; five sample lanes between them. The ladder
+    // is a built-in template and its lanes reproduce that template's exact rungs
+    // (see `sim::render`), so the demo self-identifies as this same ladder under
+    // `--detect`. The Promega 1 kb ladder is used because, on this scene, its
+    // rung pattern is the one the classical detector identifies unambiguously as
+    // itself (other 1 kb ladders alias to denser near-superset templates), while
+    // keeping all eight lanes cleanly resolved.
+    let ladder = "Promega 1 kb DNA Ladder";
     let lanes = vec![
         SimLane::ladder(ladder),                             // 0  ladder
         SimLane::sample(vec![4000.0, 1500.0, 700.0]),        // 1

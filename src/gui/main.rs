@@ -146,30 +146,42 @@ fn main() -> anyhow::Result<()> {
                             live_dirty = true;
                         }
                         CamEvent::CaptureDone(frames) => {
-                            let n = frames.len();
-                            let (imgs, metas): (Vec<_>, Vec<_>) = frames.into_iter().unzip();
-                            st.adopt_capture(imgs, metas);
                             st.capturing = false;
-                            let name = st.camera_name.clone();
-                            drop(st);
-                            ui.set_status(
-                                if n <= 1 {
-                                    format!("Captured single frame from {name}.")
-                                } else {
-                                    format!("Captured {n}-frame HDR bracket from {name}.")
-                                }
-                                .into(),
-                            );
-                            doc_dirty = true;
+                            if st.cancel_requested {
+                                // Arrived after the user cancelled — discard it.
+                                st.cancel_requested = false;
+                                drop(st);
+                                live_dirty = true;
+                            } else {
+                                let n = frames.len();
+                                let (imgs, metas): (Vec<_>, Vec<_>) = frames.into_iter().unzip();
+                                st.adopt_capture(imgs, metas);
+                                let name = st.camera_name.clone();
+                                drop(st);
+                                ui.set_status(
+                                    if n <= 1 {
+                                        format!("Captured single frame from {name}.")
+                                    } else {
+                                        format!("Captured {n}-frame HDR bracket from {name}.")
+                                    }
+                                    .into(),
+                                );
+                                doc_dirty = true;
+                            }
                         }
                         CamEvent::CaptureFailed(e) => {
                             st.capturing = false;
+                            let cancelled = st.cancel_requested;
+                            st.cancel_requested = false;
                             drop(st);
-                            ui.set_status(format!("Capture failed: {e}").into());
+                            if !cancelled {
+                                ui.set_status(format!("Capture failed: {e}").into());
+                            }
                             live_dirty = true;
                         }
                         CamEvent::Cancelled => {
                             st.capturing = false;
+                            st.cancel_requested = false;
                             drop(st);
                             ui.set_status("Capture cancelled.".into());
                             live_dirty = true;
@@ -238,8 +250,15 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_analyze(move || {
             let ui = ui_weak.unwrap();
-            match state.borrow_mut().analyze(None) {
-                Ok(msg) => ui.set_status(msg.into()),
+            let result = state.borrow_mut().analyze(None);
+            match result {
+                Ok(msg) => {
+                    // Reveal the fitted NURBS so the user knows it landed and can
+                    // adjust the knots for cues we don't model.
+                    state.borrow_mut().set_show_warp(true);
+                    ui.set_show_warp(true);
+                    ui.set_status(msg.into());
+                }
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
             }
             view::refresh(&ui, &state.borrow());
@@ -251,8 +270,10 @@ fn main() -> anyhow::Result<()> {
         ui.on_open_fit_dialog(move || {
             let ui = ui_weak.unwrap();
             let st = state.borrow();
-            ui.set_fit_dialog_optical_flow(st.optical_flow);
-            ui.set_fit_dialog_extra_edges(st.extra_vertical_edges.max(2).to_string().into());
+            // Checkbox is "Use band tilts" — the inverse of optical-flow mode.
+            ui.set_fit_dialog_use_band_tilts(!st.optical_flow);
+            ui.set_fit_dialog_extra_edges(st.extra_vertical_edges.to_string().into());
+            ui.set_fit_dialog_extra_edges_h(st.extra_horizontal_edges.to_string().into());
             ui.set_fit_dialog_warp_regularization(format!("{:.4}", st.warp_regularization).into());
             ui.set_fit_dialog_row_spacing(format!("{:.3}", st.row_spacing_weight).into());
             ui.set_fit_dialog_flow_smoothness(format!("{:.3}", st.flow_smoothness).into());
@@ -274,8 +295,11 @@ fn main() -> anyhow::Result<()> {
             let extra_edges = ui
                 .get_fit_dialog_extra_edges()
                 .parse::<usize>()
-                .unwrap_or(2)
-                .max(2);
+                .unwrap_or(2);
+            let extra_edges_h = ui
+                .get_fit_dialog_extra_edges_h()
+                .parse::<usize>()
+                .unwrap_or(0);
             let warp_regularization = ui
                 .get_fit_dialog_warp_regularization()
                 .parse::<f64>()
@@ -293,19 +317,29 @@ fn main() -> anyhow::Result<()> {
                 .max(0.0);
             {
                 let mut st = state.borrow_mut();
-                st.optical_flow = ui.get_fit_dialog_optical_flow();
+                // "Use band tilts" checked ⇒ band-tilt fit ⇒ optical flow off.
+                st.optical_flow = !ui.get_fit_dialog_use_band_tilts();
                 st.extra_vertical_edges = extra_edges;
+                st.extra_horizontal_edges = extra_edges_h;
                 st.warp_regularization = warp_regularization;
                 st.row_spacing_weight = row_spacing_weight;
                 st.flow_smoothness = flow_smoothness;
             }
             ui.set_fit_dialog_extra_edges(extra_edges.to_string().into());
+            ui.set_fit_dialog_extra_edges_h(extra_edges_h.to_string().into());
             ui.set_fit_dialog_warp_regularization(format!("{warp_regularization:.4}").into());
             ui.set_fit_dialog_row_spacing(format!("{row_spacing_weight:.3}").into());
             ui.set_fit_dialog_flow_smoothness(format!("{flow_smoothness:.3}").into());
             ui.set_fit_dialog_open(false);
-            match state.borrow_mut().analyze(None) {
-                Ok(msg) => ui.set_status(msg.into()),
+            let result = state.borrow_mut().analyze(None);
+            match result {
+                Ok(msg) => {
+                    // Reveal the fitted NURBS so the user knows it landed and can
+                    // adjust the knots for cues we don't model.
+                    state.borrow_mut().set_show_warp(true);
+                    ui.set_show_warp(true);
+                    ui.set_status(msg.into());
+                }
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
             }
             view::refresh(&ui, &state.borrow());
@@ -466,7 +500,7 @@ fn main() -> anyhow::Result<()> {
             state.borrow_mut().set_hover(x, y);
             let st = state.borrow();
             // Live size readout in the status bar (only when a ladder is fitted).
-            if let Some(label) = st.hover_size_label(y) {
+            if let Some(label) = st.hover_size_label(x, y) {
                 ui.set_status(label.into());
             }
             // Only the cheap re-render is needed; skip when nothing to draw.
@@ -569,9 +603,18 @@ fn main() -> anyhow::Result<()> {
         }};
     }
     edit_cb!(on_add_lane, |s: &mut AppState, nx: f64, _ny: f64| s
-        .add_lane_at(nx));
-    edit_cb!(on_add_band, |s: &mut AppState, nx: f64, ny: f64| s
-        .add_band_at(nx, ny));
+        .add_lane_at(nx, None));
+    // Add band targets the currently selected lane (not the last image click).
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_add_band(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().add_band_to_selected();
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
     // Absolute calibration.
     {
         let ui_weak = ui.as_weak();
@@ -580,6 +623,139 @@ fn main() -> anyhow::Result<()> {
             let ui = ui_weak.unwrap();
             let vol: f64 = ui.get_volume_ul().parse().unwrap_or(0.0);
             let msg = state.borrow_mut().calibrate(vol);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+
+    // Gel tree: select a row, and delete the selection.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_tree(move |kind, id| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().select_tree(kind, id as u32);
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_delete_selected(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().delete_selected();
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_weight_dialog(move || {
+            let ui = ui_weak.unwrap();
+            let (val, unit) = state.borrow().weight_dialog_prefill();
+            ui.set_weight_dialog_value(val.into());
+            ui.set_weight_dialog_unit(unit.into());
+            ui.set_weight_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_apply_weight_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_weight_dialog_open(false);
+            if let Ok(size) = ui.get_weight_dialog_value().parse::<f64>() {
+                let msg = state.borrow_mut().set_selected_band_weight(size);
+                ui.set_status(msg.into());
+                view::refresh(&ui, &state.borrow());
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_weight_dialog(move || {
+            ui_weak.unwrap().set_weight_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_rename_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_rename_dialog_value(state.borrow().rename_dialog_prefill().into());
+            ui.set_rename_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_apply_rename_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_rename_dialog_open(false);
+            let id = ui.get_selected_lane_id();
+            if id >= 0 {
+                let name = ui.get_rename_dialog_value().to_string();
+                let msg = state.borrow_mut().set_lane_label(id as u32, &name);
+                ui.set_status(msg.into());
+                view::refresh(&ui, &state.borrow());
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_rename_dialog(move || {
+            ui_weak.unwrap().set_rename_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_add_lane_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_add_lane_dialog_value(state.borrow().add_lane_dialog_prefill().into());
+            ui.set_add_lane_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_apply_add_lane_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_add_lane_dialog_open(false);
+            // Place the lane at the last gel click x (centre if none).
+            let nx = {
+                let x = ui.get_click_x() as f64;
+                if x > 0.0 { x } else { 0.5 }
+            };
+            let name = ui.get_add_lane_dialog_value().to_string();
+            let msg = state.borrow_mut().add_lane_at(nx, Some(name));
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_add_lane_dialog(move || {
+            ui_weak.unwrap().set_add_lane_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_set_ratio_a(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().set_ratio_a();
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_set_ratio_b(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().set_ratio_b();
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });
@@ -604,6 +780,88 @@ fn main() -> anyhow::Result<()> {
             let mode = state.borrow().trace_mode.label();
             ui.set_status(format!("Trace y-axis: {mode}").into());
             view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_all_lanes(move || {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().select_all_lanes();
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_none_lanes(move || {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().select_no_lanes();
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_trace_set_zoom(move |z| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().set_trace_zoom(z as f64);
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_trace_zoom_at(move |factor, focus| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().trace_zoom_by(factor as f64, focus as f64);
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_trace_pan(move |dx| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().trace_pan_by(dx as f64);
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_trace_reset_view(move || {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().trace_reset_view();
+            view::refresh_trace(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_trace_hover(move |f| {
+            let ui = ui_weak.unwrap();
+            if let Some(label) = state.borrow().trace_hover_bp_label(f as f64) {
+                ui.set_status(label.into());
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_export_trace_pdf(move || {
+            let ui = ui_weak.unwrap();
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("trace.pdf")
+                .add_filter("PDF", &["pdf"])
+                .save_file()
+            {
+                let msg = match state.borrow().export_trace_pdf(&path) {
+                    Ok(()) => format!("Exported trace to {}", path.display()),
+                    Err(e) => format!("PDF export failed: {e}"),
+                };
+                ui.set_status(msg.into());
+            }
         });
     }
 

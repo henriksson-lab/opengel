@@ -90,8 +90,10 @@ pub struct AppState {
     pub optical_flow: bool,
     /// Optical-flow smoothness for model fitting.
     pub flow_smoothness: f64,
-    /// Extra v-axis control rows beyond observed ladder/front rows.
+    /// Extra v-axis (migration) control rows beyond observed ladder/front rows.
     pub extra_vertical_edges: usize,
+    /// Extra u-axis (cross-lane) control columns beyond gel edges + one per lane.
+    pub extra_horizontal_edges: usize,
     /// NURBS control-point pull toward the prior grid during refinement.
     pub warp_regularization: f64,
     /// Weight for keeping adjacent v control rows uniformly spaced.
@@ -114,6 +116,14 @@ pub struct AppState {
     pub view_frame: Option<usize>,
     /// Trace-tab state: y-axis mode and which lanes are plotted.
     pub trace_mode: TraceMode,
+    /// Trace-plot horizontal zoom (>=1; 1 = the auto-cropped signal range).
+    pub trace_zoom: f64,
+    /// Trace-plot horizontal pan: center of the visible window as a fraction
+    /// `[0,1]` of the auto-cropped range (0.5 = centered).
+    pub trace_pan: f64,
+    /// Cached visible trace window `(k0, k1, n)` (migration rows) from the last
+    /// render, so a hover can map the cursor to a size without recomputing traces.
+    pub trace_view: std::cell::Cell<(f64, f64, usize)>,
     pub selected_lanes: std::collections::BTreeSet<u32>,
     /// Per-ladder-lane loaded **volume** (µL) and **concentration** (ng/µL). The
     /// loaded mass used for calibration is `volume × concentration`. Missing
@@ -124,6 +134,9 @@ pub struct AppState {
     pub collapsed_lanes: std::collections::BTreeSet<u32>,
     /// The selected annotation (highlighted; draggable).
     pub selected: Option<Selection>,
+    /// The two bands chosen (via "Set A"/"Set B") for the density-ratio readout.
+    pub ratio_a: Option<u32>,
+    pub ratio_b: Option<u32>,
     /// True while a drag is in progress on the selected annotation.
     pub dragging: bool,
     /// Manual edit of the warp control lattice, paired with the `doc_gen` it was
@@ -131,6 +144,10 @@ pub struct AppState {
     pub warp_edit: Option<(u64, opengel::core::warp::GelWarp)>,
     /// The warp control point `(iu, iv)` currently being dragged, if any.
     pub dragging_knot: Option<(usize, usize)>,
+    /// Snapshot of the warp when the current knot drag began. Inner-knot
+    /// normalization deforms this fitted shape affinely by the edge's movement,
+    /// so the fitted smile is preserved rather than flattened to a line.
+    pub warp_drag_base: Option<opengel::core::warp::GelWarp>,
     /// Bumped whenever the document/working image changes; invalidates the
     /// view's cached base image + histogram.
     pub doc_gen: u64,
@@ -150,6 +167,10 @@ pub struct AppState {
     pub exposure_supported: bool,
     /// True while a capture is in flight (drives the modal progress dialog).
     pub capturing: bool,
+    /// Set when the user cancels: the UI is released immediately, and whatever
+    /// frame the (uninterruptible) in-flight grab eventually returns is discarded
+    /// rather than adopted.
+    pub cancel_requested: bool,
     /// Human-readable progress line for the capture dialog.
     pub capture_status: String,
     /// Lower / upper exposure time (seconds) of the HDR bracket.
@@ -191,24 +212,31 @@ impl AppState {
             optical_flow: false,
             flow_smoothness: 8.0,
             extra_vertical_edges: 2,
+            extra_horizontal_edges: 0,
             warp_regularization: 1e-2,
             row_spacing_weight: 10.0,
             show_warp: false,
             normalize_inner_knots: true,
             show_overexposed: false,
-            annotation_alpha: 0.5,
+            annotation_alpha: 0.25,
             hover_x: -1.0,
             hover_y: -1.0,
             view_frame: None,
             trace_mode: TraceMode::Intensity,
+            trace_zoom: 1.0,
+            trace_pan: 0.5,
+            trace_view: std::cell::Cell::new((0.0, 0.0, 0)),
             selected_lanes: std::collections::BTreeSet::new(),
             ladder_volume: std::collections::BTreeMap::new(),
             ladder_conc: std::collections::BTreeMap::new(),
             collapsed_lanes: std::collections::BTreeSet::new(),
             selected: None,
+            ratio_a: None,
+            ratio_b: None,
             dragging: false,
             warp_edit: None,
             dragging_knot: None,
+            warp_drag_base: None,
             doc_gen: 0,
             bracket_counter: 0,
             cam: None,
@@ -218,6 +246,7 @@ impl AppState {
             live_running: false,
             exposure_supported: true,
             capturing: false,
+            cancel_requested: false,
             capture_status: String::new(),
             hdr_min_s: 0.01,
             hdr_max_s: 1.0,
@@ -354,6 +383,113 @@ impl AppState {
     }
 
     /// Delete a lane and everything attached to it.
+    /// Select a lane (`kind == 0`) or band (`kind == 1`) from the tree list.
+    pub fn select_tree(&mut self, kind: i32, id: u32) {
+        self.selected = Some(if kind == 0 {
+            Selection::Lane(id)
+        } else {
+            Selection::Band(id)
+        });
+    }
+
+    /// Set band A (or B) of the density ratio to the currently selected band.
+    pub fn set_ratio_a(&mut self) -> String {
+        match self.selected {
+            Some(Selection::Band(id)) => {
+                self.ratio_a = Some(id);
+                "Set A.".into()
+            }
+            _ => "Select a band first.".into(),
+        }
+    }
+    pub fn set_ratio_b(&mut self) -> String {
+        match self.selected {
+            Some(Selection::Band(id)) => {
+                self.ratio_b = Some(id);
+                "Set B.".into()
+            }
+            _ => "Select a band first.".into(),
+        }
+    }
+
+    /// Short name of a band (its size, else `band #id`).
+    fn band_name(&self, id: u32) -> Option<String> {
+        let a = self.analysis()?;
+        let b = a.bands.iter().find(|b| b.id == id)?;
+        Some(match b.known_size.or(b.size) {
+            Some(s) => format!("{s:.0} {}", self.gel_type.size_unit()),
+            None => format!("band {id}"),
+        })
+    }
+
+    /// Density-ratio readout for the chosen A and B bands.
+    pub fn ratio_label(&self) -> String {
+        let a_txt = self.ratio_a.and_then(|id| self.band_name(id));
+        let b_txt = self.ratio_b.and_then(|id| self.band_name(id));
+        let (Some(a_name), Some(b_name)) = (&a_txt, &b_txt) else {
+            return format!(
+                "Ratio: A = {}, B = {} (select a band, then Set A / Set B)",
+                a_txt.as_deref().unwrap_or("—"),
+                b_txt.as_deref().unwrap_or("—"),
+            );
+        };
+        let analysis = self.analysis();
+        let band = |id: u32| analysis.and_then(|a| a.bands.iter().find(|b| b.id == id));
+        let (Some(ba), Some(bb)) = (band(self.ratio_a.unwrap()), band(self.ratio_b.unwrap())) else {
+            return "Ratio: (bands not found)".into();
+        };
+        match compare(ba.integrated_density, ba.size, bb.integrated_density, bb.size) {
+            Some(rel) => {
+                let molar = rel
+                    .molar_ratio
+                    .map(|m| format!(", molar {m:.3}"))
+                    .unwrap_or_default();
+                format!(
+                    "Ratio A/B ({a_name} / {b_name}): {:.3}{molar}",
+                    rel.density_ratio
+                )
+            }
+            None => "Ratio: unavailable".into(),
+        }
+    }
+
+    /// `(selected_lane_id, selected_band_id, selected_lane_is_ladder)` for the UI
+    /// (a selected band reports its parent lane). `-1` means none.
+    pub fn selection_info(&self) -> (i32, i32, bool) {
+        let a = self.analysis();
+        let is_ladder = |lid: u32| a.is_some_and(|a| a.lanes.iter().any(|l| l.id == lid && l.is_ladder));
+        match self.selected {
+            Some(Selection::Lane(id)) => (id as i32, -1, is_ladder(id)),
+            Some(Selection::Band(bid)) => {
+                let lane = a.and_then(|a| a.bands.iter().find(|b| b.id == bid).map(|b| b.lane_id));
+                (lane.map_or(-1, |l| l as i32), bid as i32, lane.is_some_and(is_ladder))
+            }
+            None => (-1, -1, false),
+        }
+    }
+
+    /// Current label of the selected lane, for the rename dialog.
+    pub fn rename_dialog_prefill(&self) -> String {
+        match self.selected {
+            Some(Selection::Lane(id)) => self
+                .analysis()
+                .and_then(|a| a.lanes.iter().find(|l| l.id == id))
+                .and_then(|l| l.label.clone())
+                .unwrap_or_else(|| format!("Lane {id}")),
+            _ => String::new(),
+        }
+    }
+
+    /// Delete whatever annotation is currently selected on the gel (a lane and
+    /// its bands, or a single band). `None`-selection returns a hint.
+    pub fn delete_selected(&mut self) -> String {
+        match self.selected.take() {
+            Some(Selection::Lane(id)) => self.delete_lane(id),
+            Some(Selection::Band(id)) => self.delete_band_by_id(id),
+            None => "Select a lane or band on the gel first, then Delete.".into(),
+        }
+    }
+
     pub fn delete_lane(&mut self, lane_id: u32) -> String {
         let Some(doc) = self.doc.as_mut() else {
             return "No document.".into();
@@ -496,9 +632,10 @@ impl AppState {
     /// so lanes are vertical and bands horizontal. `None` when no image.
     pub fn unwarped_view(&self) -> Option<GrayF32> {
         let work = self.work.as_ref()?;
+        // Invert the *displayed* NURBS (including any manual knot edits): rectify
+        // resamples out[u,v] = img(eval(u,v)), i.e. the inverse of the shown grid.
         let warp = self
-            .analysis()
-            .and_then(|a| a.warp.clone())
+            .fit_warp()
             .unwrap_or_else(|| GelWarp::identity(work.width() as u32, work.height() as u32));
         Some(warp.rectify(work, work.width(), work.height()))
     }
@@ -552,10 +689,12 @@ impl AppState {
         )
     }
 
-    /// Control points of the effective warp, as normalized `[0,1]²` positions
-    /// (for drawing draggable knot handles). Empty when the grid is hidden or no
-    /// warp exists.
-    pub fn warp_knots(&self) -> Vec<(f32, f32)> {
+
+    /// Warp control points as `(nx, ny, active)` in normalized image coords, for
+    /// drawing draggable handles as a **separate Slint overlay** (not composited
+    /// into the gel image, so edge knots aren't clipped). `active` marks the knot
+    /// currently being dragged. Empty when the grid is hidden.
+    pub fn warp_knot_items(&self) -> Vec<(f32, f32, bool)> {
         if !self.show_warp {
             return Vec::new();
         }
@@ -568,7 +707,12 @@ impl AppState {
         for iv in 0..nv {
             for iu in 0..nu {
                 let (cx, cy) = warp.control_point(iu, iv);
-                out.push(((cx / w.max(1.0)) as f32, (cy / h.max(1.0)) as f32));
+                let active = self.dragging_knot == Some((iu, iv));
+                out.push((
+                    (cx / w.max(1.0)) as f32,
+                    (cy / h.max(1.0)) as f32,
+                    active,
+                ));
             }
         }
         out
@@ -608,6 +752,7 @@ impl AppState {
         const GRAB_R: f64 = 0.035;
         if let Some((k, d2)) = best {
             if d2 <= GRAB_R * GRAB_R {
+                self.warp_drag_base = Some(warp.clone());
                 self.warp_edit = Some((self.doc_gen, warp));
                 self.dragging_knot = Some(k);
                 return true;
@@ -628,21 +773,37 @@ impl AppState {
         else {
             return;
         };
+        let base = self.warp_drag_base.clone();
         if let Some((gen, warp)) = self.warp_edit.as_mut() {
             if *gen == self.doc_gen {
-                warp.set_control_point(iu, iv, nx.clamp(0.0, 1.0) * w, ny.clamp(0.0, 1.0) * h);
+                // No clamp to [0,1]: a control point may sit outside the image
+                // (the surface region can be pinned from a knot beyond the edge).
+                warp.set_control_point(iu, iv, nx * w, ny * h);
                 let (_, nv) = warp.grid_size();
+                // Normalize inner rows when an edge knot moves — but preserve the
+                // fitted smile: displace each inner knot from its *base* (pre-drag)
+                // position by the affine blend of the two edges' displacements,
+                // rather than snapping the column to a straight line. With one edge
+                // held fixed this keeps the fitted curvature, just sheared to the
+                // moved edge (consistent with the initial fit).
                 if self.normalize_inner_knots && nv > 2 && (iv == 0 || iv + 1 == nv) {
-                    let (top_x, top_y) = warp.control_point(iu, 0);
-                    let (bottom_x, bottom_y) = warp.control_point(iu, nv - 1);
-                    for inner_iv in 1..(nv - 1) {
-                        let t = inner_iv as f64 / (nv - 1) as f64;
-                        warp.set_control_point(
-                            iu,
-                            inner_iv,
-                            top_x + (bottom_x - top_x) * t,
-                            top_y + (bottom_y - top_y) * t,
-                        );
+                    if let Some(base) = base.as_ref() {
+                        let (bt_x, bt_y) = base.control_point(iu, 0);
+                        let (bb_x, bb_y) = base.control_point(iu, nv - 1);
+                        let (t_x, t_y) = warp.control_point(iu, 0);
+                        let (b_x, b_y) = warp.control_point(iu, nv - 1);
+                        let (dtx, dty) = (t_x - bt_x, t_y - bt_y); // top displacement
+                        let (dbx, dby) = (b_x - bb_x, b_y - bb_y); // bottom displacement
+                        for inner_iv in 1..(nv - 1) {
+                            let t = inner_iv as f64 / (nv - 1) as f64;
+                            let (ox, oy) = base.control_point(iu, inner_iv);
+                            warp.set_control_point(
+                                iu,
+                                inner_iv,
+                                ox + (1.0 - t) * dtx + t * dbx,
+                                oy + (1.0 - t) * dty + t * dby,
+                            );
+                        }
                     }
                 }
             }
@@ -652,6 +813,7 @@ impl AppState {
     /// End a knot drag.
     pub fn release_warp_knot(&mut self) {
         self.dragging_knot = None;
+        self.warp_drag_base = None;
     }
 
     pub fn is_dragging_knot(&self) -> bool {
@@ -823,6 +985,7 @@ impl AppState {
         self.bracket_counter += 1;
         let exposures = self.hdr_exposures();
         self.capturing = true;
+        self.cancel_requested = false;
         self.capture_status = if exposures.len() == 1 {
             "Capturing…".into()
         } else {
@@ -837,18 +1000,26 @@ impl AppState {
     pub fn capture_single(&mut self) {
         let expo = self.live_exposure_s.max(1e-4);
         self.capturing = true;
+        self.cancel_requested = false;
         self.capture_status = "Capturing single frame…".into();
         if let Some(cam) = &self.cam {
             cam.capture_single(expo);
         }
     }
 
-    /// Request cancellation of an in-progress capture.
+    /// Request cancellation of an in-progress capture. The camera's frame grab
+    /// can't be interrupted mid-exposure, so instead of blocking the UI on
+    /// "Cancelling…" until it returns, release the dialog immediately and mark
+    /// the pending result to be discarded when it finally arrives.
     pub fn cancel_capture(&mut self) {
         if let Some(cam) = &self.cam {
             cam.cancel();
         }
-        self.capture_status = "Cancelling…".into();
+        if self.capturing {
+            self.cancel_requested = true;
+        }
+        self.capturing = false;
+        self.capture_status = "Capture cancelled.".into();
     }
 
     // ---- Trace tab ----
@@ -862,6 +1033,62 @@ impl AppState {
         if !self.selected_lanes.remove(&id) {
             self.selected_lanes.insert(id);
         }
+    }
+
+    /// Select every lane for plotting.
+    pub fn select_all_lanes(&mut self) {
+        if let Some(a) = self.analysis() {
+            self.selected_lanes = a.lanes.iter().map(|l| l.id).collect();
+        }
+    }
+
+    /// Clear the trace-plot selection.
+    pub fn select_no_lanes(&mut self) {
+        self.selected_lanes.clear();
+    }
+
+    /// Reset the trace plot to the default (auto-cropped) view.
+    pub fn trace_reset_view(&mut self) {
+        self.trace_zoom = 1.0;
+        self.trace_pan = 0.5;
+    }
+
+    /// Set the trace zoom directly (from the slider), keeping the pan clamped so
+    /// the visible window stays inside the cropped range.
+    pub fn set_trace_zoom(&mut self, zoom: f64) {
+        self.trace_zoom = zoom.clamp(1.0, 40.0);
+        self.clamp_trace_pan();
+    }
+
+    /// Zoom by a multiplicative factor about a normalized focus `x` (0..1 across
+    /// the *visible* window), keeping that point under the cursor.
+    pub fn trace_zoom_by(&mut self, factor: f64, focus: f64) {
+        let old = self.trace_zoom;
+        let new = (old * factor).clamp(1.0, 40.0);
+        if (new - old).abs() < 1e-9 {
+            return;
+        }
+        // The visible half-width (in pan-fraction units) shrinks/grows with zoom;
+        // keep the focused fraction of the window fixed as it does.
+        let half_old = 0.5 / old;
+        let half_new = 0.5 / new;
+        let focus_frac = self.trace_pan - half_old + focus * (2.0 * half_old);
+        self.trace_pan = focus_frac - (focus * 2.0 - 1.0) * half_new;
+        self.trace_zoom = new;
+        self.clamp_trace_pan();
+    }
+
+    /// Pan by a fraction of the visible window (drag): `dx` is the pointer motion
+    /// as a fraction of the plot width.
+    pub fn trace_pan_by(&mut self, dx: f64) {
+        // Dragging right moves the content right → the window center moves left.
+        self.trace_pan -= dx / self.trace_zoom;
+        self.clamp_trace_pan();
+    }
+
+    fn clamp_trace_pan(&mut self) {
+        let half = 0.5 / self.trace_zoom;
+        self.trace_pan = self.trace_pan.clamp(half, 1.0 - half);
     }
 
     /// Lanes for the checklist: `(id, label, is_ladder, selected)`.
@@ -884,7 +1111,7 @@ impl AppState {
     }
 
     /// Semi-log sizing model from the identified ladder lane, if any.
-    fn sizing_fit(&self) -> Option<opengel::core::quant::SizingFit> {
+    pub fn sizing_fit(&self) -> Option<opengel::core::quant::SizingFit> {
         let a = self.analysis()?;
         let assign = a.ladder_assignments.first()?;
         let pts: Vec<(f64, f64)> = a
@@ -896,27 +1123,194 @@ impl AppState {
         opengel::core::quant::SizingFit::fit(&pts)
     }
 
-    /// A human-readable fragment-size estimate at a normalized vertical hover
-    /// position (e.g. `"≈ 1230 bp"`), from the identified ladder's semi-log
-    /// sizing model. Returns `None` unless a ladder has been fitted (so a
-    /// sizing grid exists) and the position is over the image.
-    pub fn hover_size_label(&self, ny: f32) -> Option<String> {
+    /// Round a size for a live readout (no false precision).
+    fn round_size(size: f64) -> f64 {
+        if size >= 1000.0 {
+            (size / 10.0).round() * 10.0
+        } else {
+            size.round()
+        }
+    }
+
+    /// A human-readable fragment-size estimate at a normalized hover position
+    /// (e.g. `"Lane 3: ≈ 1230 bp"`), from the identified ladder's semi-log sizing
+    /// model, prefixed with the lane under the cursor when there is one. `None`
+    /// unless a ladder has been fitted and the position is over the image.
+    pub fn hover_size_label(&self, nx: f32, ny: f32) -> Option<String> {
         if !(0.0..=1.0).contains(&ny) {
             return None;
         }
         let fit = self.sizing_fit()?;
-        // Migration coordinate v ≡ the normalized hover position.
+        // Migration coordinate v ≡ the normalized vertical hover position.
         let size = fit.size_at(ny as f64);
         if !size.is_finite() || size <= 0.0 {
             return None;
         }
-        // Round to a sensible precision for a live readout (no false digits).
-        let rounded = if size >= 1000.0 {
-            (size / 10.0).round() * 10.0
-        } else {
-            size.round()
+        let bp = format!(
+            "≈ {:.0} {}",
+            Self::round_size(size),
+            self.gel_type.size_unit()
+        );
+        // Prefix the lane under the cursor (x-warp is near-linear, so u ≈ nx).
+        let lane = self.analysis().and_then(|a| {
+            a.lanes
+                .iter()
+                .find(|l| (l.u_min..=l.u_max).contains(&(nx as f64)))
+                .map(|l| l.label.clone().unwrap_or_else(|| format!("Lane {}", l.id)))
+        });
+        Some(match lane {
+            Some(name) => format!("{name}: {bp}"),
+            None => bp,
+        })
+    }
+
+    /// Size (bp/nt/Da) readout for a hover at horizontal fraction `f` (0..1)
+    /// across the current trace plot's visible window. `None` without a ladder.
+    pub fn trace_hover_bp_label(&self, f: f64) -> Option<String> {
+        let (k0, k1, n) = self.trace_view.get();
+        if n == 0 || k1 <= k0 {
+            return None;
+        }
+        let fit = self.sizing_fit()?;
+        let k = k0 + f.clamp(0.0, 1.0) * (k1 - k0);
+        let size = fit.size_at((k / n as f64).clamp(0.0, 1.0));
+        if !size.is_finite() || size <= 0.0 {
+            return None;
+        }
+        Some(format!(
+            "≈ {:.0} {} (migration {:.0} px)",
+            Self::round_size(size),
+            self.gel_type.size_unit(),
+            k
+        ))
+    }
+
+    /// Export the current trace plot (selected lanes, current zoom window, axes,
+    /// bp scale and legend) to a vector PDF at `path`.
+    pub fn export_trace_pdf(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use printpdf::*;
+        let mm = |v: f64| Mm(v as f32); // printpdf uses f32 millimetres
+        let traces = self.compute_traces();
+        if traces.is_empty() {
+            anyhow::bail!("no lanes selected to plot");
+        }
+        let n = traces.iter().map(|t| t.values.len()).max().unwrap_or(0);
+        let (mut k0, mut k1, _) = self.trace_view.get();
+        if !(k1 > k0) {
+            (k0, k1) = (0.0, n as f64);
+        }
+        let span = (k1 - k0).max(1e-6);
+        let vmax = traces
+            .iter()
+            .flat_map(|t| t.values.iter().copied())
+            .fold(0.0f64, f64::max)
+            .max(1e-9);
+
+        let (pw, ph) = (250.0f64, 160.0f64);
+        let (doc, page, layer) =
+            PdfDocument::new("OpenGel trace", mm(pw), mm(ph), "traces");
+        let lyr = doc.get_page(page).get_layer(layer);
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
+
+        // Plot rectangle (mm), origin bottom-left (PDF y grows upward).
+        let (ml, mr, mt, mb) = (24.0, 44.0, 18.0, 20.0);
+        let (px0, px1, py0, py1) = (ml, pw - mr, mb, ph - mt);
+        let (pwmm, phmm) = (px1 - px0, py1 - py0);
+        let seg = |ax: f64, ay: f64, bx: f64, by: f64| Line {
+            points: vec![
+                (Point::new(mm(ax), mm(ay)), false),
+                (Point::new(mm(bx), mm(by)), false),
+            ],
+            is_closed: false,
         };
-        Some(format!("≈ {rounded:.0} {}", self.gel_type.size_unit()))
+
+        lyr.set_outline_color(Color::Rgb(Rgb::new(0.2, 0.2, 0.2, None)));
+        lyr.set_outline_thickness(0.6);
+        lyr.add_line(seg(px0, py0, px1, py0));
+        lyr.add_line(seg(px0, py0, px0, py1));
+        lyr.add_line(seg(px0, py1, px1, py1)); // top axis (bp)
+
+        // Traces.
+        const PAL: [(f32, f32, f32); 6] = [
+            (0.129, 0.463, 0.839),
+            (0.839, 0.176, 0.176),
+            (0.133, 0.627, 0.267),
+            (0.588, 0.235, 0.784),
+            (0.0, 0.588, 0.588),
+            (0.839, 0.471, 0.078),
+        ];
+        const LAD: (f32, f32, f32) = (0.769, 0.549, 0.0);
+        let mut si = 0usize;
+        for t in &traces {
+            let (r, g, b) = if t.ladder {
+                LAD
+            } else {
+                let c = PAL[si % PAL.len()];
+                si += 1;
+                c
+            };
+            let pts: Vec<(Point, bool)> = t
+                .values
+                .iter()
+                .enumerate()
+                .map(|(k, &v)| {
+                    let xf = ((k as f64 - k0) / span).clamp(0.0, 1.0);
+                    let yf = (v / vmax).clamp(0.0, 1.0);
+                    (Point::new(mm(px0 + xf * pwmm), mm(py0 + yf * phmm)), false)
+                })
+                .collect();
+            lyr.set_outline_color(Color::Rgb(Rgb::new(r, g, b, None)));
+            lyr.set_outline_thickness(0.4);
+            lyr.add_line(Line { points: pts, is_closed: false });
+        }
+
+        // Text: y-title, x-title/ticks, bp top ticks, legend.
+        let black = Color::Rgb(Rgb::new(0.1, 0.1, 0.1, None));
+        lyr.set_fill_color(black.clone());
+        lyr.use_text(self.trace_mode.label(), 10.0, mm(px0), mm(py1 + 4.0), &font);
+        lyr.use_text(
+            "Migration (px)",
+            10.0,
+            mm(px0 + pwmm / 2.0 - 14.0),
+            mm(4.0),
+            &font,
+        );
+        for i in 0..5 {
+            let x = px0 + pwmm * i as f64 / 4.0;
+            let kf = k0 + span * i as f64 / 4.0;
+            lyr.use_text(format!("{kf:.0}"), 8.0, mm(x - 4.0), mm(py0 - 5.0), &font);
+        }
+        if let Some(fit) = self.sizing_fit() {
+            for i in 0..5 {
+                let x = px0 + pwmm * i as f64 / 4.0;
+                let bp = fit.size_at((k0 + span * i as f64 / 4.0) / n.max(1) as f64);
+                lyr.use_text(format!("{bp:.0}"), 8.0, mm(x - 5.0), mm(py1 + 2.0), &font);
+            }
+            lyr.use_text(
+                format!("Size ({})", self.gel_type.size_unit()),
+                9.0,
+                mm(px1 + 3.0),
+                mm(py1 + 2.0),
+                &font,
+            );
+        }
+        let mut ly = py1 - 4.0;
+        let mut si2 = 0usize;
+        for t in &traces {
+            let (r, g, b) = if t.ladder {
+                LAD
+            } else {
+                let c = PAL[si2 % PAL.len()];
+                si2 += 1;
+                c
+            };
+            lyr.set_fill_color(Color::Rgb(Rgb::new(r, g, b, None)));
+            lyr.use_text(t.label.clone(), 9.0, mm(px1 + 3.0), mm(ly), &font);
+            ly -= 6.0;
+        }
+
+        doc.save(&mut std::io::BufWriter::new(std::fs::File::create(path)?))?;
+        Ok(())
     }
 
     /// Calibration slope (ng per integrated-density unit), or 1.0 if none.
@@ -942,7 +1336,11 @@ impl AppState {
         let slope = self.cal_slope();
         let fit = self.sizing_fit();
         let (w, h) = (img.width(), img.height());
-        let warp = a.warp_or_identity(w as u32, h as u32);
+        // Use the displayed NURBS (respecting knot edits) — the same transform as
+        // the gel view and the unwarp — to rectify before profiling.
+        let warp = self
+            .fit_warp()
+            .unwrap_or_else(|| a.warp_or_identity(w as u32, h as u32));
         let rect = warp.rectify(img, w, h);
         let h = h as f64;
         let w = w as f64;
@@ -1072,6 +1470,13 @@ impl AppState {
     /// pointer if any, else the lane column. Returns `true` when something
     /// draggable was selected (so the UI enters drag mode).
     pub fn press_annotation(&mut self, nx: f64, ny: f64) -> bool {
+        // When annotations overlap under the cursor, prefer the one already
+        // selected in the list.
+        let (prev_band, prev_lane) = match self.selected {
+            Some(Selection::Band(id)) => (Some(id), None),
+            Some(Selection::Lane(id)) => (None, Some(id)),
+            None => (None, None),
+        };
         let (Some(a), Some(img)) = (self.analysis(), self.work.as_ref()) else {
             self.selected = None;
             self.dragging = false;
@@ -1092,6 +1497,9 @@ impl AppState {
         };
         // Band under the pointer: inside its lane's x-range and near its center.
         let mut best_band: Option<(u32, f64)> = None;
+        // If the already-selected band is under the pointer it wins, even when a
+        // different band sits closer (overlapping bands).
+        let mut sel_band_hit: Option<(u32, f64)> = None;
         for b in &a.bands {
             let Some(lane) = a.lanes.iter().find(|l| l.id == b.lane_id) else {
                 continue;
@@ -1102,15 +1510,33 @@ impl AppState {
             }
             let dy = (py - b.v_center * h).abs();
             let tol = (b.v_half_width * h * 2.0).max(8.0);
-            if dy <= tol && best_band.is_none_or(|(_, bd)| dy < bd) {
-                best_band = Some((b.id, dy));
+            if dy <= tol {
+                if Some(b.id) == prev_band {
+                    sel_band_hit = Some((b.id, dy));
+                }
+                if best_band.is_none_or(|(_, bd)| dy < bd) {
+                    best_band = Some((b.id, dy));
+                }
             }
         }
+        let best_band = sel_band_hit.or(best_band);
+        // Lane fallback: prefer the selected lane if the pointer is still inside
+        // it (overlapping lanes), otherwise the lane under the pointer.
+        let lane_hit = prev_lane
+            .filter(|&id| {
+                a.lanes.iter().any(|l| {
+                    l.id == id && {
+                        let (x0, x1) = l.px_x_bounds(&warp);
+                        px >= x0 as f64 && px <= x1 as f64
+                    }
+                })
+            })
+            .or_else(|| lane_at(px));
         if let Some((id, _)) = best_band {
             self.selected = Some(Selection::Band(id));
             self.dragging = true;
             true
-        } else if let Some(id) = lane_at(px) {
+        } else if let Some(id) = lane_hit {
             self.selected = Some(Selection::Lane(id));
             self.dragging = true;
             true
@@ -1186,17 +1612,57 @@ impl AppState {
         let Some(w) = self.work.as_ref() else {
             return "No image loaded.".into();
         };
-        let est = opengel::detect::orient::estimate_rotation(w, 50.0, true);
+        // Real gels are only slightly tilted; a wide search invites false maxima.
+        let est = opengel::detect::orient::estimate_rotation(w, 15.0, true);
         self.rotation_deg = -est;
         format!("Auto-straighten applied {:.1}°.", self.rotation_deg)
     }
 
     /// Ladder template names applicable to the current gel type.
+    /// Ladder options for the dialog. The built-in templates first, then "Custom"
+    /// at the end — Custom marks the lane as a ladder without assigning any rungs,
+    /// so the user sets each band's weight manually (via "Set weight…").
     pub fn ladder_names(&self) -> Vec<String> {
-        ladders::for_gel_type(self.gel_type)
+        let mut v: Vec<String> = ladders::for_gel_type(self.gel_type)
             .iter()
             .map(|t| t.name.clone())
-            .collect()
+            .collect();
+        v.push("Custom (set weights manually)".to_string());
+        v
+    }
+
+    /// Prefill `(value, unit)` for the set-band-weight dialog from the selected
+    /// band's current known size.
+    pub fn weight_dialog_prefill(&self) -> (String, String) {
+        let unit = self.gel_type.size_unit().to_string();
+        let value = match self.selected {
+            Some(Selection::Band(id)) => self
+                .analysis()
+                .and_then(|a| a.bands.iter().find(|b| b.id == id))
+                .and_then(|b| b.known_size)
+                .map(|s| format!("{s:.0}"))
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        (value, unit)
+    }
+
+    /// Set the selected band's known size (weight), then re-fit sizing so the
+    /// sample lanes update.
+    pub fn set_selected_band_weight(&mut self, size: f64) -> String {
+        let Some(Selection::Band(id)) = self.selected else {
+            return "Select a band first.".into();
+        };
+        let Some(doc) = self.doc.as_mut() else {
+            return "No document.".into();
+        };
+        let a = &mut doc.project.analysis;
+        let Some(band) = a.bands.iter_mut().find(|b| b.id == id) else {
+            return "No such band.".into();
+        };
+        band.known_size = Some(size);
+        resize_sample_lanes(a);
+        format!("Set band weight to {size:.0} {}.", self.gel_type.size_unit())
     }
 
     // ---- ladder lanes (any number, individually tunable) ----
@@ -1271,6 +1737,20 @@ impl AppState {
         let Some(name) = names.get(template_idx).cloned() else {
             return "No ladder selected.".into();
         };
+        // "Custom": mark as a ladder but assign no rungs (the user sets each
+        // band's weight manually).
+        if name.starts_with("Custom") {
+            let Some(doc) = self.doc.as_mut() else {
+                return "No document.".into();
+            };
+            match doc.project.analysis.lanes.iter_mut().find(|l| l.id == lane_id) {
+                Some(lane) => {
+                    lane.is_ladder = true;
+                    return format!("Lane {lane_id} = custom ladder (set band weights manually).");
+                }
+                None => return "No such lane.".into(),
+            }
+        }
         let Some(template) = ladders::by_name(&name) else {
             return format!("Unknown ladder {name}.");
         };
@@ -1364,7 +1844,8 @@ impl AppState {
         let params = DetectParams {
             optical_flow_warp: self.optical_flow,
             flow_smoothness: self.flow_smoothness.max(0.0),
-            extra_vertical_edges: self.extra_vertical_edges.max(2),
+            extra_vertical_edges: self.extra_vertical_edges,
+            extra_horizontal_edges: self.extra_horizontal_edges,
             warp_regularization: self.warp_regularization.max(0.0),
             row_spacing_weight: self.row_spacing_weight.max(0.0),
             ..DetectParams::default()
@@ -1390,7 +1871,7 @@ impl AppState {
         let doc = self.doc.as_mut().ok_or_else(|| anyhow!("no document"))?;
         doc.project.analysis = analysis;
         Ok(format!(
-            "Detected {n_lanes} lanes, {n_bands} bands{ladder}."
+            "Detected {n_lanes} lanes, {n_bands} bands{ladder}. Adjust the NURBS knots as needed."
         ))
     }
 
@@ -1407,7 +1888,16 @@ impl AppState {
         f(&mut doc.project.analysis, &img)
     }
 
-    pub fn add_lane_at(&mut self, nx: f64) -> String {
+    /// Default name for a new lane — "Lane N" where N is the next lane id.
+    pub fn add_lane_dialog_prefill(&self) -> String {
+        let next = self
+            .analysis()
+            .and_then(|a| a.lanes.iter().map(|l| l.id).max())
+            .map_or(0, |m| m + 1);
+        format!("Lane {next}")
+    }
+
+    pub fn add_lane_at(&mut self, nx: f64, label: Option<String>) -> String {
         self.with_analysis_mut(|a, img| {
             let (w, h) = (img.width() as u32, img.height() as u32);
             let warp = a.warp_or_identity(w, h);
@@ -1416,15 +1906,42 @@ impl AppState {
             let (u_lo, _) = warp.invert((cx - half).max(0.0), 0.0);
             let (u_hi, _) = warp.invert((cx + half).min(w as f64), 0.0);
             let id = a.lanes.iter().map(|l| l.id).max().map_or(0, |m| m + 1);
+            // A label that's just the default "Lane N" stays None so downstream
+            // display keeps using the derived name.
+            let label = label.filter(|s| !s.trim().is_empty() && s.trim() != format!("Lane {id}"));
             a.lanes.push(Lane {
                 id,
                 u_min: u_lo.min(u_hi),
                 u_max: u_lo.max(u_hi),
-                label: None,
+                label,
                 is_ladder: false,
             });
             format!("Added lane {id}.")
         })
+    }
+
+    /// Add a band to the currently selected lane (or the selected band's lane),
+    /// at the lane centre and mid-migration. Falls back to a hint if nothing is
+    /// selected.
+    pub fn add_band_to_selected(&mut self) -> String {
+        let lane_id = match self.selected {
+            Some(Selection::Lane(id)) => Some(id),
+            Some(Selection::Band(bid)) => self
+                .analysis()
+                .and_then(|a| a.bands.iter().find(|b| b.id == bid).map(|b| b.lane_id)),
+            None => None,
+        };
+        let Some(lane_id) = lane_id else {
+            return "Select a lane first, then Add band.".into();
+        };
+        let Some(nx) = self
+            .analysis()
+            .and_then(|a| a.lanes.iter().find(|l| l.id == lane_id))
+            .map(|l| (l.u_min + l.u_max) / 2.0)
+        else {
+            return "No such lane.".into();
+        };
+        self.add_band_at(nx, 0.5)
     }
 
     pub fn add_band_at(&mut self, nx: f64, ny: f64) -> String {
@@ -1711,7 +2228,7 @@ mod tests {
         let before = st.analysis().unwrap().bands.len();
 
         // Add a lane then a band in it.
-        st.add_lane_at(0.5);
+        st.add_lane_at(0.5, None);
         let lanes_after = st.analysis().unwrap().lanes.len();
         let new_lane_id = st
             .analysis()
@@ -1792,7 +2309,7 @@ mod tests {
         assert!(msg2.contains("Measured"), "got: {msg2}");
 
         // No ladder identified yet → no size readout on hover.
-        assert!(st.hover_size_label(0.5).is_none());
+        assert!(st.hover_size_label(0.5, 0.5).is_none());
 
         // Identify one of the demo's ladder lanes, which fits the semi-log
         // sizing model.
@@ -1808,8 +2325,8 @@ mod tests {
 
         // With a fitted ladder, hovering yields a size readout that decreases
         // as the cursor moves down the gel (larger fragments migrate less).
-        let top = st.hover_size_label(0.2).expect("bp readout near top");
-        let bot = st.hover_size_label(0.8).expect("bp readout near bottom");
+        let top = st.hover_size_label(0.5, 0.2).expect("bp readout near top");
+        let bot = st.hover_size_label(0.5, 0.8).expect("bp readout near bottom");
         assert!(top.contains("bp"), "got: {top}");
         let num = |s: &str| -> f64 {
             s.trim_start_matches("≈ ")
@@ -1824,8 +2341,8 @@ mod tests {
             "top {top} should be larger than bottom {bot}"
         );
         // Off-image positions produce no readout.
-        assert!(st.hover_size_label(-0.1).is_none());
-        assert!(st.hover_size_label(1.5).is_none());
+        assert!(st.hover_size_label(0.5, -0.1).is_none());
+        assert!(st.hover_size_label(0.5, 1.5).is_none());
     }
 
     #[test]
@@ -1878,13 +2395,13 @@ mod tests {
         st.load_demo();
 
         // Hidden grid → no knots and nothing grabbable.
-        assert!(st.warp_knots().is_empty());
+        assert!(st.warp_knot_items().is_empty());
         let some_pos = (0.5, 0.5);
         assert!(!st.press_warp_knot(some_pos.0, some_pos.1));
 
         // Shown grid → control-point handles appear.
         st.set_show_warp(true);
-        let knots = st.warp_knots();
+        let knots = st.warp_knot_items();
         assert!(!knots.is_empty(), "expected warp control points");
 
         // Grab the first knot (iu=0, iv=0), drag it, and release.
@@ -1901,13 +2418,13 @@ mod tests {
 
         // The edit moved that knot and persists across fit_warp() calls
         // (it does not revert to the auto-fit).
-        let moved = st.warp_knots()[0];
+        let moved = st.warp_knot_items()[0];
         assert!(
             (moved.0 as f64 - target.0).abs() < 5e-3 && (moved.1 as f64 - target.1).abs() < 5e-3,
             "knot at {moved:?} not at target {target:?}"
         );
-        let a = st.warp_knots();
-        let b = st.warp_knots();
+        let a = st.warp_knot_items();
+        let b = st.warp_knot_items();
         assert_eq!(a, b, "edited warp must be stable across renders");
 
         // On a taller grid, dragging a top/bottom edge knot redistributes that
@@ -1916,7 +2433,7 @@ mod tests {
         let (w, h) = (img.width() as f64, img.height() as f64);
         st.warp_edit = Some((st.doc_gen, GelWarp::identity_grid(w, h, 4, 5)));
         st.normalize_inner_knots = true;
-        let knots = st.warp_knots();
+        let knots = st.warp_knot_items();
         assert!(st.press_warp_knot(knots[0].0 as f64, knots[0].1 as f64));
         let target = (0.12, 0.18);
         st.drag_warp_knot(target.0, target.1);
@@ -1938,7 +2455,7 @@ mod tests {
 
         st.warp_edit = Some((st.doc_gen, GelWarp::identity_grid(w, h, 4, 5)));
         st.normalize_inner_knots = false;
-        let knots = st.warp_knots();
+        let knots = st.warp_knot_items();
         assert!(st.press_warp_knot(knots[0].0 as f64, knots[0].1 as f64));
         st.drag_warp_knot(0.22, 0.28);
         st.release_warp_knot();
@@ -1955,7 +2472,7 @@ mod tests {
         // A fresh capture has no identified ladder → no size readout.
         let mut st = AppState::new();
         st.capture().unwrap();
-        assert!(st.hover_size_label(0.5).is_none());
+        assert!(st.hover_size_label(0.5, 0.5).is_none());
     }
 
     #[test]
@@ -1994,10 +2511,17 @@ mod tests {
     #[test]
     fn ladder_names_match_gel_type() {
         let st = AppState::new();
-        assert!(!st.ladder_names().is_empty());
-        assert!(st
-            .ladder_names()
+        let names = st.ladder_names();
+        assert!(names.len() > 1);
+        // All entries except the trailing "Custom" resolve to a real template.
+        assert!(names[..names.len() - 1]
             .iter()
             .all(|n| opengel::core::ladders::by_name(n).is_some()));
     }
 }
+
+
+
+
+
+

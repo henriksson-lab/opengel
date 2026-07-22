@@ -8,7 +8,7 @@ use opengel::core::GrayF32;
 use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 
 use crate::state::{AppState, LaneTrace, TraceMode};
-use crate::{AppWindow, LaneItem, TracePath, TreeRow};
+use crate::{AppWindow, AxisTick, LaneItem, TracePath, TreeRow, WarpKnot};
 
 /// Distinct colors for sample-lane traces (ladders use a fixed gold).
 const PALETTE: [(u8, u8, u8); 6] = [
@@ -79,6 +79,11 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
             .analysis()
             .is_some_and(|a| !a.lanes.is_empty() || !a.bands.is_empty()),
     );
+    let (sel_lane, sel_band, sel_lad) = state.selection_info();
+    ui.set_selected_lane_id(sel_lane);
+    ui.set_selected_band_id(sel_band);
+    ui.set_selected_lane_is_ladder(sel_lad);
+    ui.set_ratio_label(state.ratio_label().into());
     refresh_image(ui, state);
     refresh_trace(ui, state);
 }
@@ -103,19 +108,60 @@ pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
     });
 
     let traces = state.compute_traces();
-    let (paths, xmax, ymax) = build_trace_paths(&traces);
+    let n = traces.iter().map(|t| t.values.len()).max().unwrap_or(0);
+    // Default view: crop the migration axis to the visible peaks so the traces
+    // fill the plot width. The user can then zoom/pan into a sub-window.
+    let (bk0, bk1) = signal_extent(&traces, n);
+    let bspan = (bk1 - bk0).max(1e-6);
+    let vspan = (bspan / state.trace_zoom.max(1.0)).clamp(1e-6, bspan);
+    let center = bk0 + state.trace_pan.clamp(0.0, 1.0) * bspan;
+    let hi = (bk1 - vspan).max(bk0); // guard: keep clamp's min <= max
+    let k0 = (center - vspan / 2.0).clamp(bk0, hi);
+    let k1 = (k0 + vspan).min(bk1);
+    state.trace_view.set((k0, k1, n)); // for the hover bp readout
+    let (paths, ymax) = build_trace_paths(&traces, k0, k1);
     ui.set_trace_plots(ModelRc::new(VecModel::from(paths)));
+    ui.set_trace_zoom(state.trace_zoom as f32);
 
-    // Five axis ticks each. Y runs top→bottom (index 0 = ymax), X left→right.
+    // Y ticks (index 0 = top = ymax); X ticks span the cropped migration range.
     let yticks: Vec<SharedString> = (0..5)
         .map(|i| fmt_tick(ymax as f64 * (4 - i) as f64 / 4.0).into())
         .collect();
     let xticks: Vec<SharedString> = (0..5)
-        .map(|i| fmt_tick(xmax as f64 * i as f64 / 4.0).into())
+        .map(|i| fmt_tick(k0 + (k1 - k0) * i as f64 / 4.0).into())
         .collect();
     ui.set_trace_yticks(ModelRc::new(VecModel::from(yticks)));
     ui.set_trace_xticks(ModelRc::new(VecModel::from(xticks)));
     ui.set_trace_xlabel("Migration (px)".into());
+
+    // Second x-axis: ladder-based size scale. Rather than sizing at uniform
+    // migration positions (giving odd numbers), place ticks at *round* 1-2-5 bp
+    // values and position each at its true migration via the semi-log fit's
+    // inverse — a proper, readable bp axis normalized to the ladder.
+    match state.sizing_fit().filter(|_| n > 0 && k1 > k0) {
+        Some(fit) => {
+            let (v0, v1) = (k0 / n as f64, k1 / n as f64);
+            let (s_a, s_b) = (fit.size_at(v0), fit.size_at(v1));
+            let (s_lo, s_hi) = (s_a.min(s_b), s_a.max(s_b));
+            let ticks: Vec<AxisTick> = nice_1_2_5(s_lo, s_hi)
+                .into_iter()
+                .filter_map(|bp| {
+                    let v = fit.position_at(bp)?;
+                    let pos = (v - v0) / (v1 - v0);
+                    (0.0..=1.0).contains(&pos).then_some(AxisTick {
+                        pos: pos as f32,
+                        label: fmt_tick(bp).into(),
+                    })
+                })
+                .collect();
+            ui.set_trace_xticks_top(ModelRc::new(VecModel::from(ticks)));
+            ui.set_trace_xtoplabel(format!("Size ({})", state.gel_type.size_unit()).into());
+        }
+        None => {
+            ui.set_trace_xticks_top(ModelRc::new(VecModel::from(Vec::<AxisTick>::new())));
+            ui.set_trace_xtoplabel(SharedString::new());
+        }
+    }
     ui.set_trace_ylabel(
         match state.trace_mode {
             TraceMode::Intensity => "Intensity (a.u.)",
@@ -142,18 +188,13 @@ fn fmt_tick(v: f64) -> String {
 /// Build one SVG-path polyline per selected lane in a fixed `0..1000` viewbox
 /// (x = migration left→right, y = value bottom→top). Returns the paths plus the
 /// data extents used to label the axes.
-fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
-    let mut xmax = 0usize;
-    let mut vmax = 0.0f64;
-    for t in traces {
-        xmax = xmax.max(t.values.len());
-        for &v in &t.values {
-            if v > vmax {
-                vmax = v;
-            }
-        }
-    }
-    let vmax = vmax.max(1e-9);
+fn build_trace_paths(traces: &[LaneTrace], k0: f64, k1: f64) -> (Vec<TracePath>, f32) {
+    let vmax = traces
+        .iter()
+        .flat_map(|t| t.values.iter().copied())
+        .fold(0.0f64, f64::max)
+        .max(1e-9);
+    let span = (k1 - k0).max(1e-9);
     let mut out = Vec::new();
     let mut sample_i = 0usize;
     for t in traces {
@@ -168,9 +209,11 @@ fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
             sample_i += 1;
             c
         };
+        // Map k over the cropped [k0, k1] window to the 0..1000 viewbox; points
+        // outside are clipped by the plot's own clip region.
         let mut cmds = String::with_capacity(n * 12);
         for (k, &v) in t.values.iter().enumerate() {
-            let x = 1000.0 * k as f64 / (n - 1) as f64;
+            let x = 1000.0 * (k as f64 - k0) / span;
             let y = 1000.0 * (1.0 - v / vmax);
             cmds.push_str(if k == 0 { "M " } else { "L " });
             cmds.push_str(&format!("{x:.1} {y:.1} "));
@@ -182,7 +225,62 @@ fn build_trace_paths(traces: &[LaneTrace]) -> (Vec<TracePath>, f32, f32) {
             ladder: t.ladder,
         });
     }
-    (out, xmax as f32, vmax as f32)
+    (out, vmax as f32)
+}
+
+/// Migration-index window `[k0, k1]` bracketing the *visible peaks*: the first
+/// and last row whose signal (per-row max across traces) exceeds 10% of the peak.
+/// This crops empty wells, run-off, and faint fuzz at the extremes, and — unlike
+/// a cumulative-mass window — stays tight even when low-level signal is smeared
+/// across the lane. Falls back to the full `0..n` range when flat.
+fn signal_extent(traces: &[LaneTrace], n: usize) -> (f64, f64) {
+    if n == 0 || traces.is_empty() {
+        return (0.0, n as f64);
+    }
+    let mut prof = vec![0.0f64; n];
+    for t in traces {
+        for (k, &v) in t.values.iter().enumerate().take(n) {
+            if v > prof[k] {
+                prof[k] = v.max(0.0);
+            }
+        }
+    }
+    let peak = prof.iter().cloned().fold(0.0f64, f64::max);
+    if peak <= 1e-9 {
+        return (0.0, n as f64);
+    }
+    let thresh = 0.10 * peak;
+    let lo = prof.iter().position(|&p| p > thresh);
+    let hi = prof.iter().rposition(|&p| p > thresh);
+    match (lo, hi) {
+        (Some(lo), Some(hi)) if hi > lo => {
+            let margin = (0.08 * (hi - lo) as f64).max(5.0);
+            (
+                (lo as f64 - margin).max(0.0),
+                (hi as f64 + margin).min((n - 1) as f64),
+            )
+        }
+        _ => (0.0, n as f64),
+    }
+}
+
+/// Round "1-2-5 × 10^k" tick values within `[min, max]` (both > 0).
+fn nice_1_2_5(min: f64, max: f64) -> Vec<f64> {
+    let mut out = Vec::new();
+    if min <= 0.0 || max <= min {
+        return out;
+    }
+    let mut decade = 10f64.powf(min.log10().floor());
+    while decade <= max {
+        for m in [1.0, 2.0, 5.0] {
+            let v = m * decade;
+            if v >= min && v <= max {
+                out.push(v);
+            }
+        }
+        decade *= 10.0;
+    }
+    out
 }
 
 // The windowed grayscale base and the histogram are invariant to mouse hover
@@ -206,6 +304,9 @@ thread_local! {
 /// window), so a hover or drag only clones the cached base and redraws overlays
 /// + the warp line — not the full windowing pass + histogram every event.
 pub fn refresh_image(ui: &AppWindow, state: &AppState) {
+    // The contrast histogram is independent of the warped/rectified view, so
+    // refresh it up front (it was being skipped in the unwarped branch).
+    refresh_histogram(ui, state);
     // Dewarped view: a fixed, straightened render with overlays in rectified
     // (u,v) space (lanes vertical, bands horizontal). No zoom/pan/rotation/warp
     // grid — just the rectified gel and its annotation boxes.
@@ -224,10 +325,19 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
                 for ov in &compute_overlays_unwarped(state) {
                     draw_overlay(px, w, h, ov, state.annotation_alpha);
                 }
+                // In the rectified view iso-migration is horizontal, so the hover
+                // alignment line is a straight horizontal line at the cursor's y.
+                if state.hover_y >= 0.0 {
+                    let line: Vec<(f64, f64)> = (0..w)
+                        .map(|x| (x as f64, state.hover_y as f64 * h as f64))
+                        .collect();
+                    polyline(px, w, h, &line, (0, 210, 255));
+                }
             }
             ui.set_gel_image(Image::from_rgb8(buf));
         }
         ui.set_frame_index(state.view_frame_index() as i32);
+        set_warp_knots(ui, &[]); // no warp grid in the rectified view
         return;
     }
     if let Some(work) = state.display_gray() {
@@ -270,9 +380,14 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
         draw_warp(&mut buf, state);
         ui.set_gel_image(Image::from_rgb8(buf));
     }
+    set_warp_knots(ui, &state.warp_knot_items());
     ui.set_frame_index(state.view_frame_index() as i32);
 
-    // Histogram: only recompute when the frame or window changed (never on hover).
+}
+
+/// Refresh the contrast histogram thumbnail. Cached by frame + window, so it only
+/// recomputes when those change (never on hover).
+fn refresh_histogram(ui: &AppWindow, state: &AppState) {
     let hist_key: HistKey = (
         state.doc_gen,
         state.view_frame_index(),
@@ -296,6 +411,16 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
 /// Composite the fitted warp onto the gel buffer: the iso-parameter grid (when
 /// "Show warp model" is on) and, always, the migration-alignment line through
 /// the mouse pointer (the iso-`v` curve at the hovered migration level).
+/// Push the warp control-point handles to the Slint overlay model (drawn as
+/// separate elements, so knots at/beyond the image edge aren't clipped).
+fn set_warp_knots(ui: &AppWindow, knots: &[(f32, f32, bool)]) {
+    let items: Vec<WarpKnot> = knots
+        .iter()
+        .map(|&(nx, ny, active)| WarpKnot { nx, ny, active })
+        .collect();
+    ui.set_warp_knots(ModelRc::new(VecModel::from(items)));
+}
+
 fn draw_warp(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
     if !state.show_warp && state.hover_x < 0.0 {
         return;
@@ -312,22 +437,10 @@ fn draw_warp(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
             polyline(px, w, h, &warp.iso_u(t, 48), grid);
             polyline(px, w, h, &warp.iso_v(t, 48), grid);
         }
-        // Draggable control-point handles on top of the grid.
-        let knots = state.warp_knots();
-        let dragging = state.dragging_knot;
-        let (nu, _nv) = warp.grid_size();
-        for (i, &(nx, ny)) in knots.iter().enumerate() {
-            let cx = (nx * w as f32).round() as i32;
-            let cy = (ny * h as f32).round() as i32;
-            let active = dragging == Some((i % nu.max(1), i / nu.max(1)));
-            // Active knot is larger and orange; others are cyan handles.
-            let (color, r) = if active {
-                ((255u8, 150u8, 0u8), 6i32)
-            } else {
-                ((0u8, 210u8, 255u8), 5i32)
-            };
-            fill_handle(px, w, h, cx, cy, r, color);
-        }
+        // Control-point handles are NOT composited here — they are drawn as
+        // separate Slint overlay elements (see `set_warp_knots`) so a knot at or
+        // beyond the image edge stays visible instead of being clipped to the
+        // image buffer.
     }
     // Alignment line at the hovered migration level.
     if state.hover_x >= 0.0 && state.hover_y >= 0.0 {
@@ -337,35 +450,6 @@ fn draw_warp(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
         );
         let (_, v0) = warp.invert(hx, hy);
         polyline(px, w, h, &warp.iso_v(v0, 96), (0, 210, 255));
-    }
-}
-
-/// Draw a filled square knot handle with a dark 1px border, clipped to bounds.
-fn fill_handle(
-    px: &mut [slint::Rgb8Pixel],
-    w: u32,
-    h: u32,
-    cx: i32,
-    cy: i32,
-    r: i32,
-    c: (u8, u8, u8),
-) {
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let x = cx + dx;
-            let y = cy + dy;
-            if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
-                continue;
-            }
-            let edge = dx.abs() == r || dy.abs() == r;
-            let (rr, gg, bb) = if edge { (20, 20, 20) } else { c };
-            let idx = y as usize * w as usize + x as usize;
-            px[idx] = slint::Rgb8Pixel {
-                r: rr,
-                g: gg,
-                b: bb,
-            };
-        }
     }
 }
 
@@ -382,7 +466,9 @@ pub fn refresh_live(ui: &AppWindow, state: &AppState) {
         .into(),
     );
     if let Some(p) = state.preview_image() {
-        ui.set_live_preview_image(to_slint_image(p, 0.0, 1.0, state.invert, &[]));
+        // Always flag clipped-high (saturated) pixels in red — a live exposure
+        // aid, so you can lower exposure before capturing blown-out bands.
+        ui.set_live_preview_image(to_slint_image(p, 0.0, 1.0, state.invert, true, &[]));
     }
     // Live histogram of the preview frame (exposure aid). Rendered wide so it
     // isn't upscaled/blurry when stretched across the column.
@@ -609,9 +695,17 @@ fn to_slint_image(
     lo_frac: f32,
     hi_frac: f32,
     invert: bool,
+    show_overexposed: bool,
     overlays: &[Overlay],
 ) -> Image {
-    Image::from_rgb8(render_gel(work, lo_frac, hi_frac, invert, false, overlays))
+    Image::from_rgb8(render_gel(
+        work,
+        lo_frac,
+        hi_frac,
+        invert,
+        show_overexposed,
+        overlays,
+    ))
 }
 
 /// Draw a polyline (image-pixel coordinates) into an RGB buffer.
@@ -691,9 +785,23 @@ fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
         *p = bg;
     }
     let n = hist.len().max(1);
-    // Log-scaled peak so faint bins stay visible next to a dominant background.
-    let peak = hist.iter().copied().max().unwrap_or(1).max(1) as f64;
-    let lpeak = (1.0 + peak).ln();
+    // Vertical scale reference: a high percentile of the non-empty bins rather
+    // than the absolute max. A gel is mostly dark background, so one or two bins
+    // dwarf the rest; scaling to the max would squash the informative band-signal
+    // tail to nothing. Using the ~98th percentile lets the distribution fill the
+    // height, with the background spike simply clipping to the top. Log-scaled so
+    // faint bins stay visible.
+    let refc = {
+        let mut counts: Vec<u32> = hist.iter().copied().filter(|&c| c > 0).collect();
+        counts.sort_unstable();
+        if counts.is_empty() {
+            1.0
+        } else {
+            let idx = ((counts.len() as f64 * 0.98).ceil() as usize).min(counts.len() - 1);
+            counts[idx].max(1) as f64
+        }
+    };
+    let lref = (1.0 + refc).ln();
     let (lo_x, hi_x) = ((lo * w as f32) as u32, (hi * w as f32) as u32);
     for x in 0..w {
         // Window highlight band behind the bars.
@@ -703,7 +811,7 @@ fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
             }
         }
         let bin = (x as usize * n / w as usize).min(n - 1);
-        let frac = (1.0 + hist[bin] as f64).ln() / lpeak;
+        let frac = ((1.0 + hist[bin] as f64).ln() / lref).min(1.0);
         let bar = ((frac * (h as f64 - 2.0)).round() as u32).min(h - 1);
         for y in (h - bar)..h {
             px[(y * w + x) as usize] = slint::Rgb8Pixel {

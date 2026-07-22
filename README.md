@@ -10,6 +10,13 @@ everything in a self-contained `.gel.zip`, auto-detects lanes/bands and the
 ladder, and quantifies band amounts in **ng and molarity** — absolutely (against
 a ladder of known concentration) and relatively (between two selected bands).
 
+![OpenGel GUI: a detected demo gel with per-band annotation boxes and the fitted
+NURBS warp grid overlaid](assets/screenshot.png)
+
+*The desktop GUI on the built-in demo gel (`opengel --demo --detect --show-warp`):
+detected lanes/bands with orientation-fitted annotation boxes, the NURBS warp
+grid following the band smile, and the ladder lane highlighted.*
+
 ## Project layout
 
 A single `opengel` crate; each subdirectory of `src/` was previously its own

@@ -223,6 +223,8 @@ fn do_capture(
             return;
         }
         let _ = tx.send(CamEvent::CaptureProgress { done: i, total });
+        // No-ops on devices without real manual-exposure support (the backend
+        // leaves the stream in its native auto mode); "take the picture as-is".
         let _ = cam.set_exposure(Exposure::Manual(t));
         match cam.capture() {
             Ok(img) => {

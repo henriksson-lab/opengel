@@ -31,6 +31,22 @@ export struct TreeRow {
     nmol: string,
 }
 
+// A positioned axis tick: `pos` is the fraction (0..1) across the plot width,
+// `label` the text. Used for the trace plot's ladder-based bp scale.
+export struct AxisTick {
+    pos: float,
+    label: string,
+}
+
+// A warp control-point handle, in normalized image coords (0..1). `active` = the
+// knot currently being dragged. Drawn as a separate overlay (not baked into the
+// gel image) so edge knots aren't clipped.
+export struct WarpKnot {
+    nx: float,
+    ny: float,
+    active: bool,
+}
+
 export component AppWindow inherits Window {
     title: "OpenGel";
     preferred-width: 1180px;
@@ -42,6 +58,21 @@ export component AppWindow inherits Window {
     in property <[string]> ladder-names;
     in property <[string]> frame-names;
     in property <[TreeRow]> tree-rows;
+    in property <int> selected-lane-id: -1;       // selected lane (or a selected band's lane), -1 = none
+    in property <int> selected-band-id: -1;       // selected band, -1 = none
+    in property <bool> selected-lane-is-ladder: false;
+    in property <string> ratio-label: "Ratio: (select two bands)";
+    // Set-band-weight (known size) dialog.
+    in-out property <bool> weight-dialog-open: false;
+    in-out property <string> weight-dialog-value: "";
+    in property <string> weight-dialog-unit: "bp";
+    // Rename-lane dialog.
+    in-out property <bool> rename-dialog-open: false;
+    in-out property <string> rename-dialog-value: "";
+    // Add-lane dialog.
+    in-out property <bool> add-lane-dialog-open: false;
+    in-out property <string> add-lane-dialog-value: "";
+    in property <[WarpKnot]> warp-knots;   // control-point handles (overlay)
     in-out property <int> renaming-lane: -1;
     in property <string> status: "Open a .gel.zip, or run `opengel --demo` to load a demo gel.";
     in property <string> gel-type-label: "-";
@@ -54,7 +85,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-warp: false;  // overlay the fitted NURBS warp grid
     in-out property <bool> normalize-inner-knots: true; // keep v rows evenly spaced while dragging edge knots
     in-out property <bool> show-overexposed: false; // clipped-high pixels in red
-    in-out property <float> annotation-alpha: 0.5;  // annotation overlay opacity
+    in-out property <float> annotation-alpha: 0.25;  // annotation overlay opacity
     in-out property <string> volume-ul: "10";
     in-out property <float> rotation: 0;      // degrees, live display rotation
     in-out property <float> zoom: 1.0;
@@ -69,8 +100,9 @@ export component AppWindow inherits Window {
     in-out property <bool> confirm-detect-open: false;
     // Fit-model dialog.
     in-out property <bool> fit-dialog-open: false;
-    in-out property <bool> fit-dialog-optical-flow: false;
+    in-out property <bool> fit-dialog-use-band-tilts: true;
     in-out property <string> fit-dialog-extra-edges: "2";
+    in-out property <string> fit-dialog-extra-edges-h: "0";
     in-out property <string> fit-dialog-warp-regularization: "0.01";
     in-out property <string> fit-dialog-row-spacing: "10";
     in-out property <string> fit-dialog-flow-smoothness: "8";
@@ -102,10 +134,13 @@ export component AppWindow inherits Window {
     in property <[TracePath]> trace-plots;
     in property <[string]> trace-yticks;
     in property <[string]> trace-xticks;
+    in property <[AxisTick]> trace-xticks-top;  // ladder-based bp scale (top axis)
+    in property <string> trace-xtoplabel;       // e.g. "Size (bp)"; empty = no ladder
     in property <string> trace-xlabel: "Migration (px)";
     in property <string> trace-ylabel: "Intensity (a.u.)";
     in property <[LaneItem]> lane-items;
     in-out property <int> trace-mode-idx: 0;
+    in-out property <float> trace-zoom: 1.0;    // horizontal zoom (1 = fit)
 
     // --- callbacks out ---
     callback open();
@@ -133,6 +168,19 @@ export component AppWindow inherits Window {
     callback lane-toggle(int);            // expand / collapse
     callback lane-set(int);               // (ladder lane) re-apply ladder sizing
     callback lane-menu(int, string);      // "delete" | "unmark"
+    callback select-tree(int, int);       // (kind, id): select a lane/band row
+    callback delete-selected();           // delete the selected lane or band
+    callback open-weight-dialog();        // set the selected band's known size
+    callback apply-weight-dialog();
+    callback cancel-weight-dialog();
+    callback open-rename-dialog();        // rename the selected lane
+    callback apply-rename-dialog();
+    callback cancel-rename-dialog();
+    callback open-add-lane-dialog();      // add a lane (asks for its name)
+    callback apply-add-lane-dialog();
+    callback cancel-add-lane-dialog();
+    callback set-ratio-a();               // ratio band A = selected band
+    callback set-ratio-b();               // ratio band B = selected band
     callback lane-renamed(int, string);   // commit an inline rename
     callback band-menu(int, string);      // "delete" for a band
     // Ladder dialog.
@@ -154,6 +202,14 @@ export component AppWindow inherits Window {
     // Trace tab.
     callback toggle-lane(int);
     callback trace-mode-changed(int);
+    callback select-all-lanes();
+    callback select-none-lanes();
+    callback export-trace-pdf();
+    callback trace-set-zoom(float);       // slider → absolute zoom
+    callback trace-zoom-at(float, float); // scroll: (factor, focus-fraction 0..1)
+    callback trace-pan(float);            // drag: pointer dx as a fraction of width
+    callback trace-reset-view();
+    callback trace-hover(float);          // hover x-fraction 0..1 over plot area
 
     // Reset view (fit).
     function fit-view() {
@@ -235,20 +291,6 @@ export component AppWindow inherits Window {
                 }
                 Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.fit-view(); } }
                 Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.auto-straighten(); } }
-                // Detect lanes & bands and fit the NURBS warp. If annotations
-                // already exist, confirm before overwriting them.
-                Button {
-                    text: "Detect";
-                    primary: true;
-                    vertical-stretch: 0;
-                    clicked => {
-                        if (root.has-annotations) {
-                            root.confirm-detect-open = true;
-                        } else {
-                            root.open-fit-dialog();
-                        }
-                    }
-                }
             }
 
             // Zoom / pan / rotate viewport.
@@ -261,18 +303,20 @@ export component AppWindow inherits Window {
 
                 // Zoom + pan container; the gel image (with overlays composited
                 // in) rotates live via the Image's rotation-angle.
+                // "Show unwarped" renders the rectified (straightened) gel, which
+                // must be shown flat — ignoring zoom, pan and rotation.
                 Rectangle {
-                    width: parent.width * root.zoom;
-                    height: parent.height * root.zoom;
-                    x: (parent.width - self.width) / 2 + root.pan-x;
-                    y: (parent.height - self.height) / 2 + root.pan-y;
+                    width: root.show-unwarped ? parent.width : parent.width * root.zoom;
+                    height: root.show-unwarped ? parent.height : parent.height * root.zoom;
+                    x: (parent.width - self.width) / 2 + (root.show-unwarped ? 0px : root.pan-x);
+                    y: (parent.height - self.height) / 2 + (root.show-unwarped ? 0px : root.pan-y);
 
                     Image {
                         source: root.gel-image;
                         image-fit: contain;
                         width: 100%;
                         height: 100%;
-                        transform-rotation: root.rotation * 1deg;
+                        transform-rotation: root.show-unwarped ? 0deg : root.rotation * 1deg;
                     }
                 }
 
@@ -327,6 +371,29 @@ export component AppWindow inherits Window {
                         root.click-y = self.ny;
                     }
                 }
+
+                // Warp control-point handles, drawn as a separate overlay (not
+                // baked into the gel image) so knots at/beyond the image edge stay
+                // visible. Positioned in the displayed-image frame via `ta`'s
+                // letterbox mapping. These have no TouchArea, so pointer events
+                // fall through to `ta`, which hit-tests knots in image coords.
+                if root.show-warp: Rectangle {
+                    // Rotate each knot about the displayed-image center by the same
+                    // angle as the gel image, so the knots track it under rotation
+                    // (they already track zoom/pan via ta's letterbox mapping).
+                    property <angle> ang: root.rotation * 1deg;
+                    for knot in root.warp-knots: Rectangle {
+                        property <length> dx: (knot.nx - 0.5) * ta.dw;
+                        property <length> dy: (knot.ny - 0.5) * ta.dh;
+                        width: knot.active ? 13px : 11px;
+                        height: self.width;
+                        x: ta.ix0 + ta.dw / 2 + (Math.cos(parent.ang) * self.dx - Math.sin(parent.ang) * self.dy) - self.width / 2;
+                        y: ta.iy0 + ta.dh / 2 + (Math.sin(parent.ang) * self.dx + Math.cos(parent.ang) * self.dy) - self.height / 2;
+                        background: knot.active ? #ff9600 : #00d2ff;
+                        border-width: 1px;
+                        border-color: #141414;
+                    }
+                }
             }
 
             // Contrast / brightness: drag the black & white edges directly on
@@ -336,7 +403,8 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     spacing: 3px;
                     hist := Rectangle {
-                        height: 66px;
+                        vertical-stretch: 1;
+                        min-height: 66px;
                         border-width: 1px;
                         border-color: #cccccc;
                         clip: true;  // keep edges/knobs from poking outside the box
@@ -424,122 +492,131 @@ export component AppWindow inherits Window {
             width: 520px;
             padding: 8px;
             spacing: 8px;
-                GroupBox {
-                    title: "Edit (click image first)";
-                    vertical-stretch: 0;
-                    HorizontalBox {
-                        alignment: start;
-                        Button { text: "Add lane"; clicked => { root.add-lane(); } }
-                        Button { text: "Add band"; clicked => { root.add-band(); } }
+                // Column header.
+                Rectangle {
+                    height: 20px;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        spacing: 4px;
+                        Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
+                        Text { text: "Size"; width: 56px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: "ng"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: "nmol"; width: 50px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
                     }
                 }
-                GroupBox {
-                    title: "Lanes & bands";
+                ScrollView {
                     vertical-stretch: 1;
-                    VerticalBox {
-                        // Column header.
-                        Rectangle {
-                            height: 20px;
+                    VerticalLayout {
+                        alignment: start;
+                        for row in root.tree-rows: Rectangle {
+                            height: 28px;
+                            background: (row.kind == 0 && row.lane-id == root.selected-lane-id)
+                                     || (row.kind == 1 && row.band-id == root.selected-band-id)
+                                ? #dbeafe : (row.kind == 0 ? #f4f4f6 : transparent);
+                            // Row-click selects it (so the buttons below act on it).
+                            // Sits under the content; the expander's TouchArea wins locally.
+                            TouchArea {
+                                clicked => { root.select-tree(row.kind, row.kind == 0 ? row.lane-id : row.band-id); }
+                            }
                             HorizontalLayout {
                                 padding-left: 4px;
+                                padding-right: 4px;
                                 spacing: 4px;
-                                Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
-                                Text { text: "Size"; width: 56px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "ng"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "nmol"; width: 50px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "Actions"; width: 132px; color: #888; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
-                            }
-                        }
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
-                                alignment: start;
-                                for row in root.tree-rows: Rectangle {
-                                    height: 28px;
-                                    background: row.kind == 0 ? #f4f4f6 : transparent;
-                                    HorizontalLayout {
-                                        padding-left: 4px;
-                                        padding-right: 4px;
-                                        spacing: 4px;
-
-                                        // Name column: expander (lanes) / indent (bands) + label.
-                                        HorizontalLayout {
-                                            horizontal-stretch: 1;
-                                            spacing: 2px;
-                                            if row.kind == 0: Rectangle {
-                                                width: 18px;
-                                                TouchArea {
-                                                    clicked => { root.lane-toggle(row.lane-id); }
-                                                    Text {
-                                                        text: row.expanded ? "▾" : "▸";
-                                                        color: #666;
-                                                        vertical-alignment: center;
-                                                        horizontal-alignment: center;
-                                                    }
-                                                }
-                                            }
-                                            if row.kind == 1: Rectangle { width: 26px; }
-
-                                            // Inline rename for the lane being edited, else a label.
-                                            if row.kind == 0 && row.lane-id == root.renaming-lane: LineEdit {
-                                                text: row.name;
-                                                horizontal-stretch: 1;
-                                                accepted(t) => { root.lane-renamed(row.lane-id, t); root.renaming-lane = -1; }
-                                            }
-                                            if !(row.kind == 0 && row.lane-id == root.renaming-lane): Text {
-                                                text: row.name;
-                                                color: row.kind == 0 ? (row.is-ladder ? #9a6b00 : #222) : #444;
-                                                font-size: row.kind == 0 ? 13px : 12px;
-                                                font-weight: row.kind == 0 ? 600 : 400;
+                                HorizontalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    if row.kind == 0: Rectangle {
+                                        width: 18px;
+                                        TouchArea {
+                                            clicked => { root.lane-toggle(row.lane-id); }
+                                            Text {
+                                                text: row.expanded ? "▾" : "▸";
+                                                color: #666;
                                                 vertical-alignment: center;
-                                                overflow: elide;
-                                                horizontal-stretch: 1;
-                                            }
-                                        }
-
-                                        Text { text: row.size; width: 56px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.ng; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.nmol; width: 50px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-
-                                        // Action column: a single readable-width menu combo per row.
-                                        Rectangle {
-                                            width: 132px;
-                                            if row.kind == 0: ComboBox {
-                                                width: 128px;
-                                                model: row.is-ladder
-                                                    ? ["Actions…", "Rename", "Edit ladder…", "Re-apply sizing", "Unmark ladder", "Delete lane"]
-                                                    : ["Actions…", "Rename", "Use as ladder…", "Delete lane"];
-                                                current-index: 0;
-                                                selected(v) => {
-                                                    if (row.is-ladder) {
-                                                        if (self.current-index == 1) { root.renaming-lane = row.lane-id; }
-                                                        if (self.current-index == 2) { root.open-ladder-dialog(row.lane-id); }
-                                                        if (self.current-index == 3) { root.lane-set(row.lane-id); }
-                                                        if (self.current-index == 4) { root.lane-menu(row.lane-id, "unmark"); }
-                                                        if (self.current-index == 5) { root.lane-menu(row.lane-id, "delete"); }
-                                                    } else {
-                                                        if (self.current-index == 1) { root.renaming-lane = row.lane-id; }
-                                                        if (self.current-index == 2) { root.open-ladder-dialog(row.lane-id); }
-                                                        if (self.current-index == 3) { root.lane-menu(row.lane-id, "delete"); }
-                                                    }
-                                                    self.current-index = 0;
-                                                }
-                                            }
-                                            if row.kind == 1: ComboBox {
-                                                width: 128px;
-                                                model: ["Actions…", "Delete band"];
-                                                current-index: 0;
-                                                selected(v) => {
-                                                    if (self.current-index == 1) { root.band-menu(row.band-id, "delete"); }
-                                                    self.current-index = 0;
-                                                }
+                                                horizontal-alignment: center;
                                             }
                                         }
                                     }
+                                    if row.kind == 1: Rectangle { width: 26px; }
+                                    if row.kind == 0 && row.lane-id == root.renaming-lane: LineEdit {
+                                        text: row.name;
+                                        horizontal-stretch: 1;
+                                        accepted(t) => { root.lane-renamed(row.lane-id, t); root.renaming-lane = -1; }
+                                    }
+                                    if !(row.kind == 0 && row.lane-id == root.renaming-lane): Text {
+                                        text: row.name;
+                                        color: row.kind == 0 ? (row.is-ladder ? #9a6b00 : #222) : #444;
+                                        font-size: row.kind == 0 ? 13px : 12px;
+                                        font-weight: row.kind == 0 ? 600 : 400;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
                                 }
+                                Text { text: row.size; width: 56px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                Text { text: row.ng; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                Text { text: row.nmol; width: 50px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
                             }
                         }
                     }
+                }
+                // Actions on the selected row (click a lane/band above or on the
+                // gel), in two right-aligned rows.
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+                    Button { text: "Add lane"; clicked => { root.open-add-lane-dialog(); } }
+                    Button { text: "Add band"; clicked => { root.add-band(); } }
+                    Button {
+                        text: "Delete";
+                        enabled: root.selected-lane-id >= 0 || root.selected-band-id >= 0;
+                        clicked => { root.delete-selected(); }
+                    }
+                    Button {
+                        text: "Rename";
+                        enabled: root.selected-lane-id >= 0;
+                        clicked => { root.open-rename-dialog(); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+                    Button {
+                        text: "Set weight…";
+                        enabled: root.selected-band-id >= 0 && root.selected-lane-is-ladder;
+                        clicked => { root.open-weight-dialog(); }
+                    }
+                    Button {
+                        text: root.selected-lane-is-ladder ? "Edit ladder…" : "Use as ladder…";
+                        enabled: root.selected-lane-id >= 0;
+                        clicked => { root.open-ladder-dialog(root.selected-lane-id); }
+                    }
+                    Button {
+                        text: "Unmark ladder";
+                        enabled: root.selected-lane-is-ladder;
+                        clicked => { root.lane-menu(root.selected-lane-id, "unmark"); }
+                    }
+                    // Detect: red, bottom-right. Confirms before overwriting.
+                    Rectangle {
+                        width: 90px;
+                        height: 30px;
+                        border-radius: 5px;
+                        background: dt.has-hover ? #c0392b : #e74c3c;
+                        dt := TouchArea {
+                            clicked => {
+                                if (root.has-annotations) { root.confirm-detect-open = true; }
+                                else { root.open-fit-dialog(); }
+                            }
+                        }
+                        Text { text: "Detect"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+                // Density ratio: pick two bands with Set A / Set B.
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: root.ratio-label; color: #333333; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                    Button { text: "Set A"; enabled: root.selected-band-id >= 0; clicked => { root.set-ratio-a(); } }
+                    Button { text: "Set B"; enabled: root.selected-band-id >= 0; clicked => { root.set-ratio-b(); } }
                 }
         }
     }
@@ -553,13 +630,17 @@ export component AppWindow inherits Window {
             ComboBox {
               model: ["Intensity", "ng", "Molarity"];
               current-index <=> root.trace-mode-idx;
+              vertical-stretch: 0;
               selected(v) => { root.trace-mode-changed(self.current-index); }
             }
-            Text {
-              text: "Check lanes below to plot (ladders included).";
-              color: #999;
-              vertical-alignment: center;
+            Text { text: "Zoom:"; vertical-alignment: center; }
+            Slider {
+              minimum: 1.0; maximum: 40.0; value <=> root.trace-zoom;
+              horizontal-stretch: 1;
+              vertical-stretch: 0;
+              changed(v) => { root.trace-set-zoom(v); }
             }
+            Button { text: "Fit"; vertical-stretch: 0; clicked => { root.trace-reset-view(); } }
           }
 
           plot := Rectangle {
@@ -569,7 +650,7 @@ export component AppWindow inherits Window {
             height: 380px;
             property <length> ml: 62px;
             property <length> mr: 140px;
-            property <length> mt: 34px;   // room for the horizontal y-axis title
+            property <length> mt: 54px;   // room for the top (ladder size) axis
             property <length> mb: 42px;
             property <length> pw: max(1px, self.width - self.ml - self.mr);
             property <length> ph: max(1px, self.height - self.mt - self.mb);
@@ -602,6 +683,37 @@ export component AppWindow inherits Window {
               font-size: 11px;
               text: lbl;
             }
+            // Top x-axis: ladder-based bp scale (only when a ladder is fit). Ticks
+            // are positioned by the ladder, so they sit at their true migration.
+            if root.trace-xtoplabel != "": Rectangle {
+                x: plot.ml; y: plot.mt; width: plot.pw; height: 1.5px; background: #333333;
+            }
+            for tk in root.trace-xticks-top: Rectangle {
+                x: plot.ml + plot.pw * tk.pos - 0.5px;
+                y: plot.mt - 4px;
+                width: 1px;
+                height: 4px;
+                background: #333333;
+            }
+            for tk in root.trace-xticks-top: Text {
+                x: plot.ml + plot.pw * tk.pos - 22px;
+                y: plot.mt - 18px;
+                width: 44px;
+                horizontal-alignment: center;
+                color: #444444;
+                font-size: 11px;
+                text: tk.label;
+            }
+            if root.trace-xtoplabel != "": Text {
+                text: root.trace-xtoplabel;
+                x: plot.ml + plot.pw / 2 - 60px;
+                y: plot.mt - 34px;
+                width: 120px;
+                horizontal-alignment: center;
+                color: #222222;
+                font-size: 12px;
+            }
+
             // Axes.
             Rectangle { x: plot.ml; y: plot.mt; width: 1.5px; height: plot.ph; background: #333333; }
             Rectangle { x: plot.ml; y: plot.mt + plot.ph; width: plot.pw; height: 1.5px; background: #333333; }
@@ -626,6 +738,34 @@ export component AppWindow inherits Window {
               }
             }
 
+            // Interaction layer over the plot area: drag to pan, scroll to zoom,
+            // hover to read the size (bp) under the cursor.
+            TouchArea {
+              x: plot.ml;
+              y: plot.mt;
+              width: plot.pw;
+              height: plot.ph;
+              property <length> last-x;
+              property <bool> dragging;
+              mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+              pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) { self.last-x = self.mouse-x; self.dragging = true; }
+                if (e.kind == PointerEventKind.up) { self.dragging = false; }
+              }
+              moved => {
+                if (self.dragging) {
+                  root.trace-pan((self.mouse-x - self.last-x) / max(1px, self.width));
+                  self.last-x = self.mouse-x;
+                }
+              }
+              changed mouse-x => { root.trace-hover(self.mouse-x / max(1px, self.width)); }
+              scroll-event(e) => {
+                root.trace-zoom-at(e.delta-y > 0 ? 1.15 : (e.delta-y < 0 ? 0.87 : 1.0),
+                                   self.mouse-x / max(1px, self.width));
+                return EventResult.accept;
+              }
+            }
+
             // Axis titles.
             Text {
               text: root.trace-xlabel;
@@ -636,16 +776,17 @@ export component AppWindow inherits Window {
               color: #222222;
               font-size: 12px;
             }
+            // Y-axis title, drawn horizontally at the top-left of the axis.
+            // Rotated Slint text renders blurry/bold on HiDPI (a known layout
+            // issue), so it is kept upright here.
             Text {
               text: root.trace-ylabel;
-              transform-rotation: -90deg;
-              x: 16px - plot.ph / 2;
-              y: plot.mt + plot.ph / 2 - 8px;
-              width: plot.ph;
-              height: 16px;
-              horizontal-alignment: center;
+              x: 6px;
+              y: plot.mt - 16px;
+              width: plot.ml + 60px;
+              horizontal-alignment: left;
               color: #222222;
-              font-size: 12px;
+              font-size: 11px;
             }
 
             // Legend.
@@ -691,6 +832,14 @@ export component AppWindow inherits Window {
                 }
               }
             }
+          }
+          HorizontalBox {
+            padding-top: 4px;
+            alignment: start;
+            spacing: 6px;
+            Button { text: "Select all"; vertical-stretch: 0; clicked => { root.select-all-lanes(); } }
+            Button { text: "Select none"; vertical-stretch: 0; clicked => { root.select-none-lanes(); } }
+            Button { text: "Export as PDF"; vertical-stretch: 0; clicked => { root.export-trace-pdf(); } }
           }
         }
       }
@@ -759,12 +908,6 @@ export component AppWindow inherits Window {
                     Button { text: "Set lower HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-lower(); } }
                     Button { text: "Set upper HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-upper(); } }
                 }
-                if !root.exposure-supported: Text {
-                    text: "This camera has no manual exposure — HDR is unavailable. Use “Capture single”.";
-                    color: #b26b00;
-                    font-size: 11px;
-                    wrap: word-wrap;
-                }
             }
             // Right: camera + capture controls.
             VerticalLayout {
@@ -800,6 +943,12 @@ export component AppWindow inherits Window {
                     title: "HDR capture";
                     VerticalLayout {
                         spacing: 6px;
+                        if !root.exposure-supported: Text {
+                            text: "This camera has no manual exposure — HDR is unavailable. Use “Capture single”.";
+                            color: #b26b00;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
                         HorizontalLayout {
                             spacing: 6px;
                             Text { text: "Min:"; vertical-alignment: center; }
@@ -818,6 +967,10 @@ export component AppWindow inherits Window {
                                 selected(v) => { root.hdr-steps-changed(self.current-index); }
                             }
                             Text { text: root.hdr-range-label; color: #888; vertical-alignment: center; }
+                        }
+                        Text {
+                            text: "EV (exposure value) = stops of dynamic range the bracket spans between the lower and upper time: each +1 EV doubles the exposure, so more EV captures both faint and bright bands without clipping.";
+                            color: #888; font-size: 11px; wrap: word-wrap;
                         }
                         Button { text: "Capture HDR"; enabled: root.exposure-supported; clicked => { root.live-capture(); } }
                         Text {
@@ -929,14 +1082,14 @@ export component AppWindow inherits Window {
     }
 
     // ---- Fit model modal dialog ----
-    if root.fit-dialog-open: Rectangle {
+    if root.rename-dialog-open: Rectangle {
         width: 100%;
         height: 100%;
         background: #00000088;
         TouchArea { }
         Rectangle {
-            width: 430px;
-            height: 350px;
+            width: 340px;
+            height: 170px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: white;
@@ -946,27 +1099,163 @@ export component AppWindow inherits Window {
             VerticalBox {
                 padding: 16px;
                 spacing: 10px;
-                Text { text: "Fit Model"; font-size: 15px; font-weight: 700; }
-                CheckBox {
-                    text: "Use optical flow";
-                    checked <=> root.fit-dialog-optical-flow;
+                Text { text: "Rename lane"; font-size: 15px; font-weight: 700; }
+                LineEdit {
+                    text <=> root.rename-dialog-value;
+                    accepted(t) => { root.apply-rename-dialog(); }
                 }
+                Rectangle { vertical-stretch: 1; }
                 HorizontalBox {
-                    Text { text: "Extra migration edges:"; vertical-alignment: center; width: 180px; }
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-rename-dialog(); } }
+                    Button { text: "OK"; primary: true; clicked => { root.apply-rename-dialog(); } }
+                }
+            }
+        }
+    }
+
+    if root.add-lane-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 340px;
+            height: 170px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Add lane"; font-size: 15px; font-weight: 700; }
+                add-lane-edit := LineEdit {
+                    text <=> root.add-lane-dialog-value;
+                    accepted(t) => { root.apply-add-lane-dialog(); }
+                    // Pre-select the default name so typing replaces it.
+                    init => { self.focus(); self.select-all(); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-add-lane-dialog(); } }
+                    Button { text: "OK"; primary: true; clicked => { root.apply-add-lane-dialog(); } }
+                }
+            }
+        }
+    }
+
+    if root.weight-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 340px;
+            height: 170px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Set band weight"; font-size: 15px; font-weight: 700; }
+                HorizontalBox {
+                    Text { text: "Size (" + root.weight-dialog-unit + "):"; vertical-alignment: center; width: 110px; }
+                    LineEdit { text <=> root.weight-dialog-value; horizontal-stretch: 1; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-weight-dialog(); } }
+                    Button { text: "OK"; primary: true; clicked => { root.apply-weight-dialog(); } }
+                }
+            }
+        }
+    }
+
+    if root.fit-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 480px;
+            height: 620px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: "Fit Model"; font-size: 15px; font-weight: 700; }
+
+                CheckBox {
+                    text: "Use band tilts";
+                    checked <=> root.fit-dialog-use-band-tilts;
+                }
+                Text {
+                    text: "Shape the warp from each detected band's measured tilt. Uncheck to use optical-flow registration instead (helps where bands are faint or absent).";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                HorizontalBox {
+                    Text { text: "Extra migration edges (vertical):"; vertical-alignment: center; width: 230px; }
                     LineEdit { text <=> root.fit-dialog-extra-edges; horizontal-stretch: 1; }
                 }
+                Text {
+                    text: "Extra control rows along the migration (top→bottom) axis. Bands are always pinned to their detected migration; these rows add up/down bending freedom between them. 0 = minimal.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
                 HorizontalBox {
-                    Text { text: "Warp regularization:"; vertical-alignment: center; width: 180px; }
+                    Text { text: "Extra cross-lane edges (horizontal):"; vertical-alignment: center; width: 230px; }
+                    LineEdit { text <=> root.fit-dialog-extra-edges-h; horizontal-stretch: 1; }
+                }
+                Text {
+                    text: "Extra control columns across the gel, beyond the edges and one column per lane. Adds side-to-side bending freedom between lanes. 0 = one column per lane only.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                HorizontalBox {
+                    Text { text: "Warp regularization:"; vertical-alignment: center; width: 230px; }
                     LineEdit { text <=> root.fit-dialog-warp-regularization; horizontal-stretch: 1; }
                 }
+                Text {
+                    text: "How strongly the fit is pulled back toward a flat grid. Higher = stiffer/smoother (resists bending to noise); lower = follows the bands more closely.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
                 HorizontalBox {
-                    Text { text: "Row spacing weight:"; vertical-alignment: center; width: 180px; }
+                    Text { text: "Row spacing weight:"; vertical-alignment: center; width: 230px; }
                     LineEdit { text <=> root.fit-dialog-row-spacing; horizontal-stretch: 1; }
                 }
+                Text {
+                    text: "Keeps adjacent migration rows evenly spaced so unconstrained rows don't fold together. Higher = more uniform spacing.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
                 HorizontalBox {
-                    Text { text: "Flow smoothness:"; vertical-alignment: center; width: 180px; }
+                    Text { text: "Flow smoothness:"; vertical-alignment: center; width: 230px; }
                     LineEdit { text <=> root.fit-dialog-flow-smoothness; horizontal-stretch: 1; }
                 }
+                Text {
+                    text: "Optical-flow mode only: smoothness of the flow field. Higher = stiffer, more interpolation between confident strips.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
                 Rectangle { vertical-stretch: 1; }
                 HorizontalBox {
                     alignment: end;

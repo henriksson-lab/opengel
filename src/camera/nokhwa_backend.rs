@@ -181,6 +181,14 @@ impl Camera for NokhwaBackend {
     }
 
     fn set_exposure(&mut self, exposure: Exposure) -> Result<bool> {
+        // If the device has no real manual-exposure support, do not touch the
+        // exposure controls at all. On macoOS especially, poking the AVFoundation
+        // exposure mode/duration on a camera that only advertises auto modes
+        // (e.g. the built-in FaceTime HD) stalls the capture stream — which froze
+        // the live preview and made captures hang. Leave it in its native auto.
+        if !self.manual_exposure {
+            return Ok(false);
+        }
         match exposure {
             Exposure::Auto => {
                 #[cfg(target_os = "macos")]

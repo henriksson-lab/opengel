@@ -37,6 +37,7 @@ rayon = "1"
 imageproc = "0.25"
 slint = "1.17"
 rfd = "0.15"
+printpdf = "0.7"
 # Optional on Linux/other (needs libv4l-dev): enable with `--features camera`.
 nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 

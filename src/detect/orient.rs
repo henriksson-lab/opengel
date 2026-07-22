@@ -7,16 +7,56 @@
 
 use crate::core::GrayF32;
 
-use crate::detect::classical::column_profile;
-
-/// Coefficient of variation (var / mean²) of the column projection — scale
-/// invariant, higher when lanes are vertical and well-separated.
-fn projection_sharpness(img: &GrayF32) -> f64 {
-    let profile = column_profile(img);
-    if profile.is_empty() {
+/// Coefficient of variation (var / mean²) of the column projection of `img`
+/// after rotating it by `angle_deg` — scale invariant, higher when lanes are
+/// vertical and well-separated.
+///
+/// Rotation fills the corners with black; over the full frame those black
+/// triangles turn edge columns near-zero and inflate the column variance,
+/// spuriously rewarding large angles (the gel would "snap" to ~45°). We compute
+/// the rotation in a single pass so we can (a) count only pixels whose source
+/// lies *inside* the frame and (b) build each column from the MEAN of its
+/// in-frame pixels, dropping columns that are mostly out of frame. The score
+/// then reflects only real content, at any angle — no fixed crop needed.
+fn projection_sharpness_at(img: &GrayF32, angle_deg: f64) -> f64 {
+    let (w, h) = (img.width(), img.height());
+    if w < 4 || h < 4 {
         return 0.0;
     }
+    let cx = (w as f64 - 1.0) / 2.0;
+    let cy = (h as f64 - 1.0) / 2.0;
+    let rad = angle_deg.to_radians();
+    let (c, s) = (rad.cos(), rad.sin());
+    let (xmax, ymax) = (w as f64 - 1.0, h as f64 - 1.0);
+    let mut col_sum = vec![0.0f64; w];
+    let mut col_cnt = vec![0u32; w];
+    for y in 0..h {
+        let dy = y as f64 - cy;
+        for x in 0..w {
+            let dx = x as f64 - cx;
+            // Inverse rotation: output pixel -> source pixel.
+            let sx = cx + dx * c + dy * s;
+            let sy = cy - dx * s + dy * c;
+            if sx < 0.0 || sy < 0.0 || sx > xmax || sy > ymax {
+                continue; // outside the source frame (would be black)
+            }
+            col_sum[x] += img.sample_bilinear(sx as f32, sy as f32) as f64;
+            col_cnt[x] += 1;
+        }
+    }
+    // Per-column mean over in-frame pixels; keep only mostly-covered columns so
+    // partial edge columns can't dominate the variance.
+    let min_cnt = (h as u32) / 2;
+    let profile: Vec<f64> = col_sum
+        .iter()
+        .zip(&col_cnt)
+        .filter(|(_, &n)| n >= min_cnt)
+        .map(|(&sum, &n)| sum / n as f64)
+        .collect();
     let n = profile.len() as f64;
+    if n < 4.0 {
+        return 0.0;
+    }
     let mean = profile.iter().sum::<f64>() / n;
     if mean.abs() < 1e-9 {
         return 0.0;
@@ -59,7 +99,7 @@ fn search(work: &GrayF32, lo: f64, hi: f64, step: f64, seed_score: f64) -> (f64,
     let mut best_score = seed_score;
     let mut a = lo;
     while a <= hi + 1e-9 {
-        let score = projection_sharpness(&work.rotated(a));
+        let score = projection_sharpness_at(work, a);
         if score > best_score {
             best_score = score;
             best_angle = a;
