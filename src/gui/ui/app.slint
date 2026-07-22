@@ -1,4 +1,4 @@
-import { Button, ComboBox, StandardTableView, VerticalBox, HorizontalBox, GroupBox, Slider, LineEdit, ScrollView, TabWidget, CheckBox } from "std-widgets.slint";
+import { Button, ComboBox, VerticalBox, HorizontalBox, GroupBox, Slider, LineEdit, ScrollView, TabWidget, CheckBox } from "std-widgets.slint";
 
 // A lane in the Trace tab's checklist.
 export struct LaneItem {
@@ -6,14 +6,6 @@ export struct LaneItem {
     label: string,
     ladder: bool,
     selected: bool,
-}
-
-// One ladder lane's per-lane template + load control.
-export struct LadderLaneItem {
-    id: int,
-    label: string,
-    template-index: int,
-    load-ng: string,
 }
 
 // One polyline in the Trace plot (SVG path in a 0..1000 viewbox).
@@ -48,7 +40,6 @@ export component AppWindow inherits Window {
     in property <image> gel-image;
     in property <image> histogram-image;
     in property <[string]> ladder-names;
-    in property <[LadderLaneItem]> ladder-lanes;
     in property <[string]> frame-names;
     in property <[TreeRow]> tree-rows;
     in-out property <int> renaming-lane: -1;
@@ -58,6 +49,9 @@ export component AppWindow inherits Window {
     in-out property <float> disp-lo: 0.0;     // contrast window, fractions of [min,max]
     in-out property <float> disp-hi: 1.0;
     in-out property <bool> invert: false;
+    in-out property <bool> show-warp: false;  // overlay the fitted NURBS warp grid
+    in-out property <bool> show-overexposed: false; // clipped-high pixels in red
+    in-out property <float> annotation-alpha: 0.5;  // annotation overlay opacity
     in-out property <string> volume-ul: "10";
     in-out property <float> rotation: 0;      // degrees, live display rotation
     in-out property <float> zoom: 1.0;
@@ -65,6 +59,29 @@ export component AppWindow inherits Window {
     in-out property <length> pan-y: 0px;
     in-out property <float> click-x: -1;      // last click, normalized (viewport)
     in-out property <float> click-y: -1;
+    // "Use as ladder" dialog.
+    in-out property <int> ladder-dialog-lane: -1;   // -1 = closed
+    in-out property <string> dialog-lane-name: "";
+    in-out property <int> dialog-ladder-index: 0;
+    in-out property <string> dialog-volume: "10";
+    in-out property <string> dialog-conc: "50";
+    // Live tab.
+    in property <image> live-preview-image;
+    in property <image> live-histogram-image;
+    in-out property <bool> live-running: false;
+    in property <string> live-status: "Idle.";
+    in property <string> camera-name: "—";
+    in-out property <float> live-exposure-slider: 0.5;    // log-mapped exposure
+    in property <string> live-exposure-label: "0.10 s";
+    in property <string> hdr-min-label: "0.010 s";
+    in property <string> hdr-max-label: "1.00 s";
+    in property <string> hdr-range-label: "6.6 EV";
+    in-out property <int> hdr-steps-idx: 2;               // index into [1,2,3,5,7]
+    in property <[string]> camera-names;
+    in-out property <int> camera-index: 0;
+    in property <bool> capture-active: false;             // capture in progress
+    in property <string> capture-status: "";
+    in property <bool> exposure-supported: true;          // camera has manual exposure
     // Trace tab.
     in property <[TracePath]> trace-plots;
     in property <[string]> trace-yticks;
@@ -82,24 +99,40 @@ export component AppWindow inherits Window {
     callback measure();
     callback frame-changed(int);
     callback display-changed();
-    callback set-all-ladders(int);
-    callback lane-ladder-changed(int, int);
-    callback lane-load-changed(int, string);
+    callback hover-moved(float, float);   // normalized hover pos over the gel
+    callback press-at(float, float) -> bool; // select annotation; true = draggable
+    callback drag-to(float, float);          // drag the selected annotation
+    callback release-annotation();           // end drag (re-measure)
     callback compare();
     callback about();
     callback rotate(float);
     callback auto-straighten();
     callback add-lane();
-    callback del-lane();
-    callback toggle-ladder();
     callback add-band();
-    callback del-band();
     callback calibrate();
     // Tree list actions.
-    callback lane-toggle(int);          // expand / collapse
-    callback lane-set(int);             // (ladder lane) re-apply ladder sizing
-    callback lane-menu(int, string);    // "delete" | "ladder" for a lane
-    callback lane-renamed(int, string); // commit an inline rename
+    callback lane-toggle(int);            // expand / collapse
+    callback lane-set(int);               // (ladder lane) re-apply ladder sizing
+    callback lane-menu(int, string);      // "delete" | "unmark"
+    callback lane-renamed(int, string);   // commit an inline rename
+    callback band-menu(int, string);      // "delete" for a band
+    // Ladder dialog.
+    callback open-ladder-dialog(int);
+    callback apply-ladder-dialog();
+    callback cancel-ladder-dialog();
+    // Live tab.
+    callback live-start();
+    callback live-stop();
+    callback live-capture();               // HDR "Capture"
+    callback capture-single();             // non-HDR single capture
+    callback cancel-capture();             // cancel an in-progress capture
+    callback live-exposure-changed(float); // exposure slider moved
+    callback set-hdr-lower();              // adopt current exposure as HDR min
+    callback set-hdr-upper();              // adopt current exposure as HDR max
+    callback hdr-steps-changed(int);
+    callback camera-selected(int);         // pick a camera from the dropdown
+    callback rescan-cameras();             // re-enumerate cameras
+    // Trace tab.
     callback toggle-lane(int);
     callback trace-mode-changed(int);
 
@@ -128,15 +161,6 @@ export component AppWindow inherits Window {
             MenuItem { title: "Save"; activated => { root.save(); } }
         }
         Menu {
-            title: "Capture";
-            MenuItem { title: "Capture from camera"; activated => { root.capture(); } }
-        }
-        Menu {
-            title: "View";
-            MenuItem { title: "Fit"; activated => { root.fit-view(); } }
-            MenuItem { title: "Auto-straighten"; activated => { root.auto-straighten(); } }
-        }
-        Menu {
             title: "Analyze";
             MenuItem { title: "Measure regions"; activated => { root.measure(); } }
             MenuItem { title: "Detect lanes & bands"; activated => { root.analyze(); } }
@@ -148,45 +172,46 @@ export component AppWindow inherits Window {
         }
     }
 
+    VerticalLayout {
     TabWidget {
+      vertical-stretch: 1;
       Tab {
         title: "Gel";
         HorizontalBox {
-        // ---- left: toolbar + image ----
+        // ---- left: image + controls ----
         VerticalBox {
-            HorizontalBox {
-                alignment: start;
-                Button { text: "Capture"; clicked => { root.capture(); } }
-                Button { text: "Measure"; clicked => { root.measure(); } }
-            }
-
-            // View controls: frame, zoom, rotate.
-            HorizontalBox {
+            // View controls: frame, zoom, rotate. Kept compact (no vertical
+            // padding) so the toolbar doesn't steal height from the gel view.
+            HorizontalLayout {
+                spacing: 6px;
+                padding: 0px;
                 Text { text: "Image:"; vertical-alignment: center; }
                 ComboBox {
                     model: root.frame-names;
                     current-index <=> root.frame-index;
-                    min-width: 150px;
+                    vertical-stretch: 0;
                     selected(v) => { root.frame-changed(self.current-index); }
                 }
-                Text { text: "Zoom"; vertical-alignment: center; }
+                Text { text: "Z:"; vertical-alignment: center; }
                 Slider {
                     minimum: 0.2; maximum: 8.0; value <=> root.zoom;
                     horizontal-stretch: 1;
+                    vertical-stretch: 0;
                 }
-                Text { text: "Rotate"; vertical-alignment: center; }
+                Text { text: "R:"; vertical-alignment: center; }
                 Slider {
                     minimum: -50; maximum: 50; value <=> root.rotation;
                     horizontal-stretch: 1;
+                    vertical-stretch: 0;
                     changed(v) => { root.rotate(v); }
                 }
-                Button { text: "Fit"; clicked => { root.fit-view(); } }
-                Button { text: "Auto"; clicked => { root.auto-straighten(); } }
+                Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.fit-view(); } }
+                Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.auto-straighten(); } }
             }
 
             // Zoom / pan / rotate viewport.
-            Rectangle {
-                background: #1c1c1c;
+            vp := Rectangle {
+                background: root.invert ? #ffffff : #1c1c1c;
                 border-width: 1px;
                 border-color: #444;
                 vertical-stretch: 1;
@@ -209,29 +234,55 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Pointer layer (topmost) for pan / zoom / click.
+                // Pointer layer (topmost) for pan / zoom / click / hover.
                 ta := TouchArea {
                     width: 100%;
                     height: 100%;
                     property <length> start-pan-x;
                     property <length> start-pan-y;
+                    property <bool> drag-mode;   // dragging an annotation (vs panning)
+                    // --- map viewport pointer coords to image-normalized [0,1],
+                    // accounting for the zoom container + contain letterboxing + pan.
+                    property <length> cw: vp.width * root.zoom;   // container size
+                    property <length> ch: vp.height * root.zoom;
+                    property <float> ia: root.gel-image.width * 1.0 / max(1, root.gel-image.height); // image aspect
+                    property <float> ca: vp.width / vp.height;    // container aspect (zoom cancels)
+                    property <length> dw: self.ia > self.ca ? self.cw : self.ch * self.ia; // displayed img size
+                    property <length> dh: self.ia > self.ca ? self.cw / self.ia : self.ch;
+                    property <length> ix0: (vp.width - self.cw) / 2 + root.pan-x + (self.cw - self.dw) / 2;
+                    property <length> iy0: (vp.height - self.ch) / 2 + root.pan-y + (self.ch - self.dh) / 2;
+                    property <float> nx: (self.mouse-x - self.ix0) / max(1px, self.dw);
+                    property <float> ny: (self.mouse-y - self.iy0) / max(1px, self.dh);
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
                             self.start-pan-x = root.pan-x;
                             self.start-pan-y = root.pan-y;
+                            // Try to grab an annotation; if none, this becomes a pan.
+                            self.drag-mode = root.press-at(self.nx, self.ny);
+                        }
+                        if (e.kind == PointerEventKind.up) {
+                            if (self.drag-mode) { root.release-annotation(); }
+                            self.drag-mode = false;
                         }
                     }
                     moved => {
-                        root.pan-x = self.start-pan-x + (self.mouse-x - self.pressed-x);
-                        root.pan-y = self.start-pan-y + (self.mouse-y - self.pressed-y);
+                        if (self.drag-mode) {
+                            root.drag-to(self.nx, self.ny);
+                        } else {
+                            root.pan-x = self.start-pan-x + (self.mouse-x - self.pressed-x);
+                            root.pan-y = self.start-pan-y + (self.mouse-y - self.pressed-y);
+                        }
                     }
+                    // Continuous hover → alignment line following the warp.
+                    changed nx => { root.hover-moved(self.nx, self.ny); }
+                    changed ny => { root.hover-moved(self.nx, self.ny); }
                     scroll-event(e) => {
                         root.zoom = max(0.2, min(8.0, root.zoom * (1.0 + (e.delta-y / 1px) / 400)));
                         return EventResult.accept;
                     }
                     clicked => {
-                        root.click-x = self.mouse-x / self.width;
-                        root.click-y = self.mouse-y / self.height;
+                        root.click-x = self.nx;
+                        root.click-y = self.ny;
                     }
                 }
             }
@@ -242,131 +293,97 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 3px;
-                    Text {
-                        text: "Contrast — drag the black / white edges on the histogram";
-                        color: #999;
-                        font-size: 11px;
-                    }
                     hist := Rectangle {
                         height: 66px;
                         border-width: 1px;
                         border-color: #cccccc;
+                        clip: true;  // keep edges/knobs from poking outside the box
                         Image {
                             source: root.histogram-image;
                             width: 100%;
                             height: 100%;
                             image-fit: fill;
                         }
-                        // Black (low) edge + knob.
+                        // Black (low) edge line + knob (knob clamped fully inside).
                         Rectangle { x: root.disp-lo * parent.width - 1px; width: 2px; height: 100%; background: #2277ff; }
                         Rectangle {
-                            x: root.disp-lo * parent.width - 5px;
-                            y: parent.height - 9px;
-                            width: 10px; height: 9px; background: #2277ff; border-radius: 2px;
+                            x: Math.max(0px, Math.min(parent.width - 12px, root.disp-lo * parent.width - 6px));
+                            y: parent.height - 10px;
+                            width: 12px; height: 10px; background: #2277ff; border-radius: 2px;
                         }
-                        // White (high) edge + knob.
+                        // White (high) edge line + knob.
                         Rectangle { x: root.disp-hi * parent.width - 1px; width: 2px; height: 100%; background: #114499; }
                         Rectangle {
-                            x: root.disp-hi * parent.width - 5px;
+                            x: Math.max(0px, Math.min(parent.width - 12px, root.disp-hi * parent.width - 6px));
                             y: 0px;
-                            width: 10px; height: 9px; background: #114499; border-radius: 2px;
+                            width: 12px; height: 10px; background: #114499; border-radius: 2px;
                         }
                         hist-ta := TouchArea {
                             property <int> active: 1;
+                            property <float> frac: Math.max(0, Math.min(1, self.mouse-x / self.width));
                             pointer-event(e) => {
                                 if (e.kind == PointerEventKind.down) {
-                                    self.active = (Math.abs(self.mouse-x / self.width - root.disp-lo)
-                                                   <= Math.abs(self.mouse-x / self.width - root.disp-hi)) ? 1 : 2;
-                                    root.apply-window(self.active, self.mouse-x / self.width);
+                                    self.active = (Math.abs(self.frac - root.disp-lo)
+                                                   <= Math.abs(self.frac - root.disp-hi)) ? 1 : 2;
+                                    root.apply-window(self.active, self.frac);
                                 }
                             }
-                            moved => { root.apply-window(self.active, self.mouse-x / self.width); }
+                            moved => { root.apply-window(self.active, self.frac); }
                         }
                     }
+                    Text {
+                        text: "Contrast — drag the black / white edges on the histogram";
+                        color: #999;
+                        font-size: 11px;
+                    }
                 }
-                CheckBox {
-                    text: "Invert colors";
-                    checked <=> root.invert;
-                    toggled => { root.display-changed(); }
+                VerticalLayout {
+                    spacing: 4px;
+                    CheckBox {
+                        text: "Invert colors";
+                        checked <=> root.invert;
+                        toggled => { root.display-changed(); }
+                    }
+                    CheckBox {
+                        text: "Show warp model";
+                        checked <=> root.show-warp;
+                        toggled => { root.display-changed(); }
+                    }
+                    CheckBox {
+                        text: "Show overexposed (red)";
+                        checked <=> root.show-overexposed;
+                        toggled => { root.display-changed(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Text { text: "Annotations:"; vertical-alignment: center; font-size: 11px; }
+                        Slider {
+                            minimum: 0.0; maximum: 1.0; value <=> root.annotation-alpha;
+                            horizontal-stretch: 1;
+                            changed(v) => { root.display-changed(); }
+                        }
+                    }
                 }
             }
         }
 
-        // ---- right: controls + table ----
-        ScrollView {
-            width: 480px;
-            VerticalBox {
-                GroupBox {
-                    title: "Gel";
-                    VerticalBox {
-                        Text { text: "Type: " + root.gel-type-label; }
-                    }
-                }
-                GroupBox {
-                    title: "Ladders";
-                    VerticalBox {
-                        HorizontalBox {
-                            Text { text: "Set all lanes:"; vertical-alignment: center; }
-                            ComboBox {
-                                model: root.ladder-names;
-                                horizontal-stretch: 1;
-                                selected(v) => { root.set-all-ladders(self.current-index); }
-                            }
-                        }
-                        if root.ladder-lanes.length > 0: HorizontalBox {
-                            Text { text: "Lane"; width: 56px; color: #888; font-size: 11px; }
-                            Text { text: "Ladder"; horizontal-stretch: 1; color: #888; font-size: 11px; }
-                            Text { text: "Load (ng)"; width: 76px; color: #888; font-size: 11px; }
-                        }
-                        for ll in root.ladder-lanes: HorizontalBox {
-                            Text { text: ll.label; vertical-alignment: center; width: 56px; overflow: elide; }
-                            ComboBox {
-                                model: root.ladder-names;
-                                current-index: ll.template-index;
-                                horizontal-stretch: 1;
-                                selected(v) => { root.lane-ladder-changed(ll.id, self.current-index); }
-                            }
-                            LineEdit {
-                                text: ll.load-ng;
-                                width: 76px;
-                                horizontal-alignment: right;
-                                edited(t) => { root.lane-load-changed(ll.id, t); }
-                            }
-                        }
-                        if root.ladder-lanes.length == 0: Text {
-                            text: "No ladder lanes yet. Click a lane, then 'Ladder?' to mark it.";
-                            color: #999;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
+        // ---- right: controls + tree (tree expands to fill) ----
+        VerticalLayout {
+            width: 520px;
+            padding: 8px;
+            spacing: 8px;
                 GroupBox {
                     title: "Edit (click image first)";
-                    VerticalBox {
-                        HorizontalBox {
-                            Button { text: "Add lane"; clicked => { root.add-lane(); } }
-                            Button { text: "Del lane"; clicked => { root.del-lane(); } }
-                            Button { text: "Ladder?"; clicked => { root.toggle-ladder(); } }
-                        }
-                        HorizontalBox {
-                            Button { text: "Add band"; clicked => { root.add-band(); } }
-                            Button { text: "Del band"; clicked => { root.del-band(); } }
-                        }
-                    }
-                }
-                GroupBox {
-                    title: "Quantify";
-                    VerticalBox {
-                        HorizontalBox {
-                            Text { text: "Volume (µL):"; vertical-alignment: center; }
-                            LineEdit { text <=> root.volume-ul; }
-                        }
-                        Button { text: "Calibrate (uses per-ladder loads above)"; clicked => { root.calibrate(); } }
-                        Button { text: "Compare first two bands"; clicked => { root.compare(); } }
+                    vertical-stretch: 0;
+                    HorizontalBox {
+                        alignment: start;
+                        Button { text: "Add lane"; clicked => { root.add-lane(); } }
+                        Button { text: "Add band"; clicked => { root.add-band(); } }
                     }
                 }
                 GroupBox {
                     title: "Lanes & bands";
+                    vertical-stretch: 1;
                     VerticalBox {
                         // Column header.
                         Rectangle {
@@ -375,16 +392,14 @@ export component AppWindow inherits Window {
                                 padding-left: 4px;
                                 spacing: 4px;
                                 Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
-                                Text { text: "Rf"; width: 34px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "Size"; width: 52px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "Dens"; width: 46px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "ng"; width: 38px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: "nmol"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                                Text { text: ""; width: 92px; }
+                                Text { text: "Size"; width: 56px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "ng"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "nmol"; width: 50px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { text: "Actions"; width: 132px; color: #888; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
                             }
                         }
                         ScrollView {
-                            min-height: 260px;
+                            vertical-stretch: 1;
                             VerticalLayout {
                                 alignment: start;
                                 for row in root.tree-rows: Rectangle {
@@ -430,34 +445,41 @@ export component AppWindow inherits Window {
                                             }
                                         }
 
-                                        Text { text: row.rf; width: 34px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.size; width: 52px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.density; width: 46px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.ng; width: 38px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                        Text { text: row.nmol; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.size; width: 56px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.ng; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                        Text { text: row.nmol; width: 50px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
 
-                                        // Action column.
+                                        // Action column: a single readable-width menu combo per row.
                                         Rectangle {
-                                            width: 92px;
-                                            if row.kind == 0: HorizontalLayout {
-                                                alignment: end;
-                                                spacing: 4px;
-                                                if row.is-ladder: Button {
-                                                    text: "Set";
-                                                    clicked => { root.lane-set(row.lane-id); }
-                                                }
-                                                ComboBox {
-                                                    width: 52px;
-                                                    model: row.is-ladder
-                                                        ? ["…", "Rename", "Unmark ladder", "Delete"]
-                                                        : ["…", "Rename", "Mark ladder", "Delete"];
-                                                    current-index: 0;
-                                                    selected(v) => {
+                                            width: 132px;
+                                            if row.kind == 0: ComboBox {
+                                                width: 128px;
+                                                model: row.is-ladder
+                                                    ? ["Actions…", "Rename", "Edit ladder…", "Re-apply sizing", "Unmark ladder", "Delete lane"]
+                                                    : ["Actions…", "Rename", "Use as ladder…", "Delete lane"];
+                                                current-index: 0;
+                                                selected(v) => {
+                                                    if (row.is-ladder) {
                                                         if (self.current-index == 1) { root.renaming-lane = row.lane-id; }
-                                                        if (self.current-index == 2) { root.lane-menu(row.lane-id, "ladder"); }
+                                                        if (self.current-index == 2) { root.open-ladder-dialog(row.lane-id); }
+                                                        if (self.current-index == 3) { root.lane-set(row.lane-id); }
+                                                        if (self.current-index == 4) { root.lane-menu(row.lane-id, "unmark"); }
+                                                        if (self.current-index == 5) { root.lane-menu(row.lane-id, "delete"); }
+                                                    } else {
+                                                        if (self.current-index == 1) { root.renaming-lane = row.lane-id; }
+                                                        if (self.current-index == 2) { root.open-ladder-dialog(row.lane-id); }
                                                         if (self.current-index == 3) { root.lane-menu(row.lane-id, "delete"); }
-                                                        self.current-index = 0;
                                                     }
+                                                    self.current-index = 0;
+                                                }
+                                            }
+                                            if row.kind == 1: ComboBox {
+                                                width: 128px;
+                                                model: ["Actions…", "Delete band"];
+                                                current-index: 0;
+                                                selected(v) => {
+                                                    if (self.current-index == 1) { root.band-menu(row.band-id, "delete"); }
+                                                    self.current-index = 0;
                                                 }
                                             }
                                         }
@@ -467,10 +489,10 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-            }
         }
     }
       }
+
       Tab {
         title: "Trace";
         VerticalBox {
@@ -495,7 +517,7 @@ export component AppWindow inherits Window {
             height: 380px;
             property <length> ml: 62px;
             property <length> mr: 140px;
-            property <length> mt: 16px;
+            property <length> mt: 34px;   // room for the horizontal y-axis title
             property <length> mb: 42px;
             property <length> pw: max(1px, self.width - self.ml - self.mr);
             property <length> ph: max(1px, self.height - self.mt - self.mb);
@@ -592,38 +614,271 @@ export component AppWindow inherits Window {
             }
           }
 
-          Text { text: "Lanes:"; }
+          Text { text: "Lanes (check to plot):"; }
           ScrollView {
             vertical-stretch: 1;
-            VerticalBox {
-              for it in root.lane-items: HorizontalBox {
-                alignment: start;
-                CheckBox {
-                  checked: it.selected;
-                  toggled => { root.toggle-lane(it.id); }
-                }
-                Text {
-                  text: it.ladder ? (it.label + "  (ladder)") : it.label;
-                  vertical-alignment: center;
+            VerticalLayout {
+              alignment: start;
+              for it[i] in root.lane-items: Rectangle {
+                height: 26px;
+                background: it.selected ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
+                HorizontalLayout {
+                  padding-left: 6px;
+                  padding-right: 6px;
+                  spacing: 8px;
+                  CheckBox {
+                    checked: it.selected;
+                    toggled => { root.toggle-lane(it.id); }
+                  }
+                  Text {
+                    text: it.ladder ? (it.label + "  (ladder)") : it.label;
+                    vertical-alignment: center;
+                    color: it.ladder ? #9a6b00 : #222222;
+                    horizontal-stretch: 1;
+                  }
                 }
               }
             }
           }
         }
       }
+
+      Tab {
+        title: "Live";
+        HorizontalBox {
+            // Left: live preview + exposure aids (histogram, slider, HDR bounds).
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 6px;
+                Rectangle {
+                    background: #1c1c1c;
+                    border-width: 1px;
+                    border-color: #444;
+                    vertical-stretch: 1;
+                    clip: true;
+                    Image {
+                        source: root.live-preview-image;
+                        image-fit: contain;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    if !root.live-running: Text {
+                        text: "Preview stopped. Press “Start preview”.";
+                        color: #888;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                // Live histogram of the preview frame (exposure aid).
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: #cccccc;
+                    background: white;
+                    clip: true;
+                    Image {
+                        source: root.live-histogram-image;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: fill;
+                    }
+                }
+                // Exposure-time slider (log scale) + live readout. Disabled when
+                // the camera can't do manual exposure (then HDR is impossible).
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "Exposure:"; vertical-alignment: center; }
+                    Slider {
+                        minimum: 0.0; maximum: 1.0;
+                        value <=> root.live-exposure-slider;
+                        horizontal-stretch: 1;
+                        enabled: root.exposure-supported;
+                        changed(v) => { root.live-exposure-changed(v); }
+                    }
+                    Text {
+                        text: root.exposure-supported ? root.live-exposure-label : "auto";
+                        vertical-alignment: center;
+                        width: 64px;
+                        horizontal-alignment: right;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { text: "Set lower HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-lower(); } }
+                    Button { text: "Set upper HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-upper(); } }
+                }
+                if !root.exposure-supported: Text {
+                    text: "This camera has no manual exposure — HDR is unavailable. Use “Capture single”.";
+                    color: #b26b00;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
+            // Right: camera + capture controls.
+            VerticalLayout {
+                width: 300px;
+                alignment: start;
+                padding: 8px;
+                spacing: 8px;
+                GroupBox {
+                    title: "Camera";
+                    VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            ComboBox {
+                                model: root.camera-names;
+                                current-index <=> root.camera-index;
+                                horizontal-stretch: 1;
+                                selected(v) => { root.camera-selected(self.current-index); }
+                            }
+                            Button { text: "Rescan"; clicked => { root.rescan-cameras(); } }
+                        }
+                        Text { text: root.live-status; color: #888; wrap: word-wrap; }
+                        Button {
+                            text: root.live-running ? "Stop preview" : "Start preview";
+                            clicked => {
+                                if (root.live-running) { root.live-stop(); }
+                                else { root.live-start(); }
+                            }
+                        }
+                    }
+                }
+                GroupBox {
+                    title: "HDR capture";
+                    VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Min:"; vertical-alignment: center; }
+                            Text { text: root.hdr-min-label; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: "Max:"; vertical-alignment: center; }
+                            Text { text: root.hdr-max-label; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Steps:"; vertical-alignment: center; }
+                            ComboBox {
+                                model: ["1 (auto)", "2", "3", "5", "7"];
+                                current-index <=> root.hdr-steps-idx;
+                                horizontal-stretch: 1;
+                                enabled: root.exposure-supported;
+                                selected(v) => { root.hdr-steps-changed(self.current-index); }
+                            }
+                            Text { text: root.hdr-range-label; color: #888; vertical-alignment: center; }
+                        }
+                        Button { text: "Capture HDR"; enabled: root.exposure-supported; clicked => { root.live-capture(); } }
+                        Text {
+                            text: "Shoots a log-spaced bracket between the lower and upper HDR times and HDR-merges it into the current gel.";
+                            color: #888; font-size: 11px; wrap: word-wrap;
+                        }
+                    }
+                }
+                GroupBox {
+                    title: "Single capture";
+                    VerticalLayout {
+                        spacing: 6px;
+                        Button { text: "Capture single"; clicked => { root.capture-single(); } }
+                        Text {
+                            text: "One frame at the current exposure (no HDR merge).";
+                            color: #888; font-size: 11px; wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+      }
     }
 
-    // status bar
+    // status bar (laid out below the tabs so it never overlaps their content)
     Rectangle {
-        y: parent.height - 24px;
         height: 24px;
         width: 100%;
-        background: #101010;
+        background: #f0f0f2;
+        Rectangle { y: 0; height: 1px; width: 100%; background: #d0d0d4; } // top divider
         Text {
             text: root.status;
-            color: #ddd;
+            color: #333333;
             vertical-alignment: center;
             x: 8px;
+        }
+    }
+    }
+
+    // ---- Capture progress dialog (camera I/O runs off the UI thread) ----
+    if root.capture-active: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }  // swallow clicks behind the dialog
+        Rectangle {
+            width: 340px;
+            height: 150px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "Capturing…"; font-size: 15px; font-weight: 700; }
+                Text { text: root.capture-status; color: #555; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    Button { text: "Cancel"; clicked => { root.cancel-capture(); } }
+                }
+            }
+        }
+    }
+
+    // ---- "Use as ladder" modal dialog ----
+    if root.ladder-dialog-lane >= 0: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        // Swallow clicks behind the dialog.
+        TouchArea { }
+        Rectangle {
+            width: 380px;
+            height: 320px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Use “" + root.dialog-lane-name + "” as ladder"; font-size: 15px; font-weight: 700; }
+                HorizontalBox {
+                    Text { text: "Ladder:"; vertical-alignment: center; width: 120px; }
+                    ComboBox {
+                        model: root.ladder-names;
+                        current-index <=> root.dialog-ladder-index;
+                        horizontal-stretch: 1;
+                    }
+                }
+                HorizontalBox {
+                    Text { text: "Volume (µL):"; vertical-alignment: center; width: 120px; }
+                    LineEdit { text <=> root.dialog-volume; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Concentration (ng/µL):"; vertical-alignment: center; width: 120px; }
+                    LineEdit { text <=> root.dialog-conc; horizontal-stretch: 1; }
+                }
+                Text { text: "Load = volume × concentration (ng)."; color: #888; font-size: 11px; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-ladder-dialog(); } }
+                    Button { text: "OK"; primary: true; clicked => { root.apply-ladder-dialog(); } }
+                }
+            }
         }
     }
 }

@@ -16,6 +16,7 @@ pub mod imagef32;
 pub mod ladders;
 pub mod model;
 pub mod quant;
+pub mod warp;
 
 pub use format::GelDocument;
 pub use imagef32::GrayF32;

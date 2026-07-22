@@ -14,7 +14,7 @@
 //!   compiled only with the `camera` feature.
 
 pub mod mock;
-#[cfg(feature = "camera")]
+#[cfg(camera_backend)]
 pub mod nokhwa_backend;
 
 use crate::core::model::CaptureMeta;

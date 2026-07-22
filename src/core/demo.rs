@@ -1,104 +1,112 @@
 //! Synthetic demo gel used by both the CLI (`gel make-demo`, `gel make-dataset`)
 //! and the desktop GUI (`opengel --demo`).
 //!
-//! The scene is a fixed 4-lane DNA gel whose first lane reproduces the NEB 1 kb
-//! ladder, so it is identified against the built-in database. [`demo_document`]
-//! renders the same scene at several exposures as one HDR bracket, exercising
-//! the exposure-stepping and HDR-merge paths.
+//! The demo is produced by the **simulator** ([`crate::sim`]) rather than a bare
+//! Gaussian renderer, so `opengel --demo` shows the realistic features: loading
+//! **wells**, dim gel **autofluorescence**, and the gel sitting **inside a
+//! larger camera frame** (a dark border), with flat-topped rectangular bands.
+//!
+//! The scene is a fixed, upright 8-lane DNA gel with three NEB 1 kb ladder lanes
+//! (indices 0, 4, 7) and five sample lanes with fixed band sizes.
+//! [`demo_document`] renders it as one 3-frame HDR exposure bracket (identical
+//! scene, three brightnesses), and [`demo_document_annotated`] additionally
+//! attaches an annotation built from the simulator's *exact* ground truth, so
+//! every lane column and band box lines up with the rendered scene.
 
-use image::{DynamicImage, GrayImage, Luma};
+use image::DynamicImage;
 
-use crate::core::model::CaptureMeta;
-use crate::core::{ladders, GelDocument, GelType};
+use crate::core::model::{Analysis, Band, CaptureMeta, Lane};
+use crate::core::{GelDocument, GelType};
+use crate::detect::eval::GroundTruth;
+use crate::sim::{simulate, GelParams, RenderedGel, SimConfig, SimLane, WarpMode};
 
-pub const W: u32 = 220;
-pub const H: u32 = 300;
-const SX: f64 = 5.0;
-const SY: f64 = 3.5;
+/// Demo frame dimensions (the full camera frame, gel inset via the margin).
+pub const W: u32 = 480;
+pub const H: u32 = 320;
 
-/// Reference exposure (seconds); scene amplitudes are tuned for this.
-pub const REF_EXPOSURE_S: f64 = 0.2;
+/// Fixed seed: all three bracket frames share it so the scene is identical and
+/// only the exposure differs.
+const DEMO_SEED: u64 = 0xDE_0A;
 
-/// The exposures (seconds) making up the demo HDR bracket: one under-exposed,
-/// one nominal, one over-exposed (partly saturated).
-pub const DEMO_EXPOSURES_S: [f64; 3] = [0.06, 0.2, 0.6];
+/// The exposure gains making up the demo HDR bracket: one under-exposed, one
+/// nominal, one over-exposed (partly saturated). Also used (as seconds) for the
+/// `exposure_seconds` HDR-merge weights.
+pub const DEMO_EXPOSURES: [f64; 3] = [0.4, 1.0, 2.5];
 
-pub struct SceneLane {
-    pub x: f64,
-    pub ladder: Option<&'static str>,
-    /// Band sizes (bp).
-    pub sizes: Vec<f64>,
-    pub amp: f64,
+/// Nominal (middle) exposure — used for the single-frame dataset image.
+const NOMINAL_EXPOSURE: f64 = 1.0;
+
+/// The demo scene as a [`SimConfig`] at the given exposure gain. Everything
+/// except `gel.exposure` is fixed, so calling this with the bracket exposures
+/// yields three brightness-scaled views of one identical scene.
+fn demo_config(exposure: f64) -> SimConfig {
+    let gel = GelParams {
+        width: W,
+        height: H,
+        seed: DEMO_SEED,
+        gel_type: GelType::Dna,
+        // A gentle smile + wobble warp so the gel looks like a real (slightly
+        // curved) plate. The closed-form SmileWobble warp is used because its
+        // inverse is O(1) per pixel — the NURBS mode would run a per-pixel Newton
+        // solve (16×16 seed search), making the demo take tens of seconds.
+        rotation_deg: 0.0,
+        smile_px: 11.0,
+        wobble_px: 4.0,
+        warp_mode: WarpMode::SmileWobble,
+        warp_2d: false,
+        shift_px: (0.0, 0.0),
+        // A dim, uneven camera background so the dark border around the gel is
+        // clearly visible.
+        background: 0.05,
+        exposure,
+        photons: 0.0,
+        // A clear margin so the gel sits well inside the camera frame; strong
+        // agarose autofluorescence (the gel glows, brightest near the wells),
+        // wells, scattered bright specks and a bit of DNA smear — tuned to look
+        // like a real stained agarose gel.
+        gel_margin_frac: 0.09,
+        fluorescence: 0.34,
+        speck_density: 0.0009,
+        smear: 0.08,
+        wells: true,
+        // Low band gain → faint bands over the bright fluorescent background,
+        // matching a real gel photo (bright bands saturate, faint ones are grey).
+        band_gain: 0.03,
+        // Flat-topped rectangular bands with gentle diffusion/compression.
+        lane_width_frac: 0.72,
+        band_sigma_y: 2.6,
+        diffusion: 1.5,
+        migration_compression: 0.3,
+    };
+    // Three NEB 1 kb ladder lanes at 0, 4, 7; five sample lanes between them.
+    let ladder = "NEB 1 kb DNA Ladder";
+    let lanes = vec![
+        SimLane::ladder(ladder),                       // 0  ladder
+        SimLane::sample(vec![4000.0, 1500.0, 700.0]),  // 1
+        SimLane::sample(vec![6000.0, 2000.0, 900.0, 400.0]), // 2
+        SimLane::sample(vec![3000.0, 1000.0]),         // 3
+        SimLane::ladder(ladder),                       // 4  ladder
+        SimLane::sample(vec![5000.0, 1200.0, 500.0]),  // 5
+        SimLane::sample(vec![2500.0, 800.0]),          // 6
+        SimLane::ladder(ladder),                       // 7  ladder
+    ];
+    SimConfig { gel, lanes }
 }
 
-/// Map a fragment size to a y position via a fixed semi-log calibration.
-pub fn size_to_y(size: f64) -> f64 {
-    let (ln_hi, ln_lo) = (10000f64.ln(), 500f64.ln());
-    let slope = (280.0 - 20.0) / (ln_lo - ln_hi);
-    20.0 + (size.ln() - ln_hi) * slope
-}
-
-pub fn scene() -> Vec<SceneLane> {
-    let ladder = ladders::by_name("NEB 1 kb DNA Ladder").expect("built-in ladder");
-    vec![
-        SceneLane {
-            x: 30.0,
-            ladder: Some("NEB 1 kb DNA Ladder"),
-            sizes: ladder.bands.iter().map(|b| b.size).collect(),
-            amp: 0.9,
-        },
-        SceneLane { x: 80.0, ladder: None, sizes: vec![3000.0, 1200.0, 600.0], amp: 0.75 },
-        SceneLane { x: 130.0, ladder: None, sizes: vec![5000.0, 900.0], amp: 0.75 },
-        SceneLane { x: 180.0, ladder: None, sizes: vec![2000.0, 1500.0, 800.0, 300.0], amp: 0.75 },
-    ]
-}
-
-/// The scene's radiance field (unclamped), summed over all band gaussians.
-fn radiance(scene: &[SceneLane]) -> Vec<f64> {
-    let mut buf = vec![0f64; (W * H) as usize];
-    for lane in scene {
-        for &size in &lane.sizes {
-            let y0 = size_to_y(size);
-            for y in 0..H {
-                for x in 0..W {
-                    let dx = (x as f64 - lane.x) / SX;
-                    let dy = (y as f64 - y0) / SY;
-                    buf[(y * W + x) as usize] += lane.amp * (-0.5 * (dx * dx + dy * dy)).exp();
-                }
-            }
-        }
-    }
-    buf
-}
-
-/// Render the scene as an 8-bit image at the given exposure multiplier
-/// (1.0 == nominal). Values are clamped to `[0,1]` before quantization, so
-/// large multipliers saturate the brightest bands.
-pub fn render_scaled(scene: &[SceneLane], scale: f64) -> GrayImage {
-    let buf = radiance(scene);
-    let mut img = GrayImage::new(W, H);
-    for (i, p) in buf.iter().enumerate() {
-        let v = ((p * scale).clamp(0.0, 1.0) * 255.0) as u8;
-        img.put_pixel((i as u32) % W, (i as u32) / W, Luma([v]));
-    }
-    img
-}
-
-/// Render the scene at nominal exposure (back-compat helper for the dataset
-/// writer, whose ground truth assumes the nominal brightness).
-pub fn render(scene: &[SceneLane]) -> GrayImage {
-    render_scaled(scene, 1.0)
-}
-
-/// A ready-to-use demo [`GelDocument`]: the fixed scene captured as a 3-frame
-/// HDR exposure bracket (bracket group 0).
-pub fn demo_document() -> GelDocument {
-    let sc = scene();
-    let frames: Vec<DynamicImage> = DEMO_EXPOSURES_S
+/// Render the three bracket frames (identical scene, three exposures).
+fn demo_gels() -> Vec<RenderedGel> {
+    DEMO_EXPOSURES
         .iter()
-        .map(|&t| DynamicImage::ImageLuma8(render_scaled(&sc, t / REF_EXPOSURE_S)))
-        .collect();
-    let metas: Vec<CaptureMeta> = DEMO_EXPOSURES_S
+        .map(|&e| simulate(&demo_config(e)))
+        .collect()
+}
+
+/// Frames + parallel capture metadata for a set of rendered bracket gels. All
+/// frames share `bracket_group = 0` and carry their exposure as
+/// `exposure_seconds`, so [`GelDocument::working_image`] HDR-merges them.
+fn frames_and_metas(gels: &[RenderedGel]) -> (Vec<DynamicImage>, Vec<CaptureMeta>) {
+    let frames = gels.iter().map(|g| g.image.clone()).collect();
+    let metas = DEMO_EXPOSURES
         .iter()
         .map(|&t| CaptureMeta {
             exposure_seconds: t,
@@ -107,5 +115,72 @@ pub fn demo_document() -> GelDocument {
             ..Default::default()
         })
         .collect();
+    (frames, metas)
+}
+
+/// Build an [`Analysis`] from the simulator's exact [`GroundTruth`]: one
+/// [`Lane`] per ground-truth lane and one [`Band`] per ground-truth band, so the
+/// annotation boxes line up precisely with the rendered scene.
+fn analysis_from_truth(truth: &GroundTruth) -> Analysis {
+    let mut a = Analysis::default();
+    let mut bid = 0u32;
+    for (i, gl) in truth.lanes.iter().enumerate() {
+        a.lanes.push(Lane {
+            id: i as u32,
+            x_min: gl.x_min,
+            x_max: gl.x_max,
+            y_min: 0,
+            y_max: H,
+            label: Some(if gl.is_ladder {
+                format!("Ladder {i}")
+            } else {
+                format!("Lane {i}")
+            }),
+            is_ladder: gl.is_ladder,
+        });
+        for gb in &gl.bands {
+            let yc = gb.y_center;
+            a.bands.push(Band {
+                id: bid,
+                lane_id: i as u32,
+                y_center: yc,
+                y_half_width: (0.012 * H as f64).max(2.0),
+                integrated_density: 0.0,
+                rf: Some(yc / H as f64),
+                size: None,
+                known_size: None,
+            });
+            bid += 1;
+        }
+    }
+    a
+}
+
+/// A ready-to-use demo [`GelDocument`]: the fixed scene captured as a 3-frame
+/// HDR exposure bracket (bracket group 0).
+pub fn demo_document() -> GelDocument {
+    let gels = demo_gels();
+    let (frames, metas) = frames_and_metas(&gels);
     GelDocument::from_frames(GelType::Dna, frames, metas)
+}
+
+/// [`demo_document`] plus an annotation built from the simulator's exact ground
+/// truth (8 lanes, 3 marked `is_ladder`), so the boxes line up with the bands.
+pub fn demo_document_annotated() -> GelDocument {
+    let gels = demo_gels();
+    let analysis = analysis_from_truth(&gels[0].truth);
+    let (frames, metas) = frames_and_metas(&gels);
+    let mut doc = GelDocument::from_frames(GelType::Dna, frames, metas);
+    doc.project.analysis = analysis;
+    doc
+}
+
+/// The nominal-exposure demo frame plus its exact ground truth, for writing a
+/// loose image + `*.gt.json` dataset (`gel make-dataset`). `image_name` is
+/// stamped into the returned [`GroundTruth::image`].
+pub fn demo_dataset(image_name: &str) -> (DynamicImage, GroundTruth) {
+    let g = simulate(&demo_config(NOMINAL_EXPOSURE));
+    let mut truth = g.truth;
+    truth.image = image_name.to_string();
+    (g.image, truth)
 }

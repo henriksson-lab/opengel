@@ -14,8 +14,8 @@ use crate::core::model::CaptureMeta;
 use image::DynamicImage;
 use nokhwa::pixel_format::RgbFormat;
 use nokhwa::utils::{
-    ApiBackend, CameraIndex, ControlValueSetter, KnownCameraControl, RequestedFormat,
-    RequestedFormatType,
+    ApiBackend, CameraIndex, ControlValueDescription, ControlValueSetter, KnownCameraControl,
+    RequestedFormat, RequestedFormatType,
 };
 use nokhwa::{query, Camera as NokhwaCamera};
 
@@ -58,14 +58,16 @@ pub struct NokhwaBackend {
 /// Open a camera by index at the highest available resolution.
 pub fn open(index: usize) -> Result<NokhwaBackend> {
     let cam_index = CameraIndex::Index(index as u32);
-    let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestResolution);
+    // Prefer the highest frame rate (typically 720p/1080p) over the absolute
+    // highest resolution: a live gel-framing preview needs smooth updates, and
+    // decoding 4K frames every tick caps the rate regardless of exposure.
+    let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
     let mut camera = NokhwaCamera::new(cam_index, format).map_err(backend_err)?;
     camera.open_stream().map_err(backend_err)?;
 
-    // Probe manual-exposure support.
-    let manual_exposure = camera
-        .camera_control(KnownCameraControl::Exposure)
-        .is_ok();
+    // Probe whether the device can actually do *manual* exposure (not just
+    // expose an exposure control that is auto-only).
+    let manual_exposure = supports_manual_exposure(&camera);
 
     let name = camera.info().human_name();
     Ok(NokhwaBackend {
@@ -74,6 +76,88 @@ pub fn open(index: usize) -> Result<NokhwaBackend> {
         exposure_s: None,
         manual_exposure,
     })
+}
+
+/// Whether the device supports manual exposure. On macOS this means the
+/// AVFoundation "custom" exposure mode (3) is available *and* there is a usable
+/// exposure-duration range; elsewhere it means the exposure control reports a
+/// real (non-degenerate) range.
+#[cfg(target_os = "macos")]
+fn supports_manual_exposure(camera: &NokhwaCamera) -> bool {
+    let custom_mode = matches!(
+        camera.camera_control(KnownCameraControl::Exposure).as_ref().map(|c| c.description()),
+        Ok(ControlValueDescription::Enum { possible, .. }) if possible.contains(&3)
+    );
+    let duration_range = matches!(
+        camera.camera_control(KnownCameraControl::Gamma).as_ref().map(|c| c.description()),
+        Ok(ControlValueDescription::IntegerRange { min, max, .. }) if max > min
+    );
+    custom_mode && duration_range
+}
+
+#[cfg(not(target_os = "macos"))]
+fn supports_manual_exposure(camera: &NokhwaCamera) -> bool {
+    matches!(
+        camera.camera_control(KnownCameraControl::Exposure).as_ref().map(|c| c.description()),
+        Ok(ControlValueDescription::IntegerRange { min, max, .. }) if max > min
+    )
+}
+
+impl NokhwaBackend {
+    /// Set a manual exposure time (seconds). Returns whether the device honored
+    /// it. Exposure control is mapped very differently per platform.
+    ///
+    /// NOTE: on macOS this is best-effort and known-incomplete — nokhwa's
+    /// AVFoundation mapping puts exposure MODE on `Exposure` (3 = custom) and
+    /// DURATION on `Gamma` (a CMTime value; timescale assumed nanoseconds here).
+    /// Many built-in cameras (e.g. the FaceTime HD) only report modes [0, 2]
+    /// (locked / continuous-auto) and no duration range, so this returns
+    /// `Ok(false)`. Proper manual exposure on macOS is deferred (likely a
+    /// different capture library or a camera that supports custom exposure).
+    #[cfg(target_os = "macos")]
+    fn set_manual_exposure(&mut self, t: f64) -> Result<bool> {
+        if self
+            .camera
+            .set_camera_control(KnownCameraControl::Exposure, ControlValueSetter::EnumValue(3))
+            .is_err()
+        {
+            return Ok(false); // custom mode unsupported → auto only
+        }
+        let Ok(ctrl) = self.camera.camera_control(KnownCameraControl::Gamma) else {
+            return Ok(false);
+        };
+        let (min, max) = match ctrl.description() {
+            ControlValueDescription::IntegerRange { min, max, .. } if *max > *min => (*min, *max),
+            _ => return Ok(false), // no usable duration range
+        };
+        let raw = ((t * 1_000_000_000.0) as i64).clamp(min, max);
+        match self
+            .camera
+            .set_camera_control(KnownCameraControl::Gamma, ControlValueSetter::Integer(raw))
+        {
+            Ok(()) => {
+                self.exposure_s = Some(raw as f64 / 1_000_000_000.0);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// V4L / MSMF: the `Exposure` control is the absolute exposure time.
+    #[cfg(not(target_os = "macos"))]
+    fn set_manual_exposure(&mut self, t: f64) -> Result<bool> {
+        let raw = (t / EXPOSURE_UNIT_S).round().max(1.0) as i64;
+        match self
+            .camera
+            .set_camera_control(KnownCameraControl::Exposure, ControlValueSetter::Integer(raw))
+        {
+            Ok(()) => {
+                self.exposure_s = Some(raw as f64 * EXPOSURE_UNIT_S);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
 }
 
 impl Camera for NokhwaBackend {
@@ -96,23 +180,18 @@ impl Camera for NokhwaBackend {
     fn set_exposure(&mut self, exposure: Exposure) -> Result<bool> {
         match exposure {
             Exposure::Auto => {
-                // Best-effort: many V4L devices expose auto mode as a menu
-                // control; without a portable handle we report "not honored".
+                #[cfg(target_os = "macos")]
+                {
+                    // AVFoundation: exposure MODE lives on the `Exposure` control
+                    // (2 = continuous auto).
+                    let _ = self.camera.set_camera_control(
+                        KnownCameraControl::Exposure,
+                        ControlValueSetter::EnumValue(2),
+                    );
+                }
                 Ok(false)
             }
-            Exposure::Manual(t) => {
-                let raw = (t / EXPOSURE_UNIT_S).round().max(1.0) as i64;
-                match self.camera.set_camera_control(
-                    KnownCameraControl::Exposure,
-                    ControlValueSetter::Integer(raw),
-                ) {
-                    Ok(()) => {
-                        self.exposure_s = Some(raw as f64 * EXPOSURE_UNIT_S);
-                        Ok(true)
-                    }
-                    Err(_) => Ok(false),
-                }
-            }
+            Exposure::Manual(t) => self.set_manual_exposure(t),
         }
     }
 

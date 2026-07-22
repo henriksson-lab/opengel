@@ -23,9 +23,19 @@ pub fn analyze(
     candidates: &[&LadderTemplate],
     min_r2: f64,
 ) -> Analysis {
-    let detector = ClassicalDetector::new();
-    let det = detector.detect(img, params);
+    let det = ClassicalDetector::new().detect(img, params);
+    analyze_detection(det, gel_type, candidates, min_r2)
+}
 
+/// Ladder ID + sizing from an already-computed [`Detection`]. Lets any detector
+/// (classical, Cellpose, or a mask-driven / GelGenie segmenter — see
+/// [`crate::detect::mask_segment`]) feed the full analysis pipeline.
+pub fn analyze_detection(
+    det: crate::detect::detector::Detection,
+    gel_type: GelType,
+    candidates: &[&LadderTemplate],
+    min_r2: f64,
+) -> Analysis {
     let mut analysis = Analysis {
         lanes: det.lanes,
         bands: det.bands,

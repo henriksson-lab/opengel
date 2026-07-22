@@ -33,12 +33,26 @@ rayon = "1"
 imageproc = "0.25"
 slint = "1.17"
 rfd = "0.15"
+# Optional on Linux/other (needs libv4l-dev): enable with `--features camera`.
 nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+
+# macOS (AVFoundation) and Windows (MediaFoundation) ship native capture with no
+# extra system deps, so the real camera backend is always compiled there.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+nokhwa = { version = "0.10", features = ["input-native"] }
 
 [build-dependencies]
 slint-build = "1.17"
 
+# Optimize dependencies even in dev builds — heavy pixel work (image decode,
+# nokhwa MJPEG decode, ndarray) is otherwise pathologically slow, which shows up
+# as a laggy live preview. Our own crates stay unoptimized for fast debug builds.
+[profile.dev.package."*"]
+opt-level = 3
+
 [features]
 default = []
-# Real USB camera capture via nokhwa (V4L2 / AVFoundation / MediaFoundation).
+# Force-enable the real USB camera backend on platforms where it is opt-in
+# (Linux/other). It is already on by default for macOS/Windows. See build.rs,
+# which unifies both into the `camera_backend` cfg.
 camera = ["dep:nokhwa"]
