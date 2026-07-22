@@ -52,6 +52,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-unwarped: false;  // fixed dewarped (rectified) view
     in-out property <bool> optical-flow: false;    // fit warp by optical flow on detect
     in-out property <bool> show-warp: false;  // overlay the fitted NURBS warp grid
+    in-out property <bool> normalize-inner-knots: true; // keep v rows evenly spaced while dragging edge knots
     in-out property <bool> show-overexposed: false; // clipped-high pixels in red
     in-out property <float> annotation-alpha: 0.5;  // annotation overlay opacity
     in-out property <string> volume-ul: "10";
@@ -66,6 +67,13 @@ export component AppWindow inherits Window {
     in-out property <bool> has-annotations: false;
     // Confirm-overwrite dialog for re-detection.
     in-out property <bool> confirm-detect-open: false;
+    // Fit-model dialog.
+    in-out property <bool> fit-dialog-open: false;
+    in-out property <bool> fit-dialog-optical-flow: false;
+    in-out property <string> fit-dialog-extra-edges: "2";
+    in-out property <string> fit-dialog-warp-regularization: "0.01";
+    in-out property <string> fit-dialog-row-spacing: "10";
+    in-out property <string> fit-dialog-flow-smoothness: "8";
 
     // "Use as ladder" dialog.
     in-out property <int> ladder-dialog-lane: -1;   // -1 = closed
@@ -104,6 +112,9 @@ export component AppWindow inherits Window {
     callback save();
     callback capture();
     callback analyze();
+    callback open-fit-dialog();
+    callback apply-fit-dialog();
+    callback cancel-fit-dialog();
     callback measure();
     callback frame-changed(int);
     callback display-changed();
@@ -171,7 +182,16 @@ export component AppWindow inherits Window {
         Menu {
             title: "Analyze";
             MenuItem { title: "Measure regions"; activated => { root.measure(); } }
-            MenuItem { title: "Detect lanes & bands"; activated => { root.analyze(); } }
+            MenuItem {
+                title: "Detect lanes & bands";
+                activated => {
+                    if (root.has-annotations) {
+                        root.confirm-detect-open = true;
+                    } else {
+                        root.open-fit-dialog();
+                    }
+                }
+            }
             MenuItem { title: "Compare two bands"; activated => { root.compare(); } }
         }
         Menu {
@@ -225,7 +245,7 @@ export component AppWindow inherits Window {
                         if (root.has-annotations) {
                             root.confirm-detect-open = true;
                         } else {
-                            root.analyze();
+                            root.open-fit-dialog();
                         }
                     }
                 }
@@ -372,12 +392,13 @@ export component AppWindow inherits Window {
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
-                        text: "Optical-flow dewarp";
-                        checked <=> root.optical-flow;
-                    }
-                    CheckBox {
                         text: "Show warp model";
                         checked <=> root.show-warp;
+                        toggled => { root.display-changed(); }
+                    }
+                    CheckBox {
+                        text: "Normalize inner knots";
+                        checked <=> root.normalize-inner-knots;
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
@@ -899,8 +920,62 @@ export component AppWindow inherits Window {
                         primary: true;
                         clicked => {
                             root.confirm-detect-open = false;
-                            root.analyze();
+                            root.open-fit-dialog();
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Fit model modal dialog ----
+    if root.fit-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 430px;
+            height: 350px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Fit Model"; font-size: 15px; font-weight: 700; }
+                CheckBox {
+                    text: "Use optical flow";
+                    checked <=> root.fit-dialog-optical-flow;
+                }
+                HorizontalBox {
+                    Text { text: "Extra migration edges:"; vertical-alignment: center; width: 180px; }
+                    LineEdit { text <=> root.fit-dialog-extra-edges; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Warp regularization:"; vertical-alignment: center; width: 180px; }
+                    LineEdit { text <=> root.fit-dialog-warp-regularization; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Row spacing weight:"; vertical-alignment: center; width: 180px; }
+                    LineEdit { text <=> root.fit-dialog-row-spacing; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Flow smoothness:"; vertical-alignment: center; width: 180px; }
+                    LineEdit { text <=> root.fit-dialog-flow-smoothness; horizontal-stretch: 1; }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-fit-dialog(); } }
+                    Button {
+                        text: "Detect";
+                        primary: true;
+                        clicked => { root.apply-fit-dialog(); }
                     }
                 }
             }

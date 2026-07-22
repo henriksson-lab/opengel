@@ -37,6 +37,14 @@ pub struct DetectParams {
     /// balancing measured flow against a smooth displacement field. Larger =
     /// stiffer (more interpolation between confident strips).
     pub flow_smoothness: f64,
+    /// Extra migration-axis control rows beyond matched ladder/front rows. Must
+    /// be at least 2 so the fitted warp has top/bottom support even with sparse
+    /// ladder information.
+    pub extra_vertical_edges: usize,
+    /// Regularization pull for NURBS refinement toward the prior grid.
+    pub warp_regularization: f64,
+    /// Multiplier for preserving adjacent `v` control-row spacing.
+    pub row_spacing_weight: f64,
 }
 
 impl Default for DetectParams {
@@ -53,6 +61,9 @@ impl Default for DetectParams {
             min_band_distance: 4,
             optical_flow_warp: false,
             flow_smoothness: 8.0,
+            extra_vertical_edges: 2,
+            warp_regularization: 1e-2,
+            row_spacing_weight: 10.0,
         }
     }
 }

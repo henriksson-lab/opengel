@@ -63,9 +63,10 @@ fn fit_smile_warp(
     per_lane0: &BTreeMap<u32, Vec<usize>>,
     template: &LadderTemplate,
     min_r2: f64,
-    width: u32,
-    height: u32,
+    dims: (u32, u32),
+    params: &DetectParams,
 ) -> Option<GelWarp> {
+    let (width, height) = dims;
     let (w, h) = (width as f64, height as f64);
     let lane_centers: Vec<f64> = det.lanes.iter().map(|l| l.x_center()).collect();
     if lane_centers.len() < 2 {
@@ -144,7 +145,8 @@ fn fit_smile_warp(
     xs.push(0.0);
     xs.extend_from_slice(&lane_centers);
     xs.push(w);
-    let nv = (fronts.len() + 2).max(3);
+    let extra_vertical_edges = params.extra_vertical_edges.max(2);
+    let nv = (fronts.len() + extra_vertical_edges).max(3);
     let prior = GelWarp::from_grid(nu, nv, |u, v| {
         let f = u * (nu - 1) as f64;
         let i0 = (f.floor() as usize).min(nu - 1);
@@ -161,7 +163,11 @@ fn fit_smile_warp(
             corr.push((u, v_mean, x, y));
         }
     }
-    Some(prior.refine_least_squares(&corr, 1e-2))
+    Some(prior.refine_least_squares_with_spacing(
+        &corr,
+        params.warp_regularization,
+        params.row_spacing_weight,
+    ))
 }
 
 /// Run classical detection + ladder identification + sizing.
@@ -219,7 +225,7 @@ pub fn analyze_detection(
             let pos: Vec<f64> = idxs.iter().map(|&i| b0[i].v_center).collect();
             best_template(&pos, cand_refs.iter().copied(), min_r2)
         })
-        .max_by(|a, b| a.r2.partial_cmp(&b.r2).unwrap())
+        .max_by(best_ladder_match)
         .and_then(|m| {
             cand_refs
                 .iter()
@@ -240,26 +246,10 @@ pub fn analyze_detection(
     let warp = if params.optical_flow_warp {
         crate::detect::flow::fit_flow_warp(&work, w, h, params.flow_smoothness)
     } else {
-        let smile = template0.and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, w, h));
-        eprintln!(
-            "[warp-dbg] lanes={} template0={:?} smile_fit={}",
-            det.lanes.len(),
-            template0.map(|t| &t.name),
-            smile.is_some()
-        );
+        let smile = template0
+            .and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, (w, h), params));
         smile.unwrap_or(coarse)
     };
-    {
-        let mut maxdev = 0.0f64;
-        for j in 0..=8 {
-            for i in 0..=8 {
-                let (u, v) = (i as f64 / 8.0, j as f64 / 8.0);
-                let (x, y) = warp.eval(u, v);
-                maxdev = maxdev.max((x - u * w as f64).abs()).max((y - v * h as f64).abs());
-            }
-        }
-        eprintln!("[warp-dbg] max deviation from identity (px): {maxdev:.3}");
-    }
 
     let (lanes, mut bands) = det.to_model(&warp);
 
@@ -284,7 +274,10 @@ pub fn analyze_detection(
     for (&lane_id, idxs) in &per_lane {
         let positions: Vec<f64> = idxs.iter().map(|&i| analysis.bands[i].v_center).collect();
         if let Some(m) = best_template(&positions, cand_refs.iter().copied(), min_r2) {
-            if best.as_ref().is_none_or(|(_, bm)| m.r2 > bm.r2) {
+            if best
+                .as_ref()
+                .is_none_or(|(_, bm)| best_ladder_match(&m, bm).is_gt())
+            {
                 best = Some((lane_id, m));
             }
         }
@@ -328,16 +321,9 @@ pub fn analyze_detection(
     analysis
 }
 
-#[cfg(test)]
-mod warp_dbg {
-    #[test]
-    fn demo_warp_deviation() {
-        let doc = crate::core::demo::demo_document_annotated();
-        let img = doc.working_image().unwrap();
-        let params = crate::detect::detector::DetectParams::default();
-        let a = super::analyze(&img, crate::core::GelType::Dna, &params, &[], 0.9);
-        eprintln!("[warp-dbg] result lanes={} bands={} ladder_assign={}",
-            a.lanes.len(), a.bands.len(), a.ladder_assignments.len());
-        assert!(false, "diagnostic");
-    }
+fn best_ladder_match(a: &LadderMatch, b: &LadderMatch) -> std::cmp::Ordering {
+    a.pairs
+        .len()
+        .cmp(&b.pairs.len())
+        .then_with(|| a.r2.partial_cmp(&b.r2).unwrap())
 }

@@ -21,15 +21,17 @@ const PALETTE: [(u8, u8, u8); 6] = [
 ];
 const LADDER_RGB: (u8, u8, u8) = (196, 140, 0);
 
-/// A normalized-coordinate overlay rectangle to draw onto the image.
-struct OverlayBox {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
+/// A normalized-coordinate overlay to draw onto the image.
+struct Overlay {
+    shape: OverlayShape,
     ladder: bool,
     is_lane: bool,
     selected: bool,
+}
+
+enum OverlayShape {
+    Rect { x: f32, y: f32, w: f32, h: f32 },
+    Polygon(Vec<(f32, f32)>),
 }
 
 /// Full refresh: labels, ladder names, tree and composited image.
@@ -419,7 +421,7 @@ fn fmt_seconds(t: f64) -> String {
 
 /// Overlays for the dewarped view: in rectified space `(u, v)` map directly to
 /// the overlay rectangle (lanes vertical, bands horizontal).
-fn compute_overlays_unwarped(state: &AppState) -> Vec<OverlayBox> {
+fn compute_overlays_unwarped(state: &AppState) -> Vec<Overlay> {
     let mut out = Vec::new();
     let Some(a) = state.analysis() else {
         return out;
@@ -427,11 +429,13 @@ fn compute_overlays_unwarped(state: &AppState) -> Vec<OverlayBox> {
     let sel_lane = state.selected_lane_id();
     let sel_band = state.selected_band_id();
     for lane in &a.lanes {
-        out.push(OverlayBox {
-            x: lane.u_min as f32,
-            y: 0.0,
-            w: (lane.u_max - lane.u_min) as f32,
-            h: 1.0,
+        out.push(Overlay {
+            shape: OverlayShape::Rect {
+                x: lane.u_min as f32,
+                y: 0.0,
+                w: (lane.u_max - lane.u_min) as f32,
+                h: 1.0,
+            },
             ladder: lane.is_ladder,
             is_lane: true,
             selected: sel_lane == Some(lane.id),
@@ -439,11 +443,13 @@ fn compute_overlays_unwarped(state: &AppState) -> Vec<OverlayBox> {
     }
     for b in &a.bands {
         if let Some(lane) = a.lanes.iter().find(|l| l.id == b.lane_id) {
-            out.push(OverlayBox {
-                x: lane.u_min as f32,
-                y: (b.v_center - b.v_half_width) as f32,
-                w: (lane.u_max - lane.u_min) as f32,
-                h: (2.0 * b.v_half_width) as f32,
+            out.push(Overlay {
+                shape: OverlayShape::Rect {
+                    x: lane.u_min as f32,
+                    y: (b.v_center - b.v_half_width) as f32,
+                    w: (lane.u_max - lane.u_min) as f32,
+                    h: (2.0 * b.v_half_width) as f32,
+                },
                 ladder: lane.is_ladder,
                 is_lane: false,
                 selected: sel_band == Some(b.id),
@@ -453,22 +459,18 @@ fn compute_overlays_unwarped(state: &AppState) -> Vec<OverlayBox> {
     out
 }
 
-fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
+fn compute_overlays(state: &AppState) -> Vec<Overlay> {
     let mut out = Vec::new();
     let (Some(a), Some(work)) = (state.analysis(), state.view_image()) else {
         return out;
     };
-    let w = work.width().max(1) as f32;
+    let (w, h) = (work.width().max(1) as f64, work.height().max(1) as f64);
     let warp = a.warp_or_identity(work.width() as u32, work.height() as u32);
     let sel_lane = state.selected_lane_id();
     let sel_band = state.selected_band_id();
     for lane in &a.lanes {
-        let (x0, x1) = lane.px_x_bounds(&warp);
-        out.push(OverlayBox {
-            x: x0 as f32 / w,
-            y: 0.0,
-            w: (x1 - x0) as f32 / w,
-            h: 1.0,
+        out.push(Overlay {
+            shape: OverlayShape::Polygon(warped_lane_polygon(&warp, lane, w, h)),
             ladder: lane.is_ladder,
             is_lane: true,
             selected: sel_lane == Some(lane.id),
@@ -476,12 +478,8 @@ fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
     }
     for b in &a.bands {
         if let Some(lane) = a.lanes.iter().find(|l| l.id == b.lane_id) {
-            let (x0, x1) = lane.px_x_bounds(&warp);
-            out.push(OverlayBox {
-                x: x0 as f32 / w,
-                y: (b.v_center - b.v_half_width) as f32,
-                w: (x1 - x0) as f32 / w,
-                h: (2.0 * b.v_half_width) as f32,
+            out.push(Overlay {
+                shape: OverlayShape::Polygon(warped_band_polygon(&warp, lane, b, w, h)),
                 ladder: lane.is_ladder,
                 is_lane: false,
                 selected: sel_band == Some(b.id),
@@ -489,6 +487,53 @@ fn compute_overlays(state: &AppState) -> Vec<OverlayBox> {
         }
     }
     out
+}
+
+fn warped_lane_polygon(
+    warp: &opengel::core::warp::GelWarp,
+    lane: &opengel::core::model::Lane,
+    w: f64,
+    h: f64,
+) -> Vec<(f32, f32)> {
+    const N: usize = 16;
+    let mut pts = Vec::with_capacity(N * 2);
+    for i in 0..N {
+        let v = i as f64 / (N - 1) as f64;
+        pts.push(norm_point(warp.eval(lane.u_min, v), w, h));
+    }
+    for i in (0..N).rev() {
+        let v = i as f64 / (N - 1) as f64;
+        pts.push(norm_point(warp.eval(lane.u_max, v), w, h));
+    }
+    pts
+}
+
+fn warped_band_polygon(
+    warp: &opengel::core::warp::GelWarp,
+    lane: &opengel::core::model::Lane,
+    band: &opengel::core::model::Band,
+    w: f64,
+    h: f64,
+) -> Vec<(f32, f32)> {
+    const N: usize = 12;
+    let v0 = (band.v_center - band.v_half_width).clamp(0.0, 1.0);
+    let v1 = (band.v_center + band.v_half_width).clamp(0.0, 1.0);
+    let mut pts = Vec::with_capacity(N * 2);
+    for i in 0..N {
+        let t = i as f64 / (N - 1) as f64;
+        let u = lane.u_min + (lane.u_max - lane.u_min) * t;
+        pts.push(norm_point(warp.eval(u, v0), w, h));
+    }
+    for i in (0..N).rev() {
+        let t = i as f64 / (N - 1) as f64;
+        let u = lane.u_min + (lane.u_max - lane.u_min) * t;
+        pts.push(norm_point(warp.eval(u, v1), w, h));
+    }
+    pts
+}
+
+fn norm_point((x, y): (f64, f64), w: f64, h: f64) -> (f32, f32) {
+    ((x / w) as f32, (y / h) as f32)
 }
 
 /// Window a working image into a displayable RGB buffer (no overlays). The
@@ -536,7 +581,7 @@ fn render_gel(
     hi_frac: f32,
     invert: bool,
     show_overexposed: bool,
-    overlays: &[OverlayBox],
+    overlays: &[Overlay],
 ) -> SharedPixelBuffer<slint::Rgb8Pixel> {
     let mut buf = window_gray(work, lo_frac, hi_frac, invert, show_overexposed);
     let (w, h) = (work.width() as u32, work.height() as u32);
@@ -553,7 +598,7 @@ fn to_slint_image(
     lo_frac: f32,
     hi_frac: f32,
     invert: bool,
-    overlays: &[OverlayBox],
+    overlays: &[Overlay],
 ) -> Image {
     Image::from_rgb8(render_gel(work, lo_frac, hi_frac, invert, false, overlays))
 }
@@ -660,12 +705,7 @@ fn render_histogram(hist: &[u32], lo: f32, hi: f32, w: u32, h: u32) -> Image {
     Image::from_rgb8(buf)
 }
 
-fn draw_overlay(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, ov: &OverlayBox, alpha_scale: f32) {
-    let (wf, hf) = (w as f32, h as f32);
-    let x0 = (ov.x * wf).round().clamp(0.0, wf - 1.0) as u32;
-    let y0 = (ov.y * hf).round().clamp(0.0, hf - 1.0) as u32;
-    let x1 = ((ov.x + ov.w) * wf).round().clamp(0.0, wf) as u32;
-    let y1 = ((ov.y + ov.h) * hf).round().clamp(0.0, hf) as u32;
+fn draw_overlay(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, ov: &Overlay, alpha_scale: f32) {
     // Selected annotations render in bright green with a thicker, more opaque
     // border so the current selection is obvious while dragging.
     let (cr, cg, cb) = if ov.selected {
@@ -691,17 +731,217 @@ fn draw_overlay(px: &mut [slint::Rgb8Pixel], w: u32, h: u32, ov: &OverlayBox, al
     if alpha_scale <= 0.0 {
         return;
     }
+    let style = OverlayStyle {
+        rgb: (cr, cg, cb),
+        fill,
+        border_alpha: 0.95,
+        border_width: bw,
+        alpha_scale,
+    };
+    match &ov.shape {
+        OverlayShape::Rect { x, y, w: ow, h: oh } => {
+            draw_overlay_rect(px, w, h, (*x, *y, *ow, *oh), style);
+        }
+        OverlayShape::Polygon(points) => draw_overlay_polygon(px, w, h, points, style),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OverlayStyle {
+    rgb: (u8, u8, u8),
+    fill: f32,
+    border_alpha: f32,
+    border_width: u32,
+    alpha_scale: f32,
+}
+
+fn draw_overlay_rect(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    rect: (f32, f32, f32, f32),
+    style: OverlayStyle,
+) {
+    let (wf, hf) = (w as f32, h as f32);
+    let (x, y, ow, oh) = rect;
+    let x0 = (x * wf).round().clamp(0.0, wf - 1.0) as u32;
+    let y0 = (y * hf).round().clamp(0.0, hf - 1.0) as u32;
+    let x1 = ((x + ow) * wf).round().clamp(0.0, wf) as u32;
+    let y1 = ((y + oh) * hf).round().clamp(0.0, hf) as u32;
     for y in y0..y1 {
         for x in x0..x1 {
             let i = (y * w + x) as usize;
-            let on_border = x < x0 + bw || x + bw >= x1 || y < y0 + bw || y + bw >= y1;
-            let a = (if on_border { 0.95 } else { fill }) * alpha_scale;
+            let on_border = x < x0 + style.border_width
+                || x + style.border_width >= x1
+                || y < y0 + style.border_width
+                || y + style.border_width >= y1;
+            let a = (if on_border {
+                style.border_alpha
+            } else {
+                style.fill
+            }) * style.alpha_scale;
             let p = &mut px[i];
-            p.r = blend(p.r, cr, a);
-            p.g = blend(p.g, cg, a);
-            p.b = blend(p.b, cb, a);
+            p.r = blend(p.r, style.rgb.0, a);
+            p.g = blend(p.g, style.rgb.1, a);
+            p.b = blend(p.b, style.rgb.2, a);
         }
     }
+}
+
+fn draw_overlay_polygon(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    style: OverlayStyle,
+) {
+    if points.len() < 3 {
+        return;
+    }
+    let wf = w as f32;
+    let hf = h as f32;
+    let pix: Vec<(f32, f32)> = points.iter().map(|&(x, y)| (x * wf, y * hf)).collect();
+    let (min_x, max_x, min_y, max_y) = polygon_bounds(&pix, w, h);
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let pxy = (x as f32 + 0.5, y as f32 + 0.5);
+            if point_in_polygon(pxy, &pix) {
+                let i = (y * w + x) as usize;
+                let p = &mut px[i];
+                let a = style.fill * style.alpha_scale;
+                p.r = blend(p.r, style.rgb.0, a);
+                p.g = blend(p.g, style.rgb.1, a);
+                p.b = blend(p.b, style.rgb.2, a);
+            }
+        }
+    }
+
+    for pair in pix.windows(2) {
+        draw_thick_line(px, w, h, pair[0], pair[1], style);
+    }
+    draw_thick_line(px, w, h, *pix.last().unwrap(), pix[0], style);
+}
+
+fn polygon_bounds(points: &[(f32, f32)], w: u32, h: u32) -> (u32, u32, u32, u32) {
+    let min_x = points
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        .clamp(0.0, w.saturating_sub(1) as f32) as u32;
+    let max_x = points
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        .clamp(0.0, w as f32) as u32;
+    let min_y = points
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        .clamp(0.0, h.saturating_sub(1) as f32) as u32;
+    let max_y = points
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        .clamp(0.0, h as f32) as u32;
+    (min_x, max_x, min_y, max_y)
+}
+
+fn point_in_polygon((x, y): (f32, f32), points: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let mut j = points.len() - 1;
+    for i in 0..points.len() {
+        let (xi, yi) = points[i];
+        let (xj, yj) = points[j];
+        let crosses = (yi > y) != (yj > y);
+        if crosses {
+            let x_at_y = (xj - xi) * (y - yi) / (yj - yi) + xi;
+            if x < x_at_y {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
+}
+
+fn draw_thick_line(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    p0: (f32, f32),
+    p1: (f32, f32),
+    style: OverlayStyle,
+) {
+    let radius = style.border_width.saturating_sub(1) as i32;
+    let alpha = style.border_alpha * style.alpha_scale;
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            draw_alpha_line(
+                px,
+                w,
+                h,
+                (p0.0.round() as i32 + dx, p0.1.round() as i32 + dy),
+                (p1.0.round() as i32 + dx, p1.1.round() as i32 + dy),
+                style.rgb,
+                alpha,
+            );
+        }
+    }
+}
+
+fn draw_alpha_line(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    p0: (i32, i32),
+    p1: (i32, i32),
+    c: (u8, u8, u8),
+    alpha: f32,
+) {
+    let (x0, y0) = p0;
+    let (x1, y1) = p1;
+    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
+    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+    let (mut x, mut y) = (x0, y0);
+    let mut err = dx + dy;
+    loop {
+        put_alpha(px, w, h, x, y, c, alpha);
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+#[inline]
+fn put_alpha(
+    px: &mut [slint::Rgb8Pixel],
+    w: u32,
+    h: u32,
+    x: i32,
+    y: i32,
+    c: (u8, u8, u8),
+    alpha: f32,
+) {
+    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+        return;
+    }
+    let p = &mut px[(y as u32 * w + x as u32) as usize];
+    p.r = blend(p.r, c.0, alpha);
+    p.g = blend(p.g, c.1, alpha);
+    p.b = blend(p.b, c.2, alpha);
 }
 
 #[inline]

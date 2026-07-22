@@ -56,8 +56,8 @@ pub struct Anchor {
     pub y: f64,
 }
 
-/// Accumulate `scale * (stencil · stencilᵀ)` into `m` — a rank-1 update per
-/// 2nd-difference row, used by [`GelWarp::fit`]'s smoothing term.
+/// Accumulate `scale * (stencil · stencil^T)` into `m` — a rank-1 update per
+/// linear least-squares row, used by smoothing/regularization terms.
 fn add_stencil(m: &mut [Vec<f64>], idx: &[usize], coeff: &[f64], scale: f64) {
     for a in 0..idx.len() {
         for b in 0..idx.len() {
@@ -336,13 +336,28 @@ impl GelWarp {
         out
     }
 
-    /// Refine this grid's control points to fit `(u, v) → (x, y)`
+    /// Refine this grid's control points to fit `(u, v) -> (x, y)`
     /// correspondences by regularized least squares, keeping the grid size,
-    /// knots and degrees fixed. `lambda` Tikhonov-regularizes each control point
-    /// *toward its current position*, so points no correspondence constrains
-    /// stay put (unconstrained regions keep the prior shape) — this is how smile
-    /// is introduced only where matched ladder rungs across lanes pin it.
+    /// knots and degrees fixed.
+    ///
+    /// `lambda` Tikhonov-regularizes each control point *toward its current
+    /// position*, so points no correspondence constrains stay put. In addition,
+    /// adjacent control rows are softly constrained to keep their prior `y`
+    /// spacing. That second term is what keeps the migration coordinate `v`
+    /// monotone and roughly uniform when the grid has more vertical rows than
+    /// observed migration fronts.
     pub fn refine_least_squares(&self, corr: &[(f64, f64, f64, f64)], lambda: f64) -> GelWarp {
+        self.refine_least_squares_with_spacing(corr, lambda, 10.0)
+    }
+
+    /// [`refine_least_squares`](Self::refine_least_squares), with an explicit
+    /// multiplier for the adjacent control-row spacing prior.
+    pub fn refine_least_squares_with_spacing(
+        &self,
+        corr: &[(f64, f64, f64, f64)],
+        lambda: f64,
+        row_spacing_weight: f64,
+    ) -> GelWarp {
         let n = self.nu * self.nv;
         let mut a = vec![vec![0.0; n]; n];
         let mut bx = vec![0.0; n];
@@ -376,6 +391,27 @@ impl GelWarp {
             a[i][i] += lambda;
             bx[i] += lambda * self.ctrl[i][0];
             by[i] += lambda * self.ctrl[i][1];
+        }
+        // Preserve vertical control-row spacing in image y. This is a soft
+        // monotonicity/spacing prior: with extra v subdivisions, unconstrained
+        // rows retain the prior migration cadence instead of drifting or folding.
+        let row_spacing_lambda = lambda.max(0.0) * row_spacing_weight.max(0.0);
+        if row_spacing_lambda != 0.0 {
+            for iu in 0..self.nu {
+                for iv in 0..self.nv.saturating_sub(1) {
+                    let top = iv * self.nu + iu;
+                    let bottom = (iv + 1) * self.nu + iu;
+                    let target_x = self.ctrl[bottom][0] - self.ctrl[top][0];
+                    let target_y = self.ctrl[bottom][1] - self.ctrl[top][1];
+                    let idx = [bottom, top];
+                    let coeff = [1.0, -1.0];
+                    add_stencil(&mut a, &idx, &coeff, row_spacing_lambda);
+                    for (i, &c) in idx.iter().zip(&coeff) {
+                        bx[*i] += row_spacing_lambda * c * target_x;
+                        by[*i] += row_spacing_lambda * c * target_y;
+                    }
+                }
+            }
         }
         let cx = solve_linear(a.clone(), bx);
         let cy = solve_linear(a, by);
@@ -585,6 +621,52 @@ mod tests {
         let spread = vs.iter().cloned().fold(f64::MIN, f64::max)
             - vs.iter().cloned().fold(f64::MAX, f64::min);
         assert!(spread < 0.02, "v spread after rectification = {spread}");
+    }
+
+    #[test]
+    fn refine_keeps_extra_v_rows_ordered() {
+        let (w, h) = (240u32, 320u32);
+        let xs = [0.0, 60.0, 120.0, 180.0, w as f64];
+        let nu = xs.len();
+        let nv = 7;
+        let prior = GelWarp::from_grid(nu, nv, |u, v| {
+            let f = u * (nu - 1) as f64;
+            let i0 = (f.floor() as usize).min(nu - 1);
+            let i1 = (i0 + 1).min(nu - 1);
+            let frac = f - i0 as f64;
+            [xs[i0] + (xs[i1] - xs[i0]) * frac, v * h as f64]
+        });
+
+        // Only two observed fronts constrain a 7-row grid. The row-spacing prior
+        // should let those fronts bend without allowing unobserved v rows to
+        // bunch up or cross.
+        let us = [1.0 / 4.0, 2.0 / 4.0, 3.0 / 4.0];
+        let corr = [
+            (us[0], 0.30, 60.0, 115.0),
+            (us[1], 0.30, 120.0, 95.0),
+            (us[2], 0.30, 180.0, 115.0),
+            (us[0], 0.70, 60.0, 235.0),
+            (us[1], 0.70, 120.0, 215.0),
+            (us[2], 0.70, 180.0, 235.0),
+        ];
+        let warp = prior.refine_least_squares(&corr, 1e-2);
+
+        for iu in 0..nu {
+            let mut gaps = Vec::new();
+            for iv in 0..nv - 1 {
+                let y0 = warp.control_point(iu, iv).1;
+                let y1 = warp.control_point(iu, iv + 1).1;
+                let gap = y1 - y0;
+                assert!(gap > 0.0, "row gap folded at ({iu}, {iv}): {gap}");
+                gaps.push(gap);
+            }
+            let min_gap = gaps.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_gap = gaps.iter().copied().fold(0.0f64, f64::max);
+            assert!(
+                max_gap / min_gap < 3.0,
+                "row gaps too uneven at column {iu}: {gaps:?}"
+            );
+        }
     }
 
     #[test]

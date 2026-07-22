@@ -185,7 +185,72 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_analyze(move || {
             let ui = ui_weak.unwrap();
-            state.borrow_mut().optical_flow = ui.get_optical_flow();
+            match state.borrow_mut().analyze(None) {
+                Ok(msg) => ui.set_status(msg.into()),
+                Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
+            }
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_fit_dialog(move || {
+            let ui = ui_weak.unwrap();
+            let st = state.borrow();
+            ui.set_fit_dialog_optical_flow(st.optical_flow);
+            ui.set_fit_dialog_extra_edges(st.extra_vertical_edges.max(2).to_string().into());
+            ui.set_fit_dialog_warp_regularization(format!("{:.4}", st.warp_regularization).into());
+            ui.set_fit_dialog_row_spacing(format!("{:.3}", st.row_spacing_weight).into());
+            ui.set_fit_dialog_flow_smoothness(format!("{:.3}", st.flow_smoothness).into());
+            ui.set_fit_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_fit_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_fit_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_apply_fit_dialog(move || {
+            let ui = ui_weak.unwrap();
+            let extra_edges = ui
+                .get_fit_dialog_extra_edges()
+                .parse::<usize>()
+                .unwrap_or(2)
+                .max(2);
+            let warp_regularization = ui
+                .get_fit_dialog_warp_regularization()
+                .parse::<f64>()
+                .unwrap_or(1e-2)
+                .max(0.0);
+            let row_spacing_weight = ui
+                .get_fit_dialog_row_spacing()
+                .parse::<f64>()
+                .unwrap_or(10.0)
+                .max(0.0);
+            let flow_smoothness = ui
+                .get_fit_dialog_flow_smoothness()
+                .parse::<f64>()
+                .unwrap_or(8.0)
+                .max(0.0);
+            {
+                let mut st = state.borrow_mut();
+                st.optical_flow = ui.get_fit_dialog_optical_flow();
+                st.extra_vertical_edges = extra_edges;
+                st.warp_regularization = warp_regularization;
+                st.row_spacing_weight = row_spacing_weight;
+                st.flow_smoothness = flow_smoothness;
+            }
+            ui.set_fit_dialog_extra_edges(extra_edges.to_string().into());
+            ui.set_fit_dialog_warp_regularization(format!("{warp_regularization:.4}").into());
+            ui.set_fit_dialog_row_spacing(format!("{row_spacing_weight:.3}").into());
+            ui.set_fit_dialog_flow_smoothness(format!("{flow_smoothness:.3}").into());
+            ui.set_fit_dialog_open(false);
             match state.borrow_mut().analyze(None) {
                 Ok(msg) => ui.set_status(msg.into()),
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
@@ -332,6 +397,7 @@ fn main() -> anyhow::Result<()> {
                 s.set_invert(ui.get_invert());
                 s.set_show_unwarped(ui.get_show_unwarped());
                 s.set_show_warp(ui.get_show_warp());
+                s.set_normalize_inner_knots(ui.get_normalize_inner_knots());
                 s.set_show_overexposed(ui.get_show_overexposed());
                 s.set_annotation_alpha(ui.get_annotation_alpha());
             }

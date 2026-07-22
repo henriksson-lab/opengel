@@ -88,6 +88,16 @@ fn classical_finds_lanes_and_bands() {
 }
 
 #[test]
+fn classical_finds_all_demo_lanes() {
+    let doc = opengel::core::demo::demo_document();
+    let img = doc.working_image().expect("demo working image");
+    let det = ClassicalDetector::new();
+    let out = det.detect(&img, &DetectParams::default());
+
+    assert_eq!(out.lanes.len(), 8, "expected the 8-lane demo");
+}
+
+#[test]
 fn pipeline_identifies_ladder_and_sizes_bands() {
     let (img, template) = build_gel();
     let cands = [&template];

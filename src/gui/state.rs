@@ -88,8 +88,19 @@ pub struct AppState {
     pub show_unwarped: bool,
     /// Fit the gel warp by optical flow (band twist) when running detection.
     pub optical_flow: bool,
+    /// Optical-flow smoothness for model fitting.
+    pub flow_smoothness: f64,
+    /// Extra v-axis control rows beyond observed ladder/front rows.
+    pub extra_vertical_edges: usize,
+    /// NURBS control-point pull toward the prior grid during refinement.
+    pub warp_regularization: f64,
+    /// Weight for keeping adjacent v control rows uniformly spaced.
+    pub row_spacing_weight: f64,
     /// Overlay the fitted NURBS warp grid on the image.
     pub show_warp: bool,
+    /// When dragging a top/bottom warp knot, redistribute inner v knots in that
+    /// column so migration spacing stays uniform.
+    pub normalize_inner_knots: bool,
     /// Highlight over-exposed (clipped-high) pixels in red.
     pub show_overexposed: bool,
     /// Opacity of the lane/band annotation overlay (0 = hidden, 1 = solid).
@@ -178,7 +189,12 @@ impl AppState {
             invert: false,
             show_unwarped: false,
             optical_flow: false,
+            flow_smoothness: 8.0,
+            extra_vertical_edges: 2,
+            warp_regularization: 1e-2,
+            row_spacing_weight: 10.0,
             show_warp: false,
+            normalize_inner_knots: true,
             show_overexposed: false,
             annotation_alpha: 0.5,
             hover_x: -1.0,
@@ -491,6 +507,10 @@ impl AppState {
         self.show_warp = on;
     }
 
+    pub fn set_normalize_inner_knots(&mut self, on: bool) {
+        self.normalize_inner_knots = on;
+    }
+
     pub fn set_show_overexposed(&mut self, on: bool) {
         self.show_overexposed = on;
     }
@@ -611,6 +631,20 @@ impl AppState {
         if let Some((gen, warp)) = self.warp_edit.as_mut() {
             if *gen == self.doc_gen {
                 warp.set_control_point(iu, iv, nx.clamp(0.0, 1.0) * w, ny.clamp(0.0, 1.0) * h);
+                let (_, nv) = warp.grid_size();
+                if self.normalize_inner_knots && nv > 2 && (iv == 0 || iv + 1 == nv) {
+                    let (top_x, top_y) = warp.control_point(iu, 0);
+                    let (bottom_x, bottom_y) = warp.control_point(iu, nv - 1);
+                    for inner_iv in 1..(nv - 1) {
+                        let t = inner_iv as f64 / (nv - 1) as f64;
+                        warp.set_control_point(
+                            iu,
+                            inner_iv,
+                            top_x + (bottom_x - top_x) * t,
+                            top_y + (bottom_y - top_y) * t,
+                        );
+                    }
+                }
             }
         }
     }
@@ -907,15 +941,19 @@ impl AppState {
         };
         let slope = self.cal_slope();
         let fit = self.sizing_fit();
-        let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
-        let h = img.height() as f64;
+        let (w, h) = (img.width(), img.height());
+        let warp = a.warp_or_identity(w as u32, h as u32);
+        let rect = warp.rectify(img, w, h);
+        let h = h as f64;
+        let w = w as f64;
         let mut out = Vec::new();
         for lane in &a.lanes {
             if !self.selected_lanes.contains(&lane.id) {
                 continue;
             }
-            let (x0, x1) = lane.px_x_bounds(&warp);
-            let inten = subtract_baseline(&lane_row_profile(img, x0, x1), 25);
+            let x0 = (lane.u_min * w).clamp(0.0, w - 1.0) as usize;
+            let x1 = ((lane.u_max * w).ceil() as usize).clamp(x0 + 1, w as usize);
+            let inten = subtract_baseline(&lane_row_profile(&rect, x0, x1), 25);
             let values: Vec<f64> = inten
                 .iter()
                 .enumerate()
@@ -985,12 +1023,16 @@ impl AppState {
             return "No regions to measure — add lanes/bands or use Demo annotation.".into();
         }
         // Background-subtracted densitometry trace per lane.
-        let warp = a.warp_or_identity(img.width() as u32, img.height() as u32);
-        let h = img.height() as f64;
+        let (w, h) = (img.width(), img.height());
+        let warp = a.warp_or_identity(w as u32, h as u32);
+        let rect = warp.rectify(&img, w, h);
+        let h = h as f64;
+        let w = w as f64;
         let mut prof: HashMap<u32, Vec<f64>> = HashMap::new();
         for lane in &a.lanes {
-            let (x0, x1) = lane.px_x_bounds(&warp);
-            let raw = lane_row_profile(&img, x0, x1);
+            let x0 = (lane.u_min * w).clamp(0.0, w - 1.0) as usize;
+            let x1 = ((lane.u_max * w).ceil() as usize).clamp(x0 + 1, w as usize);
+            let raw = lane_row_profile(&rect, x0, x1);
             prof.insert(lane.id, subtract_baseline(&raw, 25));
         }
         let mut n = 0;
@@ -1321,6 +1363,10 @@ impl AppState {
         // falls back to a near-identity coarse warp when no smile is recovered.
         let params = DetectParams {
             optical_flow_warp: self.optical_flow,
+            flow_smoothness: self.flow_smoothness.max(0.0),
+            extra_vertical_edges: self.extra_vertical_edges.max(2),
+            warp_regularization: self.warp_regularization.max(0.0),
+            row_spacing_weight: self.row_spacing_weight.max(0.0),
             ..DetectParams::default()
         };
 
@@ -1862,6 +1908,45 @@ mod tests {
         let a = st.warp_knots();
         let b = st.warp_knots();
         assert_eq!(a, b, "edited warp must be stable across renders");
+
+        // On a taller grid, dragging a top/bottom edge knot redistributes that
+        // column's inner v rows linearly between the two edge knots.
+        let img = st.work.as_ref().unwrap();
+        let (w, h) = (img.width() as f64, img.height() as f64);
+        st.warp_edit = Some((st.doc_gen, GelWarp::identity_grid(w, h, 4, 5)));
+        st.normalize_inner_knots = true;
+        let knots = st.warp_knots();
+        assert!(st.press_warp_knot(knots[0].0 as f64, knots[0].1 as f64));
+        let target = (0.12, 0.18);
+        st.drag_warp_knot(target.0, target.1);
+        st.release_warp_knot();
+        let warp = st.fit_warp().unwrap();
+        let (nu, nv) = warp.grid_size();
+        let top = warp.control_point(0, 0);
+        let bottom = warp.control_point(0, nv - 1);
+        for iv in 1..(nv - 1) {
+            let t = iv as f64 / (nv - 1) as f64;
+            let p = warp.control_point(0, iv);
+            assert!(
+                (p.0 - (top.0 + (bottom.0 - top.0) * t)).abs() < 1e-6
+                    && (p.1 - (top.1 + (bottom.1 - top.1) * t)).abs() < 1e-6,
+                "inner row {iv}/{nv} was not redistributed uniformly in column 0"
+            );
+        }
+        assert_eq!(nu, 4);
+
+        st.warp_edit = Some((st.doc_gen, GelWarp::identity_grid(w, h, 4, 5)));
+        st.normalize_inner_knots = false;
+        let knots = st.warp_knots();
+        assert!(st.press_warp_knot(knots[0].0 as f64, knots[0].1 as f64));
+        st.drag_warp_knot(0.22, 0.28);
+        st.release_warp_knot();
+        let warp = st.fit_warp().unwrap();
+        let unchanged_inner = warp.control_point(0, 1);
+        assert!(
+            (unchanged_inner.0 - 0.0).abs() < 1e-6 && (unchanged_inner.1 - h / 4.0).abs() < 1e-6,
+            "inner knot moved despite Normalize inner knots being off"
+        );
     }
 
     #[test]
@@ -1915,4 +2000,3 @@ mod tests {
             .all(|n| opengel::core::ladders::by_name(n).is_some()));
     }
 }
-

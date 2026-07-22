@@ -88,33 +88,83 @@ pub fn lane_row_profile(img: &GrayF32, x_min: usize, x_max: usize) -> Vec<f64> {
 fn detect_lanes(img: &GrayF32, params: &DetectParams) -> Vec<DetLane> {
     let raw = column_profile(img);
     let profile = smooth(&raw, params.column_smooth);
+    let corrected = subtract_baseline(&profile, params.baseline_radius);
+    let profile = if corrected.iter().any(|&v| v > 0.0) {
+        corrected
+    } else {
+        profile
+    };
     let max = profile.iter().cloned().fold(0.0f64, f64::max);
     if max <= 0.0 {
         return Vec::new();
     }
     let min_prom = params.lane_min_rel_prominence * max;
-    let mut peaks = find_peaks(&profile, min_prom, params.min_lane_distance);
+    let peaks = find_peaks(&profile, min_prom, params.min_lane_distance);
+    let regions = lane_regions(&profile, min_prom);
+    let mut lanes = if regions.len() > peaks.len() {
+        regions
+    } else {
+        peaks
+            .into_iter()
+            .map(|p| LaneRegion {
+                left: p.left,
+                right: p.right,
+                score: p.prominence,
+            })
+            .collect()
+    };
 
     // Keep only the requested number of lanes, most prominent first.
     if let Some(n) = params.expected_lanes {
-        peaks.sort_by(|a, b| b.prominence.partial_cmp(&a.prominence).unwrap());
-        peaks.truncate(n);
-        peaks.sort_by(|a, b| a.center.partial_cmp(&b.center).unwrap());
+        lanes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        lanes.truncate(n);
+        lanes.sort_by(|a, b| a.left.cmp(&b.left));
     }
 
     let h = img.height() as u32;
-    peaks
+    lanes
         .into_iter()
         .enumerate()
-        .map(|(i, p)| DetLane {
+        .map(|(i, r)| DetLane {
             id: i as u32,
-            x_min: p.left as u32,
-            x_max: (p.right as u32 + 1).min(img.width() as u32),
+            x_min: r.left as u32,
+            x_max: (r.right as u32 + 1).min(img.width() as u32),
             y_min: 0,
             y_max: h,
             is_ladder: false,
         })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct LaneRegion {
+    left: usize,
+    right: usize,
+    score: f64,
+}
+
+fn lane_regions(profile: &[f64], threshold: f64) -> Vec<LaneRegion> {
+    let mut regions = Vec::new();
+    let mut start = None;
+    for (i, &v) in profile.iter().enumerate() {
+        if v >= threshold {
+            start.get_or_insert(i);
+        } else if let Some(left) = start.take() {
+            push_lane_region(profile, left, i.saturating_sub(1), &mut regions);
+        }
+    }
+    if let Some(left) = start {
+        push_lane_region(profile, left, profile.len().saturating_sub(1), &mut regions);
+    }
+    regions
+}
+
+fn push_lane_region(profile: &[f64], left: usize, right: usize, regions: &mut Vec<LaneRegion>) {
+    if right <= left {
+        return;
+    }
+    let score = profile[left..=right].iter().cloned().fold(0.0f64, f64::max);
+    regions.push(LaneRegion { left, right, score });
 }
 
 /// Returns `(y_center, y_half_width, integrated_density)` per band.
