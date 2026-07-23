@@ -43,6 +43,16 @@ jobs:
     name: Tests and package checks
     needs: release-preflight
     runs-on: ubuntu-latest
+    env:
+      # The default `gelgenie-ml` feature pulls in the whole burn/wgpu/cubecl
+      # stack. Linking that in a debug build with FULL debug info makes rust-lld
+      # crash (SIGBUS) on the runner — the debug sections are the bulk of the
+      # link. Drop debug info for CI debug builds (cargo test / cargo package
+      # verify) so the full-feature build links within limits. Release binaries
+      # are unaffected (they already build with debug=false). `test` inherits
+      # `dev`, but set it explicitly too since the failure is in `cargo test`.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -61,13 +71,7 @@ jobs:
         run: cargo test
 
       - name: Package
-        # Verify the crate packages and the tarball compiles, but WITHOUT the
-        # default `gelgenie-ml` (burn/wgpu/cubecl) feature: re-linking that whole
-        # ML stack in the verification build exhausts the runner's linker
-        # (rust-lld bus-error/OOM). `cargo test` above already builds everything
-        # with the ML stack, so buildability is covered; this checks the manifest
-        # + include-list and that the core/GUI compile from the packaged files.
-        run: cargo package --allow-dirty --no-default-features
+        run: cargo package --allow-dirty
 
   windows-exe:
     name: Windows executables
