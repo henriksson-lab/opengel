@@ -202,8 +202,12 @@ fn fit_band_warp(
     if lane_centers.is_empty() || det.bands.len() < 2 {
         return None;
     }
-    let lane_pos: HashMap<u32, usize> =
-        det.lanes.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
+    let lane_pos: HashMap<u32, usize> = det
+        .lanes
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (l.id, i))
+        .collect();
 
     // Rung alignment: matched ladder rungs of the same size across ≥2 lanes must
     // share one migration `v`, so the warp straightens the smile for cross-lane
@@ -226,7 +230,10 @@ fn fit_band_warp(
                     continue;
                 };
                 let entry = (det.bands[bi].id, b0[bi].v_center);
-                match by_size.iter_mut().find(|(s, _)| (*s - pair.size).abs() < 1e-6) {
+                match by_size
+                    .iter_mut()
+                    .find(|(s, _)| (*s - pair.size).abs() < 1e-6)
+                {
                     Some((_, pts)) => pts.push(entry),
                     None => by_size.push((pair.size, vec![entry])),
                 }
@@ -339,7 +346,7 @@ pub fn analyze(
 /// Ladder ID + sizing from an already-computed pixel-space [`Detection`]. Fits
 /// the gel warp from the detection, lifts lanes/bands into rectified `(u, v)`,
 /// refines densities on the straightened gel, then identifies the ladder and
-/// sizes bands. Lets any detector (classical, Cellpose, or a mask-driven /
+/// sizes bands. Lets any detector (classical, blob-based, or a mask-driven /
 /// GelGenie segmenter — see [`crate::detect::mask_segment`]) feed the full
 /// pipeline.
 pub fn analyze_detection(
@@ -402,7 +409,8 @@ pub fn analyze_detection(
         // the coarse lane-only warp.
         fit_band_warp(&det, &b0, &per_lane0, template0, min_r2, (w, h), params)
             .or_else(|| {
-                template0.and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, (w, h), params))
+                template0
+                    .and_then(|t| fit_smile_warp(&det, &b0, &per_lane0, t, min_r2, (w, h), params))
             })
             .unwrap_or(coarse)
     };
@@ -450,7 +458,10 @@ pub fn analyze_detection(
     }
 
     if let Some((best_lane, best_m)) = best {
-        let template = cand_refs.iter().copied().find(|t| t.name == best_m.template_name);
+        let template = cand_refs
+            .iter()
+            .copied()
+            .find(|t| t.name == best_m.template_name);
 
         // Every lane that matches the *winning* template well is a ladder lane.
         // Each lane's missing/merged rungs are solved independently — a rotated
@@ -551,9 +562,3 @@ fn best_ladder_match(a: &LadderMatch, b: &LadderMatch) -> std::cmp::Ordering {
         .cmp(&b.pairs.len())
         .then_with(|| a.r2.partial_cmp(&b.r2).unwrap())
 }
-
-
-
-
-
-

@@ -12,6 +12,7 @@ APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICON_SRC := assets/icon-1024.png
 APP_ICONSET := target/osx/AppIcon.iconset
 APP_ICNS := $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
+MODEL_ASSETS := assets/models/gelgenie_unet_1024.bpk assets/models/gelgenie_unet_1024.NOTICE.md
 
 # --- Linux install (freedesktop layout) -------------------------------------
 # Standard prefix vars; packagers override DESTDIR (staging) and PREFIX.
@@ -20,6 +21,7 @@ DESTDIR ?=
 BINDIR := $(DESTDIR)$(PREFIX)/bin
 DATADIR := $(DESTDIR)$(PREFIX)/share
 ICONDIR := $(DATADIR)/icons/hicolor
+MODELDIR := $(DATADIR)/opengel/models
 MIMEDIR := $(DATADIR)/mime
 MIMEPKGDIR := $(MIMEDIR)/packages
 # The window's Wayland app_id / X11 WM_CLASS; the icon PNG/SVG and the .desktop
@@ -61,6 +63,10 @@ install:
 		"$(ICONDIR)/scalable/apps/$(LINUX_APP_ID).svg"
 	install -Dm644 assets/window-icon.png \
 		"$(ICONDIR)/256x256/apps/$(LINUX_APP_ID).png"
+	install -Dm644 assets/models/gelgenie_unet_1024.bpk \
+		"$(MODELDIR)/gelgenie_unet_1024.bpk"
+	install -Dm644 assets/models/gelgenie_unet_1024.NOTICE.md \
+		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md"
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
@@ -72,7 +78,9 @@ uninstall:
 		"$(DATADIR)/applications/$(LINUX_APP_ID).desktop" \
 		"$(MIMEPKGDIR)/$(LINUX_APP_ID).xml" \
 		"$(ICONDIR)/scalable/apps/$(LINUX_APP_ID).svg" \
-		"$(ICONDIR)/256x256/apps/$(LINUX_APP_ID).png"
+		"$(ICONDIR)/256x256/apps/$(LINUX_APP_ID).png" \
+		"$(MODELDIR)/gelgenie_unet_1024.bpk" \
+		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md"
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
@@ -225,8 +233,9 @@ osx-app-universal:
 	$(MAKE) osx-bundle APP_BUNDLE_BINARY="$(APP_UNIVERSAL_BINARY)"
 
 osx-bundle:
-	mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources" "$(APP_ICONSET)"
+	mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources/models" "$(APP_ICONSET)"
 	cp "$(APP_BUNDLE_BINARY)" "$(APP_EXE)"
+	cp $(MODEL_ASSETS) "$(APP_BUNDLE)/Contents/Resources/models/"
 	chmod +x "$(APP_EXE)"
 	set -e; for pair in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" \
 		"64 icon_32x32@2x" "128 icon_128x128" "256 icon_128x128@2x" \

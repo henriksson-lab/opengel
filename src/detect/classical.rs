@@ -54,7 +54,11 @@ impl GelDetector for ClassicalDetector {
             // Gaussians), so every box in a lane gets the same sensible thickness.
             let mut halves: Vec<f64> = lane_bands.iter().map(|b| b.1).collect();
             halves.sort_by(|p, q| p.partial_cmp(q).unwrap());
-            let half_h = halves.get(halves.len() / 2).copied().unwrap_or(1.0).max(0.75);
+            let half_h = halves
+                .get(halves.len() / 2)
+                .copied()
+                .unwrap_or(1.0)
+                .max(0.75);
             for (&(y_center, _y_half, area), &angle) in lane_bands.iter().zip(&angles) {
                 bands.push(DetBand {
                     id: band_id,
@@ -425,7 +429,3 @@ fn half_width_half_max(profile: &[f64], p: &crate::detect::signal::Peak) -> f64 
     }
     ((r - l) as f64 / 2.0).max(0.75)
 }
-
-
-
-

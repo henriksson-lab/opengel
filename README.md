@@ -8,7 +8,7 @@ Features:
 
 * Supports **DNA, RNA and protein** gels.
 * Camera snapshots, including multi-exposure **HDR** for dynamic range
-* Detection of bands using ML, and gaussian mixture distribution to figure out if the are at an angle. The gel is modelled by [NURBS](https://en.wikipedia.org/wiki/Non-uniform_rational_B-spline), fitting band angles and ladder band positions*
+* Detection of bands using ML, and gaussian mixture distribution to figure out if the are at an angle. The gel is modelled by [NURBS](https://en.wikipedia.org/wiki/Non-uniform_rational_B-spline), fitting band angles and ladder band positions
 * Quantification of densitys and molarities, taking gel warping into account
 * Quick compute of relative mass and molarity ratios
 

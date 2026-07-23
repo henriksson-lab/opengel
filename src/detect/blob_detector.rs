@@ -1,11 +1,10 @@
-//! Cellpose-based ("blob-first") detector.
+//! Blob-based detector.
 //!
-//! Cellpose (or any instance segmenter) plugs in via [`BlobSegmenter`]: the
-//! user's Rust Cellpose bindings implement `segment` to return blob bounding
-//! boxes. [`CellposeDetector`] then clusters blobs into lanes by x-position and
-//! turns each blob into a band with its integrated density. This lets the
-//! evaluation harness benchmark the blob-first approach against the classical
-//! detector on identical ground truth.
+//! Any instance segmenter plugs in via [`BlobSegmenter`]: the implementation
+//! returns blob bounding boxes, and [`BlobDetector`] clusters those blobs into
+//! lanes by x-position and turns each blob into a band with its integrated
+//! density. This lets the evaluation harness benchmark blob-first approaches
+//! against the classical detector on identical ground truth.
 
 use crate::core::GrayF32;
 
@@ -18,15 +17,15 @@ pub trait BlobSegmenter {
 }
 
 /// Detector that turns segmented blobs into lanes + bands.
-pub struct CellposeDetector<S: BlobSegmenter> {
+pub struct BlobDetector<S: BlobSegmenter> {
     segmenter: S,
     /// Max x-gap (px) between blob centers within the same lane cluster.
     pub lane_gap: u32,
 }
 
-impl<S: BlobSegmenter> CellposeDetector<S> {
+impl<S: BlobSegmenter> BlobDetector<S> {
     pub fn new(segmenter: S) -> Self {
-        CellposeDetector {
+        BlobDetector {
             segmenter,
             lane_gap: 20,
         }
@@ -44,9 +43,9 @@ fn integrated_density(img: &GrayF32, bbox: (u32, u32, u32, u32)) -> f64 {
     sum
 }
 
-impl<S: BlobSegmenter> GelDetector for CellposeDetector<S> {
+impl<S: BlobSegmenter> GelDetector for BlobDetector<S> {
     fn name(&self) -> &str {
-        "cellpose"
+        "blob"
     }
 
     fn detect(&self, img: &GrayF32, params: &DetectParams) -> Detection {

@@ -1,3 +1,5 @@
+//! Rust converted code, derive from https://github.com/mattaq31/GelGenie, under Apache-2.0 license
+//!
 //! Convert GelGenie-style segmentation masks into OpenGel evaluation ground
 //! truth (`*.gt.json`), so the detector can be benchmarked on real annotated
 //! gels via `gel eval`.

@@ -1,12 +1,13 @@
+//! Rust converted code, derive from https://github.com/mattaq31/GelGenie, under Apache-2.0 license
+//!
 //! Mask-driven segmentation adapter.
 //!
 //! GelGenie (and similar deep-learning band segmenters) produce a per-pixel
 //! **segmentation mask** of the gel bands. This module turns such a mask into
 //! band bounding boxes and exposes it as a [`BlobSegmenter`], so a
 //! mask-producing model plugs straight into
-//! [`CellposeDetector`](crate::detect::cellpose::CellposeDetector) → the
-//! `GelDetector` pipeline and the `eval` harness — the same seam the classical
-//! and Cellpose detectors use.
+//! [`BlobDetector`](crate::detect::blob_detector::BlobDetector) → the
+//! `GelDetector` pipeline and the `eval` harness.
 //!
 //! This is the OpenGel-side adapter and needs no ML runtime: it consumes a mask
 //! the model already produced (e.g. exported from GelGenie, or the label masks
@@ -19,14 +20,14 @@ use std::collections::HashMap;
 use imageproc::region_labelling::{connected_components, Connectivity};
 
 use crate::core::GrayF32;
-use crate::detect::cellpose::BlobSegmenter;
+use crate::detect::blob_detector::BlobSegmenter;
 
 /// Extract band bounding boxes from a foreground segmentation `mask`.
 ///
 /// Pixels with normalized value `> threshold` are foreground; each 8-connected
 /// component with at least `min_area` pixels becomes one box. Returns
 /// `(x_min, y_min, x_max, y_max)` with `x_max`/`y_max` **exclusive**, sorted by
-/// x-center (the order [`CellposeDetector`](crate::detect::cellpose::CellposeDetector)
+/// x-center (the order [`BlobDetector`](crate::detect::blob_detector::BlobDetector)
 /// expects for lane clustering).
 pub fn mask_to_boxes(mask: &GrayF32, threshold: f32, min_area: u32) -> Vec<(u32, u32, u32, u32)> {
     let (w, h) = (mask.width() as u32, mask.height() as u32);
@@ -89,7 +90,7 @@ pub fn mask_to_boxes(mask: &GrayF32, threshold: f32, min_area: u32) -> Vec<(u32,
 /// The mask is the model's output (e.g. GelGenie's), already aligned to the gel
 /// image. [`segment`](BlobSegmenter::segment) ignores the image it is passed and
 /// returns the mask's components — pair it with
-/// [`CellposeDetector`](crate::detect::cellpose::CellposeDetector), which
+/// [`BlobDetector`](crate::detect::blob_detector::BlobDetector), which
 /// measures each band's density from the *real* gel image it receives.
 pub struct MaskSegmenter {
     mask: GrayF32,
@@ -128,7 +129,7 @@ impl BlobSegmenter for MaskSegmenter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detect::cellpose::CellposeDetector;
+    use crate::detect::blob_detector::BlobDetector;
     use crate::detect::detector::{DetectParams, GelDetector};
 
     /// A mask with three filled rectangles in two x-clusters (lanes).
@@ -169,9 +170,9 @@ mod tests {
     }
 
     #[test]
-    fn drives_cellpose_detector_into_lanes_and_bands() {
+    fn drives_blob_detector_into_lanes_and_bands() {
         // The mask defines the segmentation; a (here uniform) gel image supplies
-        // densities. CellposeDetector should cluster into 2 lanes / 3 bands.
+        // densities. BlobDetector should cluster into 2 lanes / 3 bands.
         let mask = synthetic_mask();
         let gel = {
             let mut g = GrayF32::new(80, 120);
@@ -180,7 +181,7 @@ mod tests {
             }
             g
         };
-        let det = CellposeDetector::new(MaskSegmenter::new(mask));
+        let det = BlobDetector::new(MaskSegmenter::new(mask));
         let d = det.detect(&gel, &DetectParams::default());
         assert_eq!(d.lanes.len(), 2, "two lanes clustered by x");
         assert_eq!(d.bands.len(), 3, "three bands total");

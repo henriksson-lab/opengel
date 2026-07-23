@@ -55,6 +55,7 @@ export component AppWindow inherits Window {
     // --- state in ---
     in property <image> gel-image;
     in property <image> histogram-image;
+    in property <[string]> ladder-vendor-names;
     in property <[string]> ladder-names;
     in property <[string]> frame-names;
     in property <[TreeRow]> tree-rows;
@@ -66,6 +67,16 @@ export component AppWindow inherits Window {
     in-out property <bool> weight-dialog-open: false;
     in-out property <string> weight-dialog-value: "";
     in property <string> weight-dialog-unit: "bp";
+    // SMTP email settings and recipient prompt.
+    in-out property <bool> email-settings-open: false;
+    in-out property <string> email-smtp-host: "";
+    in-out property <string> email-smtp-port: "587";
+    in-out property <string> email-smtp-username: "";
+    in-out property <string> email-smtp-password: "";
+    in-out property <string> email-from-address: "";
+    in-out property <int> email-security-index: 0;
+    in-out property <bool> email-to-dialog-open: false;
+    in-out property <string> email-to-address: "";
     // Rename-lane dialog.
     in-out property <bool> rename-dialog-open: false;
     in-out property <string> rename-dialog-value: "";
@@ -82,6 +93,9 @@ export component AppWindow inherits Window {
     in-out property <bool> invert: false;
     in-out property <bool> show-unwarped: false;  // fixed dewarped (rectified) view
     in-out property <bool> optical-flow: false;    // fit warp by optical flow on detect
+    in-out property <bool> fit-dialog-use-gelgenie: false;
+    in-out property <int> fit-dialog-gelgenie-runtime: 0;
+    in property <bool> fit-dialog-gelgenie-available: false;
     in-out property <bool> show-warp: false;  // overlay the fitted NURBS warp grid
     in-out property <bool> normalize-inner-knots: true; // keep v rows evenly spaced while dragging edge knots
     in-out property <bool> show-overexposed: false; // clipped-high pixels in red
@@ -110,6 +124,7 @@ export component AppWindow inherits Window {
     // "Use as ladder" dialog.
     in-out property <int> ladder-dialog-lane: -1;   // -1 = closed
     in-out property <string> dialog-lane-name: "";
+    in-out property <int> dialog-ladder-vendor-index: 0;
     in-out property <int> dialog-ladder-index: 0;
     in-out property <string> dialog-volume: "10";
     in-out property <string> dialog-conc: "50";
@@ -145,6 +160,12 @@ export component AppWindow inherits Window {
     // --- callbacks out ---
     callback open();
     callback save();
+    callback open-email-settings();
+    callback apply-email-settings();
+    callback cancel-email-settings();
+    callback open-email-to-dialog();
+    callback send-email-to();
+    callback cancel-email-to();
     callback capture();
     callback analyze();
     callback open-fit-dialog();
@@ -159,10 +180,9 @@ export component AppWindow inherits Window {
     callback release-annotation();           // end drag (re-measure)
     callback compare();
     callback about();
+    callback how-to-cite();
     callback rotate(float);
     callback auto-straighten();
-    callback rotate-coarse-cw();     // 90° clockwise coarse orientation
-    callback rotate-coarse-ccw();    // 90° counter-clockwise coarse orientation
     callback add-lane();
     callback add-band();
     callback calibrate();
@@ -187,6 +207,7 @@ export component AppWindow inherits Window {
     callback band-menu(int, string);      // "delete" for a band
     // Ladder dialog.
     callback open-ladder-dialog(int);
+    callback ladder-vendor-changed(int);
     callback apply-ladder-dialog();
     callback cancel-ladder-dialog();
     // Live tab.
@@ -236,6 +257,8 @@ export component AppWindow inherits Window {
             title: "File";
             MenuItem { title: "Open…"; activated => { root.open(); } }
             MenuItem { title: "Save"; activated => { root.save(); } }
+            MenuItem { title: "Email settings…"; activated => { root.open-email-settings(); } }
+            MenuItem { title: "Email data to…"; activated => { root.open-email-to-dialog(); } }
         }
         Menu {
             title: "Analyze";
@@ -254,6 +277,7 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "Help";
+            MenuItem { title: "How to cite"; activated => { root.how-to-cite(); } }
             MenuItem { title: "About OpenGel"; activated => { root.about(); } }
         }
     }
@@ -275,6 +299,7 @@ export component AppWindow inherits Window {
                 ComboBox {
                     model: root.frame-names;
                     current-index <=> root.frame-index;
+                    width: 145px;
                     vertical-stretch: 0;
                     selected(v) => { root.frame-changed(self.current-index); }
                 }
@@ -286,15 +311,11 @@ export component AppWindow inherits Window {
                 }
                 Text { text: "R:"; vertical-alignment: center; }
                 Slider {
-                    minimum: -50; maximum: 50; value <=> root.rotation;
+                    minimum: -180; maximum: 180; value <=> root.rotation;
                     horizontal-stretch: 1;
                     vertical-stretch: 0;
                     changed(v) => { root.rotate(v); }
                 }
-                // Coarse orientation: 90° quick-rotate (gel shot sideways). Do
-                // this first, then auto-straighten refines the residual tilt.
-                Button { text: "CCW 90°"; vertical-stretch: 0; clicked => { root.rotate-coarse-ccw(); } }
-                Button { text: "CW 90°"; vertical-stretch: 0; clicked => { root.rotate-coarse-cw(); } }
                 Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.fit-view(); } }
                 Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.auto-straighten(); } }
             }
@@ -495,7 +516,7 @@ export component AppWindow inherits Window {
 
         // ---- right: controls + tree (tree expands to fill) ----
         VerticalLayout {
-            width: 520px;
+            width: 380px;
             padding: 8px;
             spacing: 8px;
                 // Column header.
@@ -505,9 +526,9 @@ export component AppWindow inherits Window {
                         padding-left: 4px;
                         spacing: 4px;
                         Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
-                        Text { text: "Size"; width: 56px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                        Text { text: "ng"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                        Text { text: "nmol"; width: 50px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: "Size"; width: 48px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: "ng"; width: 36px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: "nmol"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
                     }
                 }
                 ScrollView {
@@ -559,9 +580,9 @@ export component AppWindow inherits Window {
                                         horizontal-stretch: 1;
                                     }
                                 }
-                                Text { text: row.size; width: 56px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                Text { text: row.ng; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
-                                Text { text: row.nmol; width: 50px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; }
+                                Text { text: row.size; width: 48px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
+                                Text { text: row.ng; width: 36px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
+                                Text { text: row.nmol; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
                             }
                         }
                     }
@@ -570,41 +591,47 @@ export component AppWindow inherits Window {
                 // gel), in two right-aligned rows.
                 HorizontalLayout {
                     spacing: 6px;
-                    alignment: end;
-                    Button { text: "Add lane"; clicked => { root.open-add-lane-dialog(); } }
-                    Button { text: "Add band"; clicked => { root.add-band(); } }
+                    Button { text: "Add lane"; horizontal-stretch: 1; clicked => { root.open-add-lane-dialog(); } }
+                    Button { text: "Add band"; horizontal-stretch: 1; clicked => { root.add-band(); } }
                     Button {
                         text: "Delete";
+                        horizontal-stretch: 1;
                         enabled: root.selected-lane-id >= 0 || root.selected-band-id >= 0;
                         clicked => { root.delete-selected(); }
                     }
                     Button {
                         text: "Rename";
+                        horizontal-stretch: 1;
                         enabled: root.selected-lane-id >= 0;
                         clicked => { root.open-rename-dialog(); }
                     }
                 }
                 HorizontalLayout {
                     spacing: 6px;
-                    alignment: end;
                     Button {
                         text: "Set weight…";
+                        horizontal-stretch: 1;
                         enabled: root.selected-band-id >= 0 && root.selected-lane-is-ladder;
                         clicked => { root.open-weight-dialog(); }
                     }
                     Button {
                         text: root.selected-lane-is-ladder ? "Edit ladder…" : "Use as ladder…";
+                        horizontal-stretch: 1;
                         enabled: root.selected-lane-id >= 0;
                         clicked => { root.open-ladder-dialog(root.selected-lane-id); }
                     }
                     Button {
                         text: "Unmark ladder";
+                        horizontal-stretch: 1;
                         enabled: root.selected-lane-is-ladder;
                         clicked => { root.lane-menu(root.selected-lane-id, "unmark"); }
                     }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
                     // Detect: red, bottom-right. Confirms before overwriting.
                     Rectangle {
-                        width: 90px;
+                        horizontal-stretch: 1;
                         height: 30px;
                         border-radius: 5px;
                         background: dt.has-hover ? #c0392b : #e74c3c;
@@ -614,7 +641,7 @@ export component AppWindow inherits Window {
                                 else { root.open-fit-dialog(); }
                             }
                         }
-                        Text { text: "Detect"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Detect bands"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
                 }
                 // Density ratio: pick two bands with Set A / Set B.
@@ -1189,6 +1216,97 @@ export component AppWindow inherits Window {
         }
     }
 
+    if root.email-settings-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 440px;
+            height: 360px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Email settings"; font-size: 15px; font-weight: 700; }
+                HorizontalBox {
+                    Text { text: "SMTP host:"; vertical-alignment: center; width: 130px; }
+                    LineEdit { text <=> root.email-smtp-host; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "SMTP port:"; vertical-alignment: center; width: 130px; }
+                    LineEdit { text <=> root.email-smtp-port; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Username:"; vertical-alignment: center; width: 130px; }
+                    LineEdit { text <=> root.email-smtp-username; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Password:"; vertical-alignment: center; width: 130px; }
+                    LineEdit { text <=> root.email-smtp-password; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "From address:"; vertical-alignment: center; width: 130px; }
+                    LineEdit { text <=> root.email-from-address; horizontal-stretch: 1; }
+                }
+                HorizontalBox {
+                    Text { text: "Security:"; vertical-alignment: center; width: 130px; }
+                    ComboBox {
+                        model: ["STARTTLS", "TLS", "None"];
+                        current-index <=> root.email-security-index;
+                        horizontal-stretch: 1;
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-email-settings(); } }
+                    Button { text: "Save"; primary: true; clicked => { root.apply-email-settings(); } }
+                }
+            }
+        }
+    }
+
+    if root.email-to-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 360px;
+            height: 170px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Email data to"; font-size: 15px; font-weight: 700; }
+                LineEdit {
+                    text <=> root.email-to-address;
+                    accepted(t) => { root.send-email-to(); }
+                    init => { self.focus(); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-email-to(); } }
+                    Button { text: "Send"; primary: true; clicked => { root.send-email-to(); } }
+                }
+            }
+        }
+    }
+
     if root.fit-dialog-open: Rectangle {
         width: 100%;
         height: 100%;
@@ -1196,7 +1314,7 @@ export component AppWindow inherits Window {
         TouchArea { }
         Rectangle {
             width: 480px;
-            height: 620px;
+            height: 710px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: white;
@@ -1207,6 +1325,25 @@ export component AppWindow inherits Window {
                 padding: 16px;
                 spacing: 8px;
                 Text { text: "Fit Model"; font-size: 15px; font-weight: 700; }
+
+                CheckBox {
+                    text: "Use GelGenie ML model";
+                    checked <=> root.fit-dialog-use-gelgenie;
+                    enabled: root.fit-dialog-gelgenie-available;
+                }
+                HorizontalBox {
+                    Text { text: "GelGenie runtime:"; vertical-alignment: center; width: 230px; }
+                    ComboBox {
+                        model: ["CPU", "WGPU"];
+                        current-index <=> root.fit-dialog-gelgenie-runtime;
+                        enabled: root.fit-dialog-use-gelgenie && root.fit-dialog-gelgenie-available;
+                        horizontal-stretch: 1;
+                    }
+                }
+                Text {
+                    text: root.fit-dialog-gelgenie-available ? "GelGenie segments bands with the bundled Burn model, then reuses OpenGel lane, ladder, and sizing analysis." : "GelGenie model asset not found. Set OPENGEL_GELGENIE_MODEL or install assets/models/gelgenie_unet_1024.bpk.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
 
                 CheckBox {
                     text: "Use band tilts";
@@ -1284,8 +1421,8 @@ export component AppWindow inherits Window {
         // Swallow clicks behind the dialog.
         TouchArea { }
         Rectangle {
-            width: 380px;
-            height: 320px;
+            width: 430px;
+            height: 365px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: white;
@@ -1296,6 +1433,15 @@ export component AppWindow inherits Window {
                 padding: 16px;
                 spacing: 10px;
                 Text { text: "Use “" + root.dialog-lane-name + "” as ladder"; font-size: 15px; font-weight: 700; }
+                HorizontalBox {
+                    Text { text: "Company:"; vertical-alignment: center; width: 120px; }
+                    ComboBox {
+                        model: root.ladder-vendor-names;
+                        current-index <=> root.dialog-ladder-vendor-index;
+                        horizontal-stretch: 1;
+                        selected(value) => { root.ladder-vendor-changed(root.dialog-ladder-vendor-index); }
+                    }
+                }
                 HorizontalBox {
                     Text { text: "Ladder:"; vertical-alignment: center; width: 120px; }
                     ComboBox {

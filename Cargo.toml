@@ -8,7 +8,7 @@ edition = "2021"
 default-run = "opengel"
 license = "MIT OR Apache-2.0"
 authors = ["OpenGel contributors"]
-repository = "https://github.com/opengel/opengel"
+repository = "https://github.com/henriksson-lab/opengel"
 build = "build.rs"
 # Publish only what builds the crate — src/ (incl. the .slint UI and bundled
 # ladder JSON), build.rs, tests and the README. This keeps the multi-GB image
@@ -41,6 +41,10 @@ imageproc = "0.25"
 slint = "1.17"
 rfd = "0.15"
 printpdf = "0.7"
+webbrowser = "1.0"
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "rustls-tls", "smtp-transport"] }
+burn = { version = "0.21", default-features = false, features = ["std", "flex", "wgpu"], optional = true }
+burn-store = { version = "0.21", optional = true }
 # Optional on Linux/other (needs libv4l-dev): enable with `--features camera`.
 nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 
@@ -65,5 +69,6 @@ opt-level = 3
 # libv4l-0 runtime dep. Build with `--no-default-features` to drop it on Linux
 # (e.g. a headless/CI build without the v4l toolchain). See build.rs, which
 # unifies both into the `camera_backend` cfg.
-default = ["camera"]
+default = ["camera", "gelgenie-ml"]
 camera = ["dep:nokhwa"]
+gelgenie-ml = ["dep:burn", "dep:burn-store"]

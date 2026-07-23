@@ -266,7 +266,11 @@ fn detect_merged(
     // Order matched bands top→bottom (ascending position). The topmost is the
     // largest-fragment end, where merging happens.
     let mut pairs: Vec<&MatchPair> = m.pairs.iter().collect();
-    pairs.sort_by(|x, y| positions[x.band_index].partial_cmp(&positions[y.band_index]).unwrap());
+    pairs.sort_by(|x, y| {
+        positions[x.band_index]
+            .partial_cmp(&positions[y.band_index])
+            .unwrap()
+    });
     if pairs.len() < 3 {
         return (Vec::new(), None); // need ≥2 clean bands to refit after excluding the top
     }
@@ -444,7 +448,11 @@ mod tests {
         let m = align_template(&pos, &t, 0.35, 4).expect("match");
         assert_eq!(m.pairs.len(), SIZES.len() - 1);
         assert_pairs_correct(&m, &pos);
-        assert!(m.merged.is_empty(), "no merges expected, got {:?}", m.merged);
+        assert!(
+            m.merged.is_empty(),
+            "no merges expected, got {:?}",
+            m.merged
+        );
     }
 
     #[test]
@@ -488,9 +496,16 @@ mod tests {
         // Pin the band that is really 500 bp to 500; the result must map it so.
         let t = template(SIZES);
         let pos = detected(SIZES);
-        let j500 = pos.iter().position(|&p| (p - pos_of(500.0)).abs() < 1e-9).unwrap();
+        let j500 = pos
+            .iter()
+            .position(|&p| (p - pos_of(500.0)).abs() < 1e-9)
+            .unwrap();
         let m = align_template_anchored(&pos, &t, 0.35, 4, &[(j500, 500.0)]).expect("match");
-        let pr = m.pairs.iter().find(|pr| pr.band_index == j500).expect("anchored band matched");
+        let pr = m
+            .pairs
+            .iter()
+            .find(|pr| pr.band_index == j500)
+            .expect("anchored band matched");
         assert_eq!(pr.size, 500.0);
         assert_pairs_correct(&m, &pos);
     }

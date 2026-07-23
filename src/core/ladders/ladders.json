@@ -390,5 +390,145 @@
       { "size": 50000, "reference": true }, { "size": 35000 }, { "size": 25000 },
       { "size": 15000 }, { "size": 10000 }
     ]
+  },
+  {
+    "name": "Takara 20 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Takara Bio",
+    "catalog": "3409A",
+    "bands": [
+      { "size": 500, "reference": true }, { "size": 400 }, { "size": 300 },
+      { "size": 200, "reference": true }, { "size": 180 }, { "size": 160 },
+      { "size": 140 }, { "size": 120 }, { "size": 100, "reference": true },
+      { "size": 80 }, { "size": 60 }, { "size": 40 }, { "size": 20 }
+    ]
+  },
+  {
+    "name": "Takara 100 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Takara Bio",
+    "catalog": "3407A",
+    "bands": [
+      { "size": 1500 }, { "size": 1000 }, { "size": 900 }, { "size": 800 },
+      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
+      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Takara 200 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Takara Bio",
+    "catalog": "3410A",
+    "bands": [
+      { "size": 4000 }, { "size": 3000 }, { "size": 2500 },
+      { "size": 2000, "reference": true }, { "size": 1800 }, { "size": 1600 },
+      { "size": 1400 }, { "size": 1200 }, { "size": 1000, "reference": true },
+      { "size": 800 }, { "size": 600 }, { "size": 400 }, { "size": 200 }
+    ]
+  },
+  {
+    "name": "GoldBio ReadyLadder 50 bp-25 kb DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "GoldBio",
+    "catalog": "D015",
+    "bands": [
+      { "size": 25000 }, { "size": 10000 }, { "size": 8000 },
+      { "size": 6000 }, { "size": 5000 }, { "size": 4000 },
+      { "size": 3000, "reference": true }, { "size": 2500 },
+      { "size": 2000 }, { "size": 1500 }, { "size": 1200, "reference": true },
+      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
+      { "size": 600 }, { "size": 500, "reference": true }, { "size": 450 },
+      { "size": 400 }, { "size": 350 }, { "size": 300 }, { "size": 250 },
+      { "size": 200, "reference": true }, { "size": 150 }, { "size": 100 },
+      { "size": 50 }
+    ]
+  },
+  {
+    "name": "GenScript Broad Multi Color Pre-Stained Protein Standard",
+    "gel_type": "protein",
+    "vendor": "GenScript",
+    "catalog": "M00624S",
+    "bands": [
+      { "size": 270000, "reference": true }, { "size": 175000 },
+      { "size": 130000 }, { "size": 95000 }, { "size": 65000 },
+      { "size": 50000, "reference": true }, { "size": 35000 },
+      { "size": 30000, "reference": true }, { "size": 15000 },
+      { "size": 5000 }
+    ]
+  },
+  {
+    "name": "Abcam Prestained Protein Ladder, Broad Range (10-245 kDa)",
+    "gel_type": "protein",
+    "vendor": "Abcam",
+    "catalog": "ab116028",
+    "bands": [
+      { "size": 245000 }, { "size": 180000 }, { "size": 135000 },
+      { "size": 100000 }, { "size": 75000, "reference": true },
+      { "size": 63000 }, { "size": 48000 }, { "size": 35000 },
+      { "size": 25000, "reference": true }, { "size": 20000 },
+      { "size": 17000 }, { "size": 10000 }
+    ]
+  },
+  {
+    "name": "Zymo ZR small-RNA Ladder",
+    "gel_type": "rna",
+    "vendor": "Zymo Research",
+    "catalog": "R1090",
+    "bands": [
+      { "size": 29 }, { "size": 25 }, { "size": 21 }, { "size": 17 }
+    ]
+  },
+  {
+    "name": "Lonza 20 bp DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Lonza",
+    "catalog": "50330",
+    "bands": [
+      { "size": 500 }, { "size": 480 }, { "size": 460 }, { "size": 440 },
+      { "size": 420 }, { "size": 400 }, { "size": 380 }, { "size": 360 },
+      { "size": 340 }, { "size": 320 }, { "size": 300 }, { "size": 280 },
+      { "size": 260 }, { "size": 240 }, { "size": 220 }, { "size": 200 },
+      { "size": 180 }, { "size": 160 }, { "size": 140 }, { "size": 120 },
+      { "size": 100 }, { "size": 80 }, { "size": 60 }, { "size": 40 },
+      { "size": 20 }
+    ]
+  },
+  {
+    "name": "Lonza 50 bp-1000 bp DNA Marker",
+    "gel_type": "dna",
+    "vendor": "Lonza",
+    "catalog": "50461",
+    "bands": [
+      { "size": 1000 }, { "size": 700 }, { "size": 525 }, { "size": 500 },
+      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 },
+      { "size": 50 }
+    ]
+  },
+  {
+    "name": "Lonza 100 bp Extended Range DNA Ladder",
+    "gel_type": "dna",
+    "vendor": "Lonza",
+    "catalog": "50322",
+    "bands": [
+      { "size": 3000 }, { "size": 2900 }, { "size": 2800 }, { "size": 2700 },
+      { "size": 2600 }, { "size": 2500 }, { "size": 2400 }, { "size": 2300 },
+      { "size": 2200 }, { "size": 2100 }, { "size": 2000 }, { "size": 1900 },
+      { "size": 1800 }, { "size": 1700 }, { "size": 1600 }, { "size": 1500 },
+      { "size": 1400 }, { "size": 1300 }, { "size": 1200 }, { "size": 1100 },
+      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
+      { "size": 600 }, { "size": 500 }, { "size": 400 }, { "size": 300 },
+      { "size": 200 }, { "size": 100 }
+    ]
+  },
+  {
+    "name": "Lonza 1 kb-10 kb DNA Marker",
+    "gel_type": "dna",
+    "vendor": "Lonza",
+    "catalog": "50471",
+    "bands": [
+      { "size": 10000 }, { "size": 7000 }, { "size": 5000 }, { "size": 4000 },
+      { "size": 3000 }, { "size": 2500 }, { "size": 2000 }, { "size": 1500 },
+      { "size": 1000 }
+    ]
   }
 ]

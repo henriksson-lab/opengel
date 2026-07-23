@@ -39,6 +39,12 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
     ui.set_gel_type_label(format!("{:?}", state.gel_type).into());
 
     // Ladder template names (for the "Use as ladder" dialog dropdown).
+    let vendors: Vec<SharedString> = state
+        .ladder_vendor_names()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    ui.set_ladder_vendor_names(ModelRc::new(VecModel::from(vendors)));
     let names: Vec<SharedString> = state
         .ladder_names()
         .into_iter()
@@ -378,11 +384,11 @@ pub fn refresh_image(ui: &AppWindow, state: &AppState) {
             }
         }
         draw_warp(&mut buf, state);
+        draw_migration_arrow(&mut buf, state);
         ui.set_gel_image(Image::from_rgb8(buf));
     }
     set_warp_knots(ui, &state.warp_knot_items());
     ui.set_frame_index(state.view_frame_index() as i32);
-
 }
 
 /// Refresh the contrast histogram thumbnail. Cached by frame + window, so it only
@@ -450,6 +456,68 @@ fn draw_warp(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
         );
         let (_, v0) = warp.invert(hx, hy);
         polyline(px, w, h, &warp.iso_v(v0, 96), (0, 210, 255));
+    }
+}
+
+fn draw_migration_arrow(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &AppState) {
+    let Some(warp) = state.fit_warp() else {
+        return;
+    };
+    let (w, h) = (buf.width(), buf.height());
+    if w == 0 || h == 0 {
+        return;
+    }
+    let (x0, y0) = warp.eval(0.0, 0.0);
+    let (x1, y1) = warp.eval(0.0, 1.0);
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let len = dx.hypot(dy);
+    if len < 1.0 {
+        return;
+    }
+
+    let (nx_a, ny_a) = (-dy / len, dx / len);
+    let (nx, ny) = if x0 + nx_a * 14.0 < x0 - nx_a * 14.0 {
+        (nx_a, ny_a)
+    } else {
+        (-nx_a, -ny_a)
+    };
+    let offset = 14.0;
+    let margin = 5.0;
+    let p0 = (
+        (x0 + nx * offset).clamp(margin, w as f64 - margin),
+        (y0 + ny * offset).clamp(margin, h as f64 - margin),
+    );
+    let p1 = (
+        (x1 + nx * offset).clamp(margin, w as f64 - margin),
+        (y1 + ny * offset).clamp(margin, h as f64 - margin),
+    );
+
+    let px = buf.make_mut_slice();
+    let color = (0, 170, 120);
+    draw_line(
+        px,
+        w,
+        h,
+        (p0.0 as i32, p0.1 as i32),
+        (p1.0 as i32, p1.1 as i32),
+        color,
+    );
+
+    let ux = dx / len;
+    let uy = dy / len;
+    let head_len = 12.0;
+    let head_w = 5.0;
+    for side in [-1.0, 1.0] {
+        let hx = p1.0 - ux * head_len + nx * head_w * side;
+        let hy = p1.1 - uy * head_len + ny * head_w * side;
+        draw_line(
+            px,
+            w,
+            h,
+            (p1.0 as i32, p1.1 as i32),
+            (hx as i32, hy as i32),
+            color,
+        );
     }
 }
 

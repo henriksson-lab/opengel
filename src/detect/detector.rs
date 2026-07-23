@@ -1,5 +1,5 @@
 //! The pluggable detector interface. Every detection method (classical,
-//! Cellpose, hybrid) implements [`GelDetector`] so they can be swapped and
+//! blob-based, hybrid) implements [`GelDetector`] so they can be swapped and
 //! benchmarked by the evaluation harness against the same ground truth.
 
 use crate::core::model::{Band, Lane};

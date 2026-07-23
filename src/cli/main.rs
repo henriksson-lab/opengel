@@ -258,7 +258,8 @@ fn cmd_analyze(
             .with_context(|| format!("opening mask {}", mask_path.display()))?;
         let mask_gray = opengel::core::GrayF32::from_dynamic(&mask_img);
         let segmenter = opengel::detect::MaskSegmenter::new(mask_gray);
-        let det = opengel::detect::cellpose::CellposeDetector::new(segmenter).detect(&img, &params);
+        let det =
+            opengel::detect::blob_detector::BlobDetector::new(segmenter).detect(&img, &params);
         opengel::detect::analyze_detection(det, &img, gt, &params, &[], min_r2)
     } else {
         opengel::detect::analyze(&img, gt, &params, &[], min_r2)

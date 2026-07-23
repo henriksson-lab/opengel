@@ -88,6 +88,10 @@ pub struct AppState {
     pub show_unwarped: bool,
     /// Fit the gel warp by optical flow (band twist) when running detection.
     pub optical_flow: bool,
+    /// Use GelGenie ML segmentation instead of the classical detector.
+    pub use_gelgenie_ml: bool,
+    /// 0 = CPU, 1 = WGPU.
+    pub gelgenie_runtime_index: i32,
     /// Optical-flow smoothness for model fitting.
     pub flow_smoothness: f64,
     /// Extra v-axis (migration) control rows beyond observed ladder/front rows.
@@ -137,6 +141,9 @@ pub struct AppState {
     /// The two bands chosen (via "Set A"/"Set B") for the density-ratio readout.
     pub ratio_a: Option<u32>,
     pub ratio_b: Option<u32>,
+    /// Most recently used built-in ladder templates, newest first. These are
+    /// surfaced first in the ladder picker, then persisted by the GUI.
+    pub recent_ladders: Vec<String>,
     /// True while a drag is in progress on the selected annotation.
     pub dragging: bool,
     /// Manual edit of the warp control lattice, paired with the `doc_gen` it was
@@ -210,6 +217,8 @@ impl AppState {
             invert: false,
             show_unwarped: false,
             optical_flow: false,
+            use_gelgenie_ml: false,
+            gelgenie_runtime_index: 0,
             flow_smoothness: 8.0,
             extra_vertical_edges: 2,
             extra_horizontal_edges: 0,
@@ -233,6 +242,7 @@ impl AppState {
             selected: None,
             ratio_a: None,
             ratio_b: None,
+            recent_ladders: Vec::new(),
             dragging: false,
             warp_edit: None,
             dragging_knot: None,
@@ -439,10 +449,16 @@ impl AppState {
         };
         let analysis = self.analysis();
         let band = |id: u32| analysis.and_then(|a| a.bands.iter().find(|b| b.id == id));
-        let (Some(ba), Some(bb)) = (band(self.ratio_a.unwrap()), band(self.ratio_b.unwrap())) else {
+        let (Some(ba), Some(bb)) = (band(self.ratio_a.unwrap()), band(self.ratio_b.unwrap()))
+        else {
             return "Ratio: (bands not found)".into();
         };
-        match compare(ba.integrated_density, ba.size, bb.integrated_density, bb.size) {
+        match compare(
+            ba.integrated_density,
+            ba.size,
+            bb.integrated_density,
+            bb.size,
+        ) {
             Some(rel) => {
                 let molar = rel
                     .molar_ratio
@@ -461,12 +477,17 @@ impl AppState {
     /// (a selected band reports its parent lane). `-1` means none.
     pub fn selection_info(&self) -> (i32, i32, bool) {
         let a = self.analysis();
-        let is_ladder = |lid: u32| a.is_some_and(|a| a.lanes.iter().any(|l| l.id == lid && l.is_ladder));
+        let is_ladder =
+            |lid: u32| a.is_some_and(|a| a.lanes.iter().any(|l| l.id == lid && l.is_ladder));
         match self.selected {
             Some(Selection::Lane(id)) => (id as i32, -1, is_ladder(id)),
             Some(Selection::Band(bid)) => {
                 let lane = a.and_then(|a| a.bands.iter().find(|b| b.id == bid).map(|b| b.lane_id));
-                (lane.map_or(-1, |l| l as i32), bid as i32, lane.is_some_and(is_ladder))
+                (
+                    lane.map_or(-1, |l| l as i32),
+                    bid as i32,
+                    lane.is_some_and(is_ladder),
+                )
             }
             None => (-1, -1, false),
         }
@@ -548,11 +569,7 @@ impl AppState {
         let Some(name) = name else {
             return "Assign a ladder to this lane first.".into();
         };
-        let idx = self.ladder_names().iter().position(|n| *n == name);
-        match idx {
-            Some(i) => self.set_lane_ladder(lane_id, i),
-            None => format!("Ladder {name} not available for this gel type."),
-        }
+        self.set_lane_ladder_by_name(lane_id, &name)
     }
 
     // ---- display: frame selection, contrast window, histogram ----
@@ -693,7 +710,6 @@ impl AppState {
         )
     }
 
-
     /// Warp control points as `(nx, ny, active)` in normalized image coords, for
     /// drawing draggable handles as a **separate Slint overlay** (not composited
     /// into the gel image, so edge knots aren't clipped). `active` marks the knot
@@ -712,11 +728,7 @@ impl AppState {
             for iu in 0..nu {
                 let (cx, cy) = warp.control_point(iu, iv);
                 let active = self.dragging_knot == Some((iu, iv));
-                out.push((
-                    (cx / w.max(1.0)) as f32,
-                    (cy / h.max(1.0)) as f32,
-                    active,
-                ));
+                out.push(((cx / w.max(1.0)) as f32, (cy / h.max(1.0)) as f32, active));
             }
         }
         out
@@ -1211,8 +1223,7 @@ impl AppState {
             .max(1e-9);
 
         let (pw, ph) = (250.0f64, 160.0f64);
-        let (doc, page, layer) =
-            PdfDocument::new("OpenGel trace", mm(pw), mm(ph), "traces");
+        let (doc, page, layer) = PdfDocument::new("OpenGel trace", mm(pw), mm(ph), "traces");
         let lyr = doc.get_page(page).get_layer(layer);
         let font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
 
@@ -1265,7 +1276,10 @@ impl AppState {
                 .collect();
             lyr.set_outline_color(Color::Rgb(Rgb::new(r, g, b, None)));
             lyr.set_outline_thickness(0.4);
-            lyr.add_line(Line { points: pts, is_closed: false });
+            lyr.add_line(Line {
+                points: pts,
+                is_closed: false,
+            });
         }
 
         // Text: y-title, x-title/ticks, bp top ticks, legend.
@@ -1385,24 +1399,11 @@ impl AppState {
         out
     }
 
-    /// The raw working image, used for display and region measurement. Display
-    /// rotation is applied live by the UI (Slint), so it is NOT baked here —
-    /// annotations stay in raw image coordinates and rotate with the view.
+    /// The current working image basis. Before detection, the UI rotation is a
+    /// live preview; when detection runs, that orientation is committed into
+    /// this image so migration coordinates are fitted top-to-bottom.
     pub fn view_image(&self) -> Option<GrayF32> {
         self.work.clone()
-    }
-
-    /// The image used for detection (rotation baked in). Detection is currently
-    /// deferred, but this keeps the straighten path ready for a plugged-in
-    /// algorithm.
-    pub fn display_image(&self) -> Option<GrayF32> {
-        self.work.as_ref().map(|w| {
-            if self.rotation_deg.abs() < 1e-3 {
-                w.clone()
-            } else {
-                w.rotated(self.rotation_deg)
-            }
-        })
     }
 
     /// Measure every annotated band region from the image: integrate the
@@ -1622,56 +1623,78 @@ impl AppState {
         format!("Auto-straighten applied {:.1}°.", self.rotation_deg)
     }
 
-    /// Coarse orientation: rotate the whole gel 90° (a gel photographed sideways
-    /// or upside-down). This is a **lossless** pixel rotation baked into the
-    /// working image *and* every source frame, so all downstream steps see one
-    /// consistent orientation; the fine `rotation_deg`/auto-straighten then
-    /// refines the residual tilt. Existing lanes/bands were measured in the old
-    /// orientation, so they are cleared — re-run Detect afterwards.
-    pub fn rotate_coarse(&mut self, clockwise: bool) -> String {
-        let Some(work) = self.work.as_ref() else {
-            return "No image loaded.".into();
-        };
-        self.work = Some(if clockwise {
-            work.rot90_cw()
-        } else {
-            work.rot90_ccw()
-        });
-        if let Some(doc) = self.doc.as_mut() {
-            for f in doc.frames.iter_mut() {
-                *f = if clockwise {
-                    f.rotate90()
-                } else {
-                    f.rotate270()
-                };
-            }
-            for im in doc.project.images.iter_mut() {
-                std::mem::swap(&mut im.width, &mut im.height);
-            }
-            // Annotations were in the old orientation; drop them (re-Detect).
-            doc.project.analysis = Analysis::default();
-        }
-        // A residual fine tilt no longer applies after a 90° turn.
-        self.rotation_deg = 0.0;
-        self.selected = None;
-        self.show_warp = false;
-        format!(
-            "Rotated 90° {}. Re-run Detect to re-annotate.",
-            if clockwise { "clockwise" } else { "counter-clockwise" }
-        )
-    }
-
     /// Ladder template names applicable to the current gel type.
     /// Ladder options for the dialog. The built-in templates first, then "Custom"
     /// at the end — Custom marks the lane as a ladder without assigning any rungs,
     /// so the user sets each band's weight manually (via "Set weight…").
     pub fn ladder_names(&self) -> Vec<String> {
-        let mut v: Vec<String> = ladders::for_gel_type(self.gel_type)
+        self.ladder_names_for_vendor(None)
+    }
+
+    pub fn ladder_vendor_names(&self) -> Vec<String> {
+        let mut vendors = Vec::new();
+        let recent = self.ladder_names_for_vendor(Some("Recent"));
+        if !recent.is_empty() {
+            vendors.push("Recent".to_string());
+        }
+        for template in ladders::for_gel_type(self.gel_type) {
+            let vendor = template.vendor.as_deref().unwrap_or("Other");
+            if !vendors.iter().any(|v| v == vendor) {
+                vendors.push(vendor.to_string());
+            }
+        }
+        vendors.push("Custom".to_string());
+        vendors
+    }
+
+    pub fn ladder_names_for_vendor(&self, vendor: Option<&str>) -> Vec<String> {
+        let all: Vec<String> = ladders::for_gel_type(self.gel_type)
             .iter()
+            .filter(|t| match vendor {
+                Some("Recent") => self.recent_ladders.iter().any(|n| n == &t.name),
+                Some("Custom") => false,
+                Some(vendor) => t.vendor.as_deref().unwrap_or("Other") == vendor,
+                None => true,
+            })
             .map(|t| t.name.clone())
             .collect();
-        v.push("Custom (set weights manually)".to_string());
+        let mut v = Vec::with_capacity(all.len() + usize::from(vendor.is_none()));
+        if vendor.is_none() || vendor == Some("Recent") {
+            for name in &self.recent_ladders {
+                if all.iter().any(|n| n == name) && !v.iter().any(|n| n == name) {
+                    v.push(name.clone());
+                }
+            }
+        }
+        for name in all {
+            if !v.iter().any(|n| n == &name) {
+                v.push(name);
+            }
+        }
+        if vendor.is_none() || vendor == Some("Custom") {
+            v.push("Custom (set weights manually)".to_string());
+        }
         v
+    }
+
+    pub fn ladder_dialog_options_for_vendor_index(
+        &self,
+        vendor_index: usize,
+    ) -> (Vec<String>, Vec<String>) {
+        let vendors = self.ladder_vendor_names();
+        let names = vendors
+            .get(vendor_index)
+            .map(|vendor| self.ladder_names_for_vendor(Some(vendor)))
+            .unwrap_or_else(|| self.ladder_names_for_vendor(None));
+        (vendors, names)
+    }
+
+    pub fn set_recent_ladders(&mut self, names: Vec<String>) {
+        self.recent_ladders = crate::config::sanitize_recent_ladders(names);
+    }
+
+    pub fn remember_ladder(&mut self, name: &str) {
+        crate::config::remember_ladder(&mut self.recent_ladders, name);
     }
 
     /// Prefill `(value, unit)` for the set-band-weight dialog from the selected
@@ -1706,7 +1729,10 @@ impl AppState {
         band.known_size = Some(size);
         band.merged_sizes.clear(); // an explicit weight overrides any merge label
         resize_sample_lanes(a);
-        format!("Set band weight to {size:.0} {}.", self.gel_type.size_unit())
+        format!(
+            "Set band weight to {size:.0} {}.",
+            self.gel_type.size_unit()
+        )
     }
 
     // ---- ladder lanes (any number, individually tunable) ----
@@ -1714,38 +1740,52 @@ impl AppState {
     /// Prefill values for the "Use as ladder" dialog for a lane:
     /// `(lane_name, template_index, volume_ul, conc_ng_ul)`. `template_index`
     /// is the lane's currently assigned template (or 0 if none).
-    pub fn ladder_dialog_prefill(&self, lane_id: u32) -> (String, i32, f64, f64) {
-        let names = self.ladder_names();
+    pub fn ladder_dialog_prefill(&self, lane_id: u32) -> (String, i32, i32, f64, f64) {
+        let vendors = self.ladder_vendor_names();
         let name = self
             .analysis()
             .and_then(|a| a.lanes.iter().find(|l| l.id == lane_id))
             .and_then(|l| l.label.clone())
             .unwrap_or_else(|| format!("Lane {lane_id}"));
-        let tidx = self
+        let template_name = self
             .analysis()
             .and_then(|a| a.ladder_assignments.iter().find(|la| la.lane_id == lane_id))
-            .and_then(|la| names.iter().position(|n| *n == la.template_name))
-            .map(|p| p as i32)
-            .unwrap_or(0);
+            .map(|la| la.template_name.clone());
+        let mut vidx = 0usize;
+        let mut tidx = 0usize;
+        if let Some(template_name) = template_name {
+            if let Some(template) = ladders::by_name(&template_name) {
+                let vendor = template.vendor.as_deref().unwrap_or("Other");
+                if let Some(pos) = vendors.iter().position(|v| v == vendor) {
+                    vidx = pos;
+                }
+            }
+            let names = vendors
+                .get(vidx)
+                .map(|vendor| self.ladder_names_for_vendor(Some(vendor)))
+                .unwrap_or_else(|| self.ladder_names());
+            if let Some(pos) = names.iter().position(|n| *n == template_name) {
+                tidx = pos;
+            }
+        }
         (
             name,
-            tidx,
+            vidx as i32,
+            tidx as i32,
             self.ladder_volume(lane_id),
             self.ladder_conc(lane_id),
         )
     }
 
-    /// Apply the "Use as ladder" dialog: store the lane's volume + concentration
-    /// and assign the chosen ladder template (which marks it as a ladder).
-    pub fn apply_ladder_dialog(
+    pub fn apply_ladder_dialog_by_name(
         &mut self,
         lane_id: u32,
-        template_idx: usize,
+        template_name: &str,
         volume_ul: f64,
         conc_ng_ul: f64,
     ) -> String {
         self.set_ladder_amounts(lane_id, volume_ul, conc_ng_ul);
-        let msg = self.set_lane_ladder(lane_id, template_idx);
+        let msg = self.set_lane_ladder_by_name(lane_id, template_name);
         let load = self.ladder_load(lane_id);
         format!("{msg} Load {load:.0} ng ({volume_ul:.1} µL × {conc_ng_ul:.1} ng/µL).")
     }
@@ -1773,21 +1813,20 @@ impl AppState {
         }
     }
 
-    /// Assign the ladder template at `template_idx` to a specific ladder lane:
-    /// match its bands to the template's rungs, record the assignment, and
-    /// re-derive sizes for the sample lanes. Marks the lane as a ladder.
-    pub fn set_lane_ladder(&mut self, lane_id: u32, template_idx: usize) -> String {
-        let names = self.ladder_names();
-        let Some(name) = names.get(template_idx).cloned() else {
-            return "No ladder selected.".into();
-        };
+    pub fn set_lane_ladder_by_name(&mut self, lane_id: u32, name: &str) -> String {
         // "Custom": mark as a ladder but assign no rungs (the user sets each
         // band's weight manually).
         if name.starts_with("Custom") {
             let Some(doc) = self.doc.as_mut() else {
                 return "No document.".into();
             };
-            match doc.project.analysis.lanes.iter_mut().find(|l| l.id == lane_id) {
+            match doc
+                .project
+                .analysis
+                .lanes
+                .iter_mut()
+                .find(|l| l.id == lane_id)
+            {
                 Some(lane) => {
                     lane.is_ladder = true;
                     return format!("Lane {lane_id} = custom ladder (set band weights manually).");
@@ -1810,6 +1849,7 @@ impl AppState {
         match apply_ladder_to_lane(a, lane_id, template) {
             Some(n) => {
                 resize_sample_lanes(a);
+                self.remember_ladder(name);
                 format!("Lane {lane_id} = {name} ({n} rungs matched).")
             }
             None => format!("Lane {lane_id}: could not match {name} to its bands."),
@@ -1854,6 +1894,22 @@ impl AppState {
         Ok(())
     }
 
+    pub fn email_attachment(&self) -> Result<(String, Vec<u8>)> {
+        let doc = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| anyhow!("nothing to email"))?;
+        let name = self
+            .source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("gel.gel.zip")
+            .to_string();
+        Ok((name, doc.to_bytes()?))
+    }
+
     pub fn analysis(&self) -> Option<&Analysis> {
         self.doc.as_ref().map(|d| &d.project.analysis)
     }
@@ -1878,9 +1934,16 @@ impl AppState {
     /// Run detection + ladder ID + sizing. If `force_template` is set, only that
     /// template is considered (min_r2 relaxed so the user's choice wins).
     pub fn analyze(&mut self, force_template: Option<&str>) -> Result<String> {
-        let work = self
-            .display_image()
+        let source = self
+            .work
+            .clone()
             .ok_or_else(|| anyhow!("no image loaded"))?;
+        let orientation_deg = self.rotation_deg;
+        let work = if orientation_deg.abs() < 1e-3 {
+            source.clone()
+        } else {
+            source.rotated(orientation_deg)
+        };
         let work = &work;
         // Honor the "Optical-flow dewarp" toggle: without it the warp comes from
         // ladder-rung smile fitting (needs a matched ladder across lanes), which
@@ -1903,7 +1966,41 @@ impl AppState {
             }
             None => (Vec::new(), 0.9),
         };
-        let analysis = opengel::detect::analyze(work, self.gel_type, &params, &candidates, min_r2);
+        let mut analysis = if self.use_gelgenie_ml {
+            #[cfg(feature = "gelgenie-ml")]
+            {
+                use opengel::detect::detector::GelDetector;
+
+                let runtime =
+                    opengel::detect::GelGenieRuntime::from_index(self.gelgenie_runtime_index);
+                let detector = opengel::detect::GelGenieDetector::new(runtime)?;
+                let det = detector.detect(work, &params);
+                opengel::detect::analyze_detection(
+                    det,
+                    work,
+                    self.gel_type,
+                    &params,
+                    &candidates,
+                    min_r2,
+                )
+            }
+            #[cfg(not(feature = "gelgenie-ml"))]
+            {
+                return Err(anyhow!(
+                    "GelGenie ML support was not compiled in; rebuild with --features gelgenie-ml"
+                ));
+            }
+        } else {
+            opengel::detect::analyze(work, self.gel_type, &params, &candidates, min_r2)
+        };
+        if orientation_deg.abs() >= 1e-3 {
+            transform_analysis_from_oriented(
+                &mut analysis,
+                orientation_deg,
+                source.width(),
+                source.height(),
+            );
+        }
         let n_lanes = analysis.lanes.len();
         let n_bands = analysis.bands.len();
         let ladder = analysis
@@ -1914,8 +2011,24 @@ impl AppState {
 
         let doc = self.doc.as_mut().ok_or_else(|| anyhow!("no document"))?;
         doc.project.analysis = analysis;
+        let detector = if self.use_gelgenie_ml {
+            #[cfg(feature = "gelgenie-ml")]
+            {
+                format!(
+                    "GelGenie ML ({})",
+                    opengel::detect::GelGenieRuntime::from_index(self.gelgenie_runtime_index)
+                        .label()
+                )
+            }
+            #[cfg(not(feature = "gelgenie-ml"))]
+            {
+                "GelGenie ML".to_string()
+            }
+        } else {
+            "classical".to_string()
+        };
         Ok(format!(
-            "Detected {n_lanes} lanes, {n_bands} bands{ladder}. Adjust the NURBS knots as needed."
+            "Detected {n_lanes} lanes, {n_bands} bands{ladder} using {detector}. Adjust the NURBS knots as needed."
         ))
     }
 
@@ -1923,7 +2036,7 @@ impl AppState {
     // displayed/rotated image) ----
 
     fn with_analysis_mut<F: FnOnce(&mut Analysis, &GrayF32) -> String>(&mut self, f: F) -> String {
-        let Some(img) = self.display_image() else {
+        let Some(img) = self.work.clone() else {
             return "No image loaded.".into();
         };
         let Some(doc) = self.doc.as_mut() else {
@@ -2182,7 +2295,9 @@ fn merged_size_label(known: f64, merged: &[f64], unit: &str) -> String {
     if merged.is_empty() {
         return format!("{known:.0} {unit}");
     }
-    let mut sizes: Vec<f64> = std::iter::once(known).chain(merged.iter().copied()).collect();
+    let mut sizes: Vec<f64> = std::iter::once(known)
+        .chain(merged.iter().copied())
+        .collect();
     sizes.sort_by(|a, b| b.partial_cmp(a).unwrap());
     let joined = sizes
         .iter()
@@ -2273,6 +2388,66 @@ fn nearest_lane(a: &Analysis, warp: &GelWarp, x: f64) -> Option<usize> {
             dl.partial_cmp(&dm).unwrap()
         })
         .map(|(i, _)| i)
+}
+
+fn transform_analysis_from_oriented(
+    analysis: &mut Analysis,
+    orientation_deg: f64,
+    width: usize,
+    height: usize,
+) {
+    let (w, h) = (width as f64, height as f64);
+    if let Some(warp) = analysis.warp.as_mut() {
+        for ctrl in &mut warp.ctrl {
+            let (x, y) = oriented_to_source(ctrl[0], ctrl[1], orientation_deg, w, h);
+            *ctrl = [x, y];
+        }
+    }
+    let angle_rad = orientation_deg.to_radians();
+    for band in &mut analysis.bands {
+        band.angle = normalize_angle_rad(band.angle - angle_rad);
+    }
+    for blob in &mut analysis.blobs {
+        let corners = [
+            (blob.x_min as f64, blob.y_min as f64),
+            (blob.x_max as f64, blob.y_min as f64),
+            (blob.x_max as f64, blob.y_max as f64),
+            (blob.x_min as f64, blob.y_max as f64),
+        ];
+        let mut x_min = f64::INFINITY;
+        let mut x_max = f64::NEG_INFINITY;
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+        for (x, y) in corners {
+            let (sx, sy) = oriented_to_source(x, y, orientation_deg, w, h);
+            x_min = x_min.min(sx);
+            x_max = x_max.max(sx);
+            y_min = y_min.min(sy);
+            y_max = y_max.max(sy);
+        }
+        blob.x_min = x_min.floor().clamp(0.0, w) as u32;
+        blob.x_max = x_max.ceil().clamp(0.0, w) as u32;
+        blob.y_min = y_min.floor().clamp(0.0, h) as u32;
+        blob.y_max = y_max.ceil().clamp(0.0, h) as u32;
+    }
+}
+
+fn oriented_to_source(x: f64, y: f64, orientation_deg: f64, width: f64, height: f64) -> (f64, f64) {
+    if width <= 0.0 || height <= 0.0 {
+        return (x, y);
+    }
+    let cx = (width - 1.0) / 2.0;
+    let cy = (height - 1.0) / 2.0;
+    let rad = orientation_deg.to_radians();
+    let (c, s) = (rad.cos(), rad.sin());
+    let dx = x - cx;
+    let dy = y - cy;
+    (cx + dx * c + dy * s, cy - dx * s + dy * c)
+}
+
+fn normalize_angle_rad(angle: f64) -> f64 {
+    let pi = std::f64::consts::PI;
+    (angle + pi).rem_euclid(2.0 * pi) - pi
 }
 
 /// Sum intensity over `[x0,x1) × [yc-half, yc+half)`.
@@ -2437,11 +2612,22 @@ mod tests {
         let mut st = AppState::new();
         st.capture().unwrap();
         st.set_rotation(12.0);
-        assert!(st.display_image().is_some());
         let msg = st.auto_straighten();
         assert!(msg.contains("Auto-straighten"));
         // Mock capture is upright, so straightening should settle near 0°.
         assert!(st.rotation_deg.abs() < 6.0, "rotation {}", st.rotation_deg);
+    }
+
+    #[test]
+    fn analyze_accounts_for_orientation_without_mutating_work() {
+        let mut st = AppState::new();
+        st.capture().unwrap();
+        let before = st.work.as_ref().unwrap().data.clone();
+        st.set_rotation(180.0);
+        st.analyze(None).unwrap();
+        assert_eq!(st.rotation_deg, 180.0);
+        assert_eq!(st.work.as_ref().unwrap().data, before);
+        assert!(st.analysis().is_some_and(|a| !a.lanes.is_empty()));
     }
 
     #[test]
@@ -2483,12 +2669,14 @@ mod tests {
             .find(|l| l.is_ladder)
             .unwrap()
             .id;
-        st.set_lane_ladder(ladder_lane, 0);
+        st.set_lane_ladder_by_name(ladder_lane, "NEB 1 kb DNA Ladder");
 
         // With a fitted ladder, hovering yields a size readout that decreases
         // as the cursor moves down the gel (larger fragments migrate less).
         let top = st.hover_size_label(0.5, 0.2).expect("bp readout near top");
-        let bot = st.hover_size_label(0.5, 0.8).expect("bp readout near bottom");
+        let bot = st
+            .hover_size_label(0.5, 0.8)
+            .expect("bp readout near bottom");
         assert!(top.contains("bp"), "got: {top}");
         let num = |s: &str| -> f64 {
             s.trim_start_matches("≈ ")
@@ -2680,10 +2868,21 @@ mod tests {
             .iter()
             .all(|n| opengel::core::ladders::by_name(n).is_some()));
     }
+
+    #[test]
+    fn ladder_names_put_recent_matching_gel_type_first() {
+        let mut st = AppState::new();
+        st.set_recent_ladders(vec![
+            "Thermo PageRuler Prestained (10-180 kDa)".to_string(),
+            "Takara 100 bp DNA Ladder".to_string(),
+            "NEB 1 kb DNA Ladder".to_string(),
+        ]);
+        let names = st.ladder_names();
+        assert_eq!(names[0], "Takara 100 bp DNA Ladder");
+        assert_eq!(names[1], "NEB 1 kb DNA Ladder");
+        assert_eq!(names.last().unwrap(), "Custom (set weights manually)");
+        assert!(!names
+            .iter()
+            .any(|n| n == "Thermo PageRuler Prestained (10-180 kDa)"));
+    }
 }
-
-
-
-
-
-

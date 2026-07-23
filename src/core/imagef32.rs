@@ -190,7 +190,10 @@ mod tests {
                                                        // top-left of source -> top-right of dest
         assert_eq!(cw.get(cw.width() - 1, 0), g.get(0, 0));
         // top-right of source -> bottom-right of dest
-        assert_eq!(cw.get(cw.width() - 1, cw.height() - 1), g.get(g.width() - 1, 0));
+        assert_eq!(
+            cw.get(cw.width() - 1, cw.height() - 1),
+            g.get(g.width() - 1, 0)
+        );
     }
 
     #[test]

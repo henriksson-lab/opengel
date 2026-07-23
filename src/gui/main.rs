@@ -7,21 +7,50 @@
 
 mod camera_glue;
 mod camera_worker;
+mod config;
+mod email;
 mod state;
 mod view;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use state::AppState;
 
 slint::include_modules!();
 
+const SOURCE_URL: &str = "https://github.com/henriksson-lab/opengel";
+const CITING_URL: &str = "https://github.com/henriksson-lab/opengel#citing";
+
+fn gelgenie_model_available() -> bool {
+    #[cfg(feature = "gelgenie-ml")]
+    {
+        opengel::detect::GelGenieDetector::model_available()
+    }
+    #[cfg(not(feature = "gelgenie-ml"))]
+    {
+        false
+    }
+}
+
+fn set_ladder_dialog_models(ui: &AppWindow, state: &AppState, vendor_index: usize) {
+    let (vendors, names) = state.ladder_dialog_options_for_vendor_index(vendor_index);
+    let vendor_model: Vec<SharedString> = vendors.into_iter().map(SharedString::from).collect();
+    let ladder_model: Vec<SharedString> = names.into_iter().map(SharedString::from).collect();
+    ui.set_ladder_vendor_names(ModelRc::new(VecModel::from(vendor_model)));
+    ui.set_ladder_names(ModelRc::new(VecModel::from(ladder_model)));
+}
+
 fn main() -> anyhow::Result<()> {
     let ui = AppWindow::new()?;
     let state = Rc::new(RefCell::new(AppState::new()));
+    let app_config = Rc::new(RefCell::new(config::load_config()));
+    state
+        .borrow_mut()
+        .set_recent_ladders(app_config.borrow().recent_ladders.clone());
+    let email_settings = Rc::new(RefCell::new(email::load_settings()));
 
     // CLI: `opengel [PATH] [FLAGS]`.
     //   --demo            load the synthetic demo gel instead of a path
@@ -76,7 +105,10 @@ fn main() -> anyhow::Result<()> {
         }
         if has("--detect") {
             match state.borrow_mut().analyze(None) {
-                Ok(msg) => ui.set_status(msg.into()),
+                Ok(msg) => {
+                    ui.set_rotation(state.borrow().rotation_deg as f32);
+                    ui.set_status(msg.into());
+                }
                 Err(e) => ui.set_status(format!("Detect failed: {e}").into()),
             }
         }
@@ -235,6 +267,96 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let ui_weak = ui.as_weak();
+        let email_settings = email_settings.clone();
+        ui.on_open_email_settings(move || {
+            let ui = ui_weak.unwrap();
+            let settings = email_settings.borrow();
+            ui.set_email_smtp_host(settings.smtp_host.clone().into());
+            ui.set_email_smtp_port(settings.smtp_port.to_string().into());
+            ui.set_email_smtp_username(settings.smtp_username.clone().into());
+            ui.set_email_smtp_password(settings.smtp_password.clone().into());
+            ui.set_email_from_address(settings.from_address.clone().into());
+            ui.set_email_security_index(settings.security.index());
+            ui.set_email_settings_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let email_settings = email_settings.clone();
+        ui.on_apply_email_settings(move || {
+            let ui = ui_weak.unwrap();
+            let port = ui.get_email_smtp_port().to_string();
+            let Ok(port) = port.trim().parse::<u16>() else {
+                ui.set_status("Email settings not saved: SMTP port must be a number.".into());
+                return;
+            };
+            let settings = email::EmailSettings {
+                smtp_host: ui.get_email_smtp_host().trim().to_string(),
+                smtp_port: port,
+                smtp_username: ui.get_email_smtp_username().trim().to_string(),
+                smtp_password: ui.get_email_smtp_password().to_string(),
+                from_address: ui.get_email_from_address().trim().to_string(),
+                security: email::EmailSecurity::from_index(ui.get_email_security_index()),
+            };
+            match email::save_settings(&settings) {
+                Ok(path) => {
+                    *email_settings.borrow_mut() = settings;
+                    ui.set_email_settings_open(false);
+                    ui.set_status(format!("Email settings saved to {}", path.display()).into());
+                }
+                Err(e) => ui.set_status(format!("Email settings save failed: {e}").into()),
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_email_settings(move || {
+            ui_weak.unwrap().set_email_settings_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_open_email_to_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_email_to_address("".into());
+            ui.set_email_to_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let email_settings = email_settings.clone();
+        ui.on_send_email_to(move || {
+            let ui = ui_weak.unwrap();
+            let to = ui.get_email_to_address().trim().to_string();
+            if to.is_empty() {
+                ui.set_status("Email not sent: recipient address is empty.".into());
+                return;
+            }
+            let (name, bytes) = match state.borrow().email_attachment() {
+                Ok(file) => file,
+                Err(e) => {
+                    ui.set_status(format!("Email not sent: {e}").into());
+                    return;
+                }
+            };
+            match email::send_data_file(&email_settings.borrow(), &to, &name, bytes) {
+                Ok(()) => {
+                    ui.set_email_to_dialog_open(false);
+                    ui.set_status(format!("Emailed {name} to {to}").into());
+                }
+                Err(e) => ui.set_status(format!("Email send failed: {e}").into()),
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_email_to(move || {
+            ui_weak.unwrap().set_email_to_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.on_capture(move || {
             let ui = ui_weak.unwrap();
@@ -257,6 +379,7 @@ fn main() -> anyhow::Result<()> {
                     // adjust the knots for cues we don't model.
                     state.borrow_mut().set_show_warp(true);
                     ui.set_show_warp(true);
+                    ui.set_rotation(state.borrow().rotation_deg as f32);
                     ui.set_status(msg.into());
                 }
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
@@ -272,6 +395,9 @@ fn main() -> anyhow::Result<()> {
             let st = state.borrow();
             // Checkbox is "Use band tilts" — the inverse of optical-flow mode.
             ui.set_fit_dialog_use_band_tilts(!st.optical_flow);
+            ui.set_fit_dialog_use_gelgenie(st.use_gelgenie_ml);
+            ui.set_fit_dialog_gelgenie_runtime(st.gelgenie_runtime_index);
+            ui.set_fit_dialog_gelgenie_available(gelgenie_model_available());
             ui.set_fit_dialog_extra_edges(st.extra_vertical_edges.to_string().into());
             ui.set_fit_dialog_extra_edges_h(st.extra_horizontal_edges.to_string().into());
             ui.set_fit_dialog_warp_regularization(format!("{:.4}", st.warp_regularization).into());
@@ -319,6 +445,8 @@ fn main() -> anyhow::Result<()> {
                 let mut st = state.borrow_mut();
                 // "Use band tilts" checked ⇒ band-tilt fit ⇒ optical flow off.
                 st.optical_flow = !ui.get_fit_dialog_use_band_tilts();
+                st.use_gelgenie_ml = ui.get_fit_dialog_use_gelgenie();
+                st.gelgenie_runtime_index = ui.get_fit_dialog_gelgenie_runtime().clamp(0, 1);
                 st.extra_vertical_edges = extra_edges;
                 st.extra_horizontal_edges = extra_edges_h;
                 st.warp_regularization = warp_regularization;
@@ -326,6 +454,7 @@ fn main() -> anyhow::Result<()> {
                 st.flow_smoothness = flow_smoothness;
             }
             ui.set_fit_dialog_extra_edges(extra_edges.to_string().into());
+            ui.set_fit_dialog_gelgenie_runtime(ui.get_fit_dialog_gelgenie_runtime().clamp(0, 1));
             ui.set_fit_dialog_extra_edges_h(extra_edges_h.to_string().into());
             ui.set_fit_dialog_warp_regularization(format!("{warp_regularization:.4}").into());
             ui.set_fit_dialog_row_spacing(format!("{row_spacing_weight:.3}").into());
@@ -338,6 +467,7 @@ fn main() -> anyhow::Result<()> {
                     // adjust the knots for cues we don't model.
                     state.borrow_mut().set_show_warp(true);
                     ui.set_show_warp(true);
+                    ui.set_rotation(state.borrow().rotation_deg as f32);
                     ui.set_status(msg.into());
                 }
                 Err(e) => ui.set_status(format!("Analyze failed: {e}").into()),
@@ -351,8 +481,11 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_open_ladder_dialog(move |lane_id| {
             let ui = ui_weak.unwrap();
-            let (name, tidx, vol, conc) = state.borrow().ladder_dialog_prefill(lane_id as u32);
+            let (name, vidx, tidx, vol, conc) =
+                state.borrow().ladder_dialog_prefill(lane_id as u32);
+            set_ladder_dialog_models(&ui, &state.borrow(), vidx.max(0) as usize);
             ui.set_dialog_lane_name(name.into());
+            ui.set_dialog_ladder_vendor_index(vidx.max(0));
             ui.set_dialog_ladder_index(tidx.max(0));
             ui.set_dialog_volume(format!("{vol:.1}").into());
             ui.set_dialog_conc(format!("{conc:.1}").into());
@@ -362,16 +495,49 @@ fn main() -> anyhow::Result<()> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.on_ladder_vendor_changed(move |vendor_index| {
+            let ui = ui_weak.unwrap();
+            let vendor_index = vendor_index.max(0) as usize;
+            set_ladder_dialog_models(&ui, &state.borrow(), vendor_index);
+            ui.set_dialog_ladder_vendor_index(vendor_index as i32);
+            ui.set_dialog_ladder_index(0);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let app_config = app_config.clone();
         ui.on_apply_ladder_dialog(move || {
             let ui = ui_weak.unwrap();
             let lane_id = ui.get_ladder_dialog_lane();
             if lane_id >= 0 {
+                let vidx = ui.get_dialog_ladder_vendor_index().max(0) as usize;
                 let tidx = ui.get_dialog_ladder_index().max(0) as usize;
                 let vol: f64 = ui.get_dialog_volume().parse().unwrap_or(0.0);
                 let conc: f64 = ui.get_dialog_conc().parse().unwrap_or(0.0);
-                let msg = state
-                    .borrow_mut()
-                    .apply_ladder_dialog(lane_id as u32, tidx, vol, conc);
+                let ladder_name = {
+                    let (_, names) = state.borrow().ladder_dialog_options_for_vendor_index(vidx);
+                    names.get(tidx).cloned()
+                };
+                let msg = match ladder_name {
+                    Some(name) => state.borrow_mut().apply_ladder_dialog_by_name(
+                        lane_id as u32,
+                        &name,
+                        vol,
+                        conc,
+                    ),
+                    None => "No ladder selected.".to_string(),
+                };
+                {
+                    let mut cfg = app_config.borrow_mut();
+                    cfg.recent_ladders = state.borrow().recent_ladders.clone();
+                    if let Err(e) = config::save_config(&cfg) {
+                        ui.set_status(format!("{msg} Recent ladders were not saved: {e}").into());
+                        ui.set_ladder_dialog_lane(-1);
+                        view::refresh(&ui, &state.borrow());
+                        return;
+                    }
+                }
                 ui.set_status(msg.into());
             }
             ui.set_ladder_dialog_lane(-1);
@@ -458,8 +624,26 @@ fn main() -> anyhow::Result<()> {
         let ui_weak = ui.as_weak();
         ui.on_about(move || {
             ui_weak.unwrap().set_status(
-                "OpenGel — capture, detect and quantify gel images. MIT/Apache-2.0.".into(),
+                format!(
+                    "OpenGel — capture, detect and quantify gel images. MIT/Apache-2.0. Source: {SOURCE_URL}"
+                )
+                .into(),
             );
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_how_to_cite(move || {
+            let ui = ui_weak.unwrap();
+            match webbrowser::open(CITING_URL) {
+                Ok(_) => {
+                    ui.set_status(format!("Opened citation instructions: {CITING_URL}").into())
+                }
+                Err(e) => ui.set_status(
+                    format!("Could not open browser: {e}. Citation instructions: {CITING_URL}")
+                        .into(),
+                ),
+            }
         });
     }
     // Switch which captured frame is displayed (or the merged HDR image).
@@ -583,31 +767,6 @@ fn main() -> anyhow::Result<()> {
             let ui = ui_weak.unwrap();
             let msg = state.borrow_mut().auto_straighten();
             ui.set_rotation(state.borrow().rotation_deg as f32);
-            ui.set_status(msg.into());
-            view::refresh(&ui, &state.borrow());
-        });
-    }
-    // Coarse 90° quick-rotate (gel photographed sideways/upside-down).
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_rotate_coarse_cw(move || {
-            let ui = ui_weak.unwrap();
-            let msg = state.borrow_mut().rotate_coarse(true);
-            ui.set_rotation(0.0);
-            ui.set_show_warp(false);
-            ui.set_status(msg.into());
-            view::refresh(&ui, &state.borrow());
-        });
-    }
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_rotate_coarse_ccw(move || {
-            let ui = ui_weak.unwrap();
-            let msg = state.borrow_mut().rotate_coarse(false);
-            ui.set_rotation(0.0);
-            ui.set_show_warp(false);
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });
@@ -836,7 +995,9 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_trace_zoom_at(move |factor, focus| {
             let ui = ui_weak.unwrap();
-            state.borrow_mut().trace_zoom_by(factor as f64, focus as f64);
+            state
+                .borrow_mut()
+                .trace_zoom_by(factor as f64, focus as f64);
             view::refresh_trace(&ui, &state.borrow());
         });
     }
