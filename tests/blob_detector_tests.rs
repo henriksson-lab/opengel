@@ -1,10 +1,10 @@
 use ndarray::Array2;
 use opengel::core::GrayF32;
-use opengel::detect::cellpose::{BlobSegmenter, CellposeDetector};
+use opengel::detect::blob_detector::{BlobDetector, BlobSegmenter};
 use opengel::detect::detector::{DetectParams, GelDetector};
 
 /// A trivial segmenter that returns a fixed set of blob boxes, standing in for
-/// real Cellpose bindings.
+/// a real instance segmenter (e.g. GelGenie).
 struct FixedSegmenter {
     boxes: Vec<(u32, u32, u32, u32)>,
 }
@@ -15,7 +15,7 @@ impl BlobSegmenter for FixedSegmenter {
 }
 
 #[test]
-fn cellpose_clusters_blobs_into_lanes() {
+fn blob_detector_clusters_blobs_into_lanes() {
     // A bright image so integrated density is non-zero.
     let img = GrayF32 {
         data: Array2::from_elem((300, 220), 0.5f32),
@@ -28,7 +28,7 @@ fn cellpose_clusters_blobs_into_lanes() {
         (115, 60, 125, 70),
         (115, 130, 125, 140),
     ];
-    let det = CellposeDetector::new(FixedSegmenter { boxes });
+    let det = BlobDetector::new(FixedSegmenter { boxes });
     let out = det.detect(&img, &DetectParams::default());
 
     assert_eq!(out.lanes.len(), 2, "two lanes clustered by x");

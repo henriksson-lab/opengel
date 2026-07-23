@@ -29,6 +29,18 @@ images/img_NN.png   raw captures (8- or 16-bit)
 
 ## Build & run
 
+The pretrained band-detection model (`assets/models/*.bpk`) is stored with
+[Git LFS](https://git-lfs.com), so you must install it **before** cloning (or
+run `git lfs pull` after) — otherwise you only get a small pointer file and the
+build/run fails to load the model.
+
+```sh
+# Install Git LFS, then fetch the model weights:
+brew install git-lfs          # macOS  (Linux: sudo apt-get install git-lfs)
+git lfs install               # once per machine
+git lfs pull                  # download the model into an already-cloned repo
+```
+
 ```sh
 cargo build --release             # optimized build (USB camera backend on by default)
 

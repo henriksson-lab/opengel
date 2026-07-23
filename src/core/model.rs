@@ -326,6 +326,19 @@ pub struct GelProject {
     pub images: Vec<GelImage>,
     #[serde(default)]
     pub analysis: Analysis,
+    /// Record of a saved HDR merge (`images/merged.png`), if one was computed and
+    /// persisted — the options used and the radiance scale to reconstruct it.
+    #[serde(default)]
+    pub hdr: Option<HdrRecord>,
+}
+
+/// Metadata for a persisted HDR merge. The merged radiance image is stored as a
+/// 16-bit `images/merged.png` normalized by `scale`; radiance = `png / 65535 *
+/// scale`. `options` records which optional stages produced it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HdrRecord {
+    pub options: crate::core::hdr::HdrOptions,
+    pub scale: f64,
 }
 
 fn default_format() -> String {
@@ -344,6 +357,7 @@ impl GelProject {
             gel_type,
             images: Vec::new(),
             analysis: Analysis::default(),
+            hdr: None,
         }
     }
 }

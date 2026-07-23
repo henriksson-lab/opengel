@@ -121,6 +121,12 @@ export component AppWindow inherits Window {
     in-out property <string> fit-dialog-row-spacing: "10";
     in-out property <string> fit-dialog-flow-smoothness: "8";
 
+    // Recompute-HDR dialog.
+    in-out property <bool> hdr-dialog-open: false;
+    in-out property <bool> hdr-bias-subtraction: false;
+    in-out property <bool> hdr-align: false;
+    in-out property <bool> hdr-deghost: false;
+
     // "Use as ladder" dialog.
     in-out property <int> ladder-dialog-lane: -1;   // -1 = closed
     in-out property <string> dialog-lane-name: "";
@@ -160,6 +166,10 @@ export component AppWindow inherits Window {
     // --- callbacks out ---
     callback open();
     callback save();
+    callback save-as();
+    callback open-hdr-dialog();
+    callback apply-hdr-dialog();     // recompute the HDR merge with the options
+    callback cancel-hdr-dialog();
     callback open-email-settings();
     callback apply-email-settings();
     callback cancel-email-settings();
@@ -257,23 +267,9 @@ export component AppWindow inherits Window {
             title: "File";
             MenuItem { title: "Open…"; activated => { root.open(); } }
             MenuItem { title: "Save"; activated => { root.save(); } }
+            MenuItem { title: "Save as…"; activated => { root.save-as(); } }
             MenuItem { title: "Email settings…"; activated => { root.open-email-settings(); } }
             MenuItem { title: "Email data to…"; activated => { root.open-email-to-dialog(); } }
-        }
-        Menu {
-            title: "Analyze";
-            MenuItem { title: "Measure regions"; activated => { root.measure(); } }
-            MenuItem {
-                title: "Detect lanes & bands";
-                activated => {
-                    if (root.has-annotations) {
-                        root.confirm-detect-open = true;
-                    } else {
-                        root.open-fit-dialog();
-                    }
-                }
-            }
-            MenuItem { title: "Compare two bands"; activated => { root.compare(); } }
         }
         Menu {
             title: "Help";
@@ -302,6 +298,11 @@ export component AppWindow inherits Window {
                     width: 145px;
                     vertical-stretch: 0;
                     selected(v) => { root.frame-changed(self.current-index); }
+                }
+                Button {
+                    text: "Recompute HDR…";
+                    vertical-stretch: 0;
+                    clicked => { root.open-hdr-dialog(); }
                 }
                 Text { text: "Z:"; vertical-alignment: center; }
                 Slider {
@@ -1072,6 +1073,72 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ---- Recompute-HDR modal dialog ----
+    if root.hdr-dialog-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 440px;
+            height: 340px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text { text: "Recompute HDR"; font-size: 15px; font-weight: 700; }
+                Text {
+                    text: "Re-merge the exposure bracket into the working image. All options are off by default (a plain linear hat-weighted merge).";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                CheckBox {
+                    text: "Dark-frame / bias subtraction";
+                    checked <=> root.hdr-bias-subtraction;
+                }
+                Text {
+                    text: "Estimate each frame's black level and subtract it before merging, so faint bands aren't lifted by the sensor's dark offset.";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                CheckBox {
+                    text: "Alignment (de-shift)";
+                    checked <=> root.hdr-align;
+                }
+                Text {
+                    text: "Register each frame to the best-exposed one by FFT phase correlation (corrects small translations between exposures).";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                CheckBox {
+                    text: "De-ghosting";
+                    checked <=> root.hdr-deghost;
+                }
+                Text {
+                    text: "Reject, per pixel, exposure samples that disagree with the across-exposure median (something that moved between frames).";
+                    color: #777777; font-size: 11px; wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.cancel-hdr-dialog(); } }
+                    Button {
+                        text: "Recompute";
+                        primary: true;
+                        clicked => { root.apply-hdr-dialog(); }
+                    }
+                }
+            }
+        }
+    }
+
     // ---- "Use as ladder" modal dialog ----
     if root.confirm-detect-open: Rectangle {
         width: 100%;
@@ -1391,11 +1458,20 @@ export component AppWindow inherits Window {
                 }
 
                 HorizontalBox {
-                    Text { text: "Flow smoothness:"; vertical-alignment: center; width: 230px; }
-                    LineEdit { text <=> root.fit-dialog-flow-smoothness; horizontal-stretch: 1; }
+                    Text {
+                        text: "Flow smoothness:";
+                        vertical-alignment: center;
+                        width: 230px;
+                        color: root.fit-dialog-use-band-tilts ? #000000 : #aaaaaa;
+                    }
+                    LineEdit {
+                        text <=> root.fit-dialog-flow-smoothness;
+                        horizontal-stretch: 1;
+                        enabled: root.fit-dialog-use-band-tilts;
+                    }
                 }
                 Text {
-                    text: "Optical-flow mode only: smoothness of the flow field. Higher = stiffer, more interpolation between confident strips.";
+                    text: "When using band tilts only: smoothness of the flow field. Higher = stiffer, more interpolation between confident strips.";
                     color: #777777; font-size: 11px; wrap: word-wrap;
                 }
 

@@ -267,6 +267,60 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_save_as(move || {
+            let ui = ui_weak.unwrap();
+            let default_name = state.borrow().save_dialog_filename();
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("OpenGel", &["zip"])
+                .set_file_name(default_name)
+                .save_file()
+            {
+                match state.borrow_mut().save_as(&path) {
+                    Ok(()) => ui.set_status(format!("Saved {}", path.display()).into()),
+                    Err(e) => ui.set_status(format!("Save failed: {e}").into()),
+                }
+            }
+        });
+    }
+    // Recompute-HDR dialog: open (sync toggles), apply (recompute), cancel.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_hdr_dialog(move || {
+            let ui = ui_weak.unwrap();
+            let st = state.borrow();
+            ui.set_hdr_bias_subtraction(st.hdr_bias_subtraction);
+            ui.set_hdr_align(st.hdr_align);
+            ui.set_hdr_deghost(st.hdr_deghost);
+            ui.set_hdr_dialog_open(true);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_apply_hdr_dialog(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_hdr_dialog_open(false);
+            {
+                let mut st = state.borrow_mut();
+                st.hdr_bias_subtraction = ui.get_hdr_bias_subtraction();
+                st.hdr_align = ui.get_hdr_align();
+                st.hdr_deghost = ui.get_hdr_deghost();
+            }
+            let msg = state.borrow_mut().recompute_hdr();
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_hdr_dialog(move || {
+            ui_weak.unwrap().set_hdr_dialog_open(false);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
         let email_settings = email_settings.clone();
         ui.on_open_email_settings(move || {
             let ui = ui_weak.unwrap();

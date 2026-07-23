@@ -18,7 +18,8 @@ use image::{DynamicImage, ImageFormat};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 
-use crate::core::model::{Analysis, GelImage, GelProject, GelType, FORMAT_VERSION};
+use crate::core::model::{Analysis, GelImage, GelProject, GelType, HdrRecord, FORMAT_VERSION};
+use crate::core::GrayF32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -44,13 +45,22 @@ struct Manifest {
     format: String,
     version: u32,
     gel_type: GelType,
+    /// Present when a merged HDR image (`images/merged.png`) is stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hdr: Option<HdrRecord>,
 }
+
+/// Filename of the persisted HDR merge inside the zip.
+const MERGED_FILENAME: &str = "images/merged.png";
 
 /// A project plus its decoded image frames.
 pub struct GelDocument {
     pub project: GelProject,
     /// Decoded frames, parallel to `project.images`.
     pub frames: Vec<DynamicImage>,
+    /// The saved HDR merge (linear radiance), when `project.hdr` is set. Used
+    /// directly as the working image instead of re-merging the bracket on load.
+    pub merged: Option<GrayF32>,
 }
 
 impl GelDocument {
@@ -82,7 +92,11 @@ impl GelDocument {
                 meta,
             });
         }
-        GelDocument { project, frames }
+        GelDocument {
+            project,
+            frames,
+            merged: None,
+        }
     }
 
     /// Serialize to a `.gel.zip` file at `path`.
@@ -110,18 +124,25 @@ impl GelDocument {
                 format: "opengel".to_string(),
                 version: FORMAT_VERSION,
                 gel_type: self.project.gel_type,
+                hdr: self.project.hdr,
             };
             write_json(&mut zip, "manifest.json", &manifest, opts)?;
             write_json(&mut zip, "metadata.json", &self.project.images, opts)?;
             write_json(&mut zip, "analysis.json", &self.project.analysis, opts)?;
 
+            // Images are already compressed (PNG), so store without deflate.
+            let store =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
             for (img, frame) in self.project.images.iter().zip(&self.frames) {
-                // Images are already compressed (PNG), so store without deflate.
-                let store =
-                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
                 zip.start_file(&img.filename, store)?;
                 let mut png = Vec::new();
                 frame.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+                zip.write_all(&png)?;
+            }
+            // Persist the HDR merge (16-bit, normalized by the record's scale).
+            if let (Some(rec), Some(merged)) = (self.project.hdr, &self.merged) {
+                zip.start_file(MERGED_FILENAME, store)?;
+                let png = encode_merged_png(merged, rec.scale)?;
                 zip.write_all(&png)?;
             }
             zip.finish()?;
@@ -142,6 +163,10 @@ impl GelDocument {
     /// used. Returns `None` when there are no frames.
     pub fn working_image(&self) -> Option<crate::core::GrayF32> {
         use std::collections::BTreeMap;
+        // A saved (possibly option-tuned) HDR merge wins over re-merging.
+        if let Some(merged) = &self.merged {
+            return Some(merged.clone());
+        }
         if self.frames.is_empty() {
             return None;
         }
@@ -191,15 +216,60 @@ impl GelDocument {
             frames.push(frame);
         }
 
+        // Reconstruct the saved HDR merge, if present.
+        let merged = match manifest.hdr {
+            Some(rec) => {
+                let mut raw = Vec::new();
+                zip.by_name(MERGED_FILENAME)
+                    .map_err(|_| FormatError::MissingEntry("images/merged.png"))?
+                    .read_to_end(&mut raw)?;
+                let img = image::load_from_memory_with_format(&raw, ImageFormat::Png)?;
+                Some(decode_merged_png(&img, rec.scale))
+            }
+            None => None,
+        };
+
         let project = GelProject {
             format: manifest.format,
             version: manifest.version,
             gel_type: manifest.gel_type,
             images,
             analysis,
+            hdr: manifest.hdr,
         };
-        Ok(GelDocument { project, frames })
+        Ok(GelDocument {
+            project,
+            frames,
+            merged,
+        })
     }
+}
+
+/// Encode a linear-radiance merge as a 16-bit grayscale PNG, normalized so
+/// `scale` maps to full-white: `png = clamp(radiance/scale, 0, 1) * 65535`.
+fn encode_merged_png(merged: &GrayF32, scale: f64) -> Result<Vec<u8>> {
+    let (w, h) = (merged.width() as u32, merged.height() as u32);
+    let inv = if scale > 0.0 { 1.0 / scale as f32 } else { 1.0 };
+    let mut buf = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(w, h);
+    for (x, y, px) in buf.enumerate_pixels_mut() {
+        let r = (merged.get(x as usize, y as usize) * inv).clamp(0.0, 1.0);
+        *px = image::Luma([(r * 65535.0).round() as u16]);
+    }
+    let mut png = Vec::new();
+    DynamicImage::ImageLuma16(buf).write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+    Ok(png)
+}
+
+/// Inverse of [`encode_merged_png`]: `radiance = png / 65535 * scale`.
+fn decode_merged_png(img: &DynamicImage, scale: f64) -> GrayF32 {
+    let luma = img.to_luma16();
+    let (w, h) = (luma.width() as usize, luma.height() as usize);
+    let mut data = ndarray::Array2::<f32>::zeros((h, w));
+    let s = scale as f32;
+    for (x, y, px) in luma.enumerate_pixels() {
+        data[[y as usize, x as usize]] = px.0[0] as f32 / 65535.0 * s;
+    }
+    GrayF32 { data }
 }
 
 fn write_json<W: Write + std::io::Seek, T: Serialize>(
@@ -226,4 +296,61 @@ fn read_json<R: Read + std::io::Seek, T: for<'de> Deserialize<'de>>(
     let mut s = String::new();
     file.read_to_string(&mut s)?;
     Ok(Some(serde_json::from_str(&s)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::hdr::HdrOptions;
+
+    fn tiny_frame(v: u8) -> DynamicImage {
+        DynamicImage::ImageLuma8(image::ImageBuffer::from_pixel(4, 4, image::Luma([v])))
+    }
+
+    #[test]
+    fn hdr_merge_roundtrips_through_zip() {
+        let frames = vec![tiny_frame(40), tiny_frame(80)];
+        let mut doc = GelDocument::from_frames(GelType::Dna, frames, Vec::new());
+
+        // A merged radiance image spanning [0, 1.5].
+        let mut data = ndarray::Array2::<f32>::zeros((4, 4));
+        for (i, v) in data.iter_mut().enumerate() {
+            *v = i as f32 * 0.1;
+        }
+        let merged = GrayF32 { data };
+        let scale = 1.6;
+        doc.merged = Some(merged.clone());
+        doc.project.hdr = Some(HdrRecord {
+            options: HdrOptions {
+                align: true,
+                ..Default::default()
+            },
+            scale,
+        });
+
+        let bytes = doc.to_bytes().unwrap();
+        let loaded = GelDocument::from_bytes(&bytes).unwrap();
+
+        // The merge round-trips within 16-bit quantization.
+        let lm = loaded.merged.as_ref().expect("merged persisted");
+        assert_eq!((lm.width(), lm.height()), (4, 4));
+        for (a, b) in merged.data.iter().zip(lm.data.iter()) {
+            assert!((a - b).abs() < 1e-3, "{a} vs {b}");
+        }
+        // The record (options + scale) persisted, and working_image uses it.
+        let rec = loaded.project.hdr.expect("hdr record");
+        assert!(rec.options.align);
+        assert!((rec.scale - scale).abs() < 1e-9);
+        assert_eq!(loaded.working_image().map(|w| (w.width(), w.height())), Some((4, 4)));
+    }
+
+    #[test]
+    fn document_without_hdr_still_loads() {
+        // Backward compat: a doc with no HDR record has no merged.png and loads.
+        let doc = GelDocument::from_frames(GelType::Dna, vec![tiny_frame(50)], Vec::new());
+        let bytes = doc.to_bytes().unwrap();
+        let loaded = GelDocument::from_bytes(&bytes).unwrap();
+        assert!(loaded.merged.is_none());
+        assert!(loaded.project.hdr.is_none());
+    }
 }

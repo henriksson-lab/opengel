@@ -118,6 +118,10 @@ pub struct AppState {
     /// Which captured frame to display: `None` = the merged HDR working image,
     /// `Some(i)` = raw frame `i`. Analysis always uses the merged image.
     pub view_frame: Option<usize>,
+    /// Optional stages for the HDR "Recompute" action (bias / align / de-ghost).
+    pub hdr_bias_subtraction: bool,
+    pub hdr_align: bool,
+    pub hdr_deghost: bool,
     /// Trace-tab state: y-axis mode and which lanes are plotted.
     pub trace_mode: TraceMode,
     /// Trace-plot horizontal zoom (>=1; 1 = the auto-cropped signal range).
@@ -211,6 +215,9 @@ impl AppState {
             work: None,
             gel_type: GelType::Dna,
             source_path: None,
+            hdr_bias_subtraction: false,
+            hdr_align: false,
+            hdr_deghost: false,
             rotation_deg: 0.0,
             disp_lo: 0.0,
             disp_hi: 1.0,
@@ -1892,6 +1899,96 @@ impl AppState {
             .ok_or_else(|| anyhow!("nothing to save"))?;
         doc.save(path)?;
         Ok(())
+    }
+
+    /// Save the document to `path` and remember it as the current file, so later
+    /// saves default to the same place.
+    pub fn save_as(&mut self, path: &Path) -> Result<()> {
+        self.save_path(path)?;
+        self.source_path = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// Default file name for the "Save as…" dialog: the current file's name, or a
+    /// sensible fallback.
+    pub fn save_dialog_filename(&self) -> String {
+        self.source_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or("gel.gel.zip")
+            .to_string()
+    }
+
+    /// Recompute the HDR merge from the exposure bracket with the current option
+    /// toggles ([`hdr_bias_subtraction`], [`hdr_align`], [`hdr_deghost`]). The
+    /// result becomes the working image and is stored on the document so it is
+    /// persisted to the `.gel.zip` on save. Returns a status message.
+    pub fn recompute_hdr(&mut self) -> String {
+        use opengel::core::hdr::{merge_hdr_with, HdrOptions};
+        use opengel::core::model::HdrRecord;
+        use std::collections::BTreeMap;
+
+        let opts = HdrOptions {
+            bias_subtraction: self.hdr_bias_subtraction,
+            align: self.hdr_align,
+            deghost: self.hdr_deghost,
+        };
+        let Some(doc) = self.doc.as_mut() else {
+            return "No document.".into();
+        };
+        // Largest bracket group (shared bracket_group, >1 frame).
+        let mut groups: BTreeMap<Option<u32>, Vec<usize>> = BTreeMap::new();
+        for (i, img) in doc.project.images.iter().enumerate() {
+            groups.entry(img.meta.bracket_group).or_default().push(i);
+        }
+        let bracket = groups
+            .into_iter()
+            .filter(|(k, v)| k.is_some() && v.len() > 1)
+            .max_by_key(|(_, v)| v.len());
+        let Some((_, idxs)) = bracket else {
+            return "No exposure bracket to merge (need ≥2 bracketed frames).".into();
+        };
+        let frames: Vec<GrayF32> = idxs
+            .iter()
+            .map(|&i| GrayF32::from_dynamic(&doc.frames[i]))
+            .collect();
+        let exposures: Vec<f64> = idxs
+            .iter()
+            .map(|&i| doc.project.images[i].meta.exposure_seconds)
+            .collect();
+        if exposures.iter().any(|&t| t <= 0.0) {
+            return "Bracket frames are missing exposure times.".into();
+        }
+        let merged = match merge_hdr_with(&frames, &exposures, &opts) {
+            Ok(m) => m,
+            Err(e) => return format!("HDR merge failed: {e}"),
+        };
+        // Radiance scale for persisting the merge as a normalized 16-bit PNG.
+        let scale = (merged.data.iter().cloned().fold(0.0f32, f32::max) as f64).max(1e-6);
+        doc.project.hdr = Some(HdrRecord { options: opts, scale });
+        doc.merged = Some(merged.clone());
+        self.work = Some(merged);
+        self.view_frame = None; // show the merged image
+        self.doc_gen = self.doc_gen.wrapping_add(1);
+
+        let mut parts = Vec::new();
+        if opts.bias_subtraction {
+            parts.push("bias");
+        }
+        if opts.align {
+            parts.push("align");
+        }
+        if opts.deghost {
+            parts.push("de-ghost");
+        }
+        let applied = if parts.is_empty() {
+            "plain".to_string()
+        } else {
+            parts.join("+")
+        };
+        format!("Recomputed HDR from {} frames ({applied}).", idxs.len())
     }
 
     pub fn email_attachment(&self) -> Result<(String, Vec<u8>)> {
