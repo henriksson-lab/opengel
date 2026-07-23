@@ -61,7 +61,13 @@ jobs:
         run: cargo test
 
       - name: Package
-        run: cargo package --allow-dirty
+        # Verify the crate packages and the tarball compiles, but WITHOUT the
+        # default `gelgenie-ml` (burn/wgpu/cubecl) feature: re-linking that whole
+        # ML stack in the verification build exhausts the runner's linker
+        # (rust-lld bus-error/OOM). `cargo test` above already builds everything
+        # with the ML stack, so buildability is covered; this checks the manifest
+        # + include-list and that the core/GUI compile from the packaged files.
+        run: cargo package --allow-dirty --no-default-features
 
   windows-exe:
     name: Windows executables

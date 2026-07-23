@@ -129,9 +129,28 @@ pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
     ui.set_trace_plots(ModelRc::new(VecModel::from(paths)));
     ui.set_trace_zoom(state.trace_zoom as f32);
 
+    // Per-sample molar amounts are tiny for DNA (fmol–pmol range), so pick a
+    // readable sub-unit instead of showing all-zero nmol ticks. Non-molarity
+    // modes keep their native unit (scale 1).
+    let (yscale, yunit): (f64, &str) = match state.trace_mode {
+        TraceMode::Molarity => {
+            let m = ymax as f64;
+            if m <= 0.0 || m >= 1.0 {
+                (1.0, "nmol")
+            } else if m >= 1e-3 {
+                (1e3, "pmol")
+            } else if m >= 1e-6 {
+                (1e6, "fmol")
+            } else {
+                (1e9, "amol")
+            }
+        }
+        _ => (1.0, ""),
+    };
+
     // Y ticks (index 0 = top = ymax); X ticks span the cropped migration range.
     let yticks: Vec<SharedString> = (0..5)
-        .map(|i| fmt_tick(ymax as f64 * (4 - i) as f64 / 4.0).into())
+        .map(|i| fmt_tick(ymax as f64 * yscale * (4 - i) as f64 / 4.0).into())
         .collect();
     let xticks: Vec<SharedString> = (0..5)
         .map(|i| fmt_tick(k0 + (k1 - k0) * i as f64 / 4.0).into())
@@ -146,18 +165,19 @@ pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
     // inverse — a proper, readable bp axis normalized to the ladder.
     match state.sizing_fit().filter(|_| n > 0 && k1 > k0) {
         Some(fit) => {
-            let (v0, v1) = (k0 / n as f64, k1 / n as f64);
-            let (s_a, s_b) = (fit.size_at(v0), fit.size_at(v1));
-            let (s_lo, s_hi) = (s_a.min(s_b), s_a.max(s_b));
-            let ticks: Vec<AxisTick> = nice_1_2_5(s_lo, s_hi)
-                .into_iter()
-                .filter_map(|bp| {
-                    let v = fit.position_at(bp)?;
-                    let pos = (v - v0) / (v1 - v0);
-                    (0.0..=1.0).contains(&pos).then_some(AxisTick {
-                        pos: pos as f32,
-                        label: fmt_tick(bp).into(),
-                    })
+            // Size (bp) sampled at the SAME 5 fixed screen positions as the
+            // migration axis, so the two axes stay locked together while panning
+            // and zooming (a vertical line reads the same x on both). `k/n = v`
+            // is the fit's migration coordinate (one trace sample per rectified
+            // pixel row), so `size_at(k/n)` is the size at that column.
+            let ticks: Vec<AxisTick> = (0..5)
+                .map(|i| {
+                    let f = i as f64 / 4.0;
+                    let k = k0 + (k1 - k0) * f;
+                    AxisTick {
+                        pos: f as f32,
+                        label: fmt_tick(fit.size_at(k / n as f64)).into(),
+                    }
                 })
                 .collect();
             ui.set_trace_xticks_top(ModelRc::new(VecModel::from(ticks)));
@@ -170,9 +190,9 @@ pub fn refresh_trace(ui: &AppWindow, state: &AppState) {
     }
     ui.set_trace_ylabel(
         match state.trace_mode {
-            TraceMode::Intensity => "Intensity (a.u.)",
-            TraceMode::Ng => "Mass (ng)",
-            TraceMode::Molarity => "Molarity (nmol)",
+            TraceMode::Intensity => "Intensity (a.u.)".to_string(),
+            TraceMode::Ng => "Mass (ng)".to_string(),
+            TraceMode::Molarity => format!("Molarity ({yunit})"),
         }
         .into(),
     );
@@ -268,25 +288,6 @@ fn signal_extent(traces: &[LaneTrace], n: usize) -> (f64, f64) {
         }
         _ => (0.0, n as f64),
     }
-}
-
-/// Round "1-2-5 × 10^k" tick values within `[min, max]` (both > 0).
-fn nice_1_2_5(min: f64, max: f64) -> Vec<f64> {
-    let mut out = Vec::new();
-    if min <= 0.0 || max <= min {
-        return out;
-    }
-    let mut decade = 10f64.powf(min.log10().floor());
-    while decade <= max {
-        for m in [1.0, 2.0, 5.0] {
-            let v = m * decade;
-            if v >= min && v <= max {
-                out.push(v);
-            }
-        }
-        decade *= 10.0;
-    }
-    out
 }
 
 // The windowed grayscale base and the histogram are invariant to mouse hover

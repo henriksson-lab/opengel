@@ -1088,8 +1088,9 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_export_trace_pdf(move || {
             let ui = ui_weak.unwrap();
+            let default_name = state.borrow().trace_pdf_filename();
             if let Some(path) = rfd::FileDialog::new()
-                .set_file_name("trace.pdf")
+                .set_file_name(default_name)
                 .add_filter("PDF", &["pdf"])
                 .save_file()
             {

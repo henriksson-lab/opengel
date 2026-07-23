@@ -1921,6 +1921,25 @@ impl AppState {
             .to_string()
     }
 
+    /// Default filename for the trace-PDF export: derived from the loaded/saved
+    /// gel file's base name (without the `.gel.zip`/`.zip` extension), else a
+    /// generic name.
+    pub fn trace_pdf_filename(&self) -> String {
+        let base = self
+            .source_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|n| {
+                n.strip_suffix(".gel.zip")
+                    .or_else(|| n.strip_suffix(".zip"))
+                    .unwrap_or(n)
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("trace");
+        format!("{base}_trace.pdf")
+    }
+
     /// Recompute the HDR merge from the exposure bracket with the current option
     /// toggles ([`hdr_bias_subtraction`], [`hdr_align`], [`hdr_deghost`]). The
     /// result becomes the working image and is stored on the document so it is

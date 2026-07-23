@@ -810,14 +810,15 @@ export component AppWindow inherits Window {
               color: #222222;
               font-size: 12px;
             }
-            // Y-axis title, drawn horizontally at the top-left of the axis.
-            // Rotated Slint text renders blurry/bold on HiDPI (a known layout
-            // issue), so it is kept upright here.
+            // Y-axis title, drawn horizontally at the top-left — on the SAME row
+            // as the "Size (bp)" top-axis title so it doesn't collide with the bp
+            // tick numbers just below it. Rotated Slint text renders blurry/bold
+            // on HiDPI (a known layout issue), so it is kept upright here.
             Text {
               text: root.trace-ylabel;
               x: 6px;
-              y: plot.mt - 16px;
-              width: plot.ml + 60px;
+              y: plot.mt - 34px;
+              width: plot.ml + 30px;
               horizontal-alignment: left;
               color: #222222;
               font-size: 11px;
