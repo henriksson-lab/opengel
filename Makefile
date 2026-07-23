@@ -25,11 +25,11 @@ MIMEPKGDIR := $(MIMEDIR)/packages
 # The window's Wayland app_id / X11 WM_CLASS; the icon PNG/SVG and the .desktop
 # StartupWMClass are all keyed to this name so the desktop finds the icon.
 LINUX_APP_ID := opengel
-# Extra cargo flags for the Linux release build. Camera capture is opt-in on
-# Linux (needs libv4l-dev at build time; adds a libv4l-0 runtime dep), so the
-# packaged app enables it by default to match the always-on capture on macOS /
-# Windows. Override with `make deb CARGO_BUILD_FLAGS=` to build without a camera.
-CARGO_BUILD_FLAGS ?= --features camera
+# Extra cargo flags for the Linux release build. The camera backend is a default
+# feature (needs libv4l-dev at build time; adds a libv4l-0 runtime dep), so the
+# packaged app captures out of the box like macOS / Windows. Override with
+# `make deb CARGO_BUILD_FLAGS=--no-default-features` to build without a camera.
+CARGO_BUILD_FLAGS ?=
 DEB_NAME := opengel
 DEB_ARCH ?= $(shell dpkg --print-architecture 2>/dev/null || printf 'amd64')
 # make deb derives ELF shared-library dependencies with dpkg-shlibdeps, including

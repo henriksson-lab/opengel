@@ -2,41 +2,27 @@
 
 Capture, detect and quantify gel electrophoresis images
 
-**under development**
+**under development!**
 
-Supports **DNA, RNA and protein** gels. Captures from a USB camera with
+Features:
+
+* Supports **DNA, RNA and protein** gels.
+* Camera snapshots, including multi-exposure **HDR** for dynamic range
+* Detection of bands using ML, and gaussian mixture distribution to figure out if the are at an angle. The gel is modelled by [NURBS](https://en.wikipedia.org/wiki/Non-uniform_rational_B-spline), fitting band angles and ladder band positions*
+* Quantification of densitys and molarities, taking gel warping into account
+* Quick compute of relative mass and molarity ratios
+
+Captures from a USB camera with
 exposure control (including multi-exposure **HDR** for dynamic range), stores
 everything in a self-contained `.gel.zip`, auto-detects lanes/bands and the
 ladder, and quantifies band amounts in **ng and molarity** — absolutely (against
 a ladder of known concentration) and relatively (between two selected bands).
 
-![OpenGel GUI: a detected demo gel with per-band annotation boxes and the fitted
-NURBS warp grid overlaid](assets/screenshot.png)
+![OpenGel GUI: a detected gel with per-band annotation boxes and the fitted NURBS warp grid overlaid](assets/screenshot.png)
 
-*The desktop GUI on the built-in demo gel (`opengel --demo --detect --show-warp`):
-detected lanes/bands with orientation-fitted annotation boxes, the NURBS warp
-grid following the band smile, and the ladder lane highlighted.*
+![OpenGel Trace view: per-lane densitometry profiles with a migration-px bottom axis and a ladder-calibrated size (bp) top axis](assets/trace.png)
 
-![OpenGel Trace view: per-lane densitometry profiles with a migration-px bottom
-axis and a ladder-calibrated size (bp) top axis](assets/trace.png)
-
-*The Trace view: per-lane densitometry profiles over all lanes, with a
-migration-distance (px) bottom axis and a ladder-calibrated size (bp) top axis,
-pan/zoom, and PDF export.*
-
-## Project layout
-
-A single `opengel` crate; each subdirectory of `src/` was previously its own
-crate:
-
-| Module | What it is |
-|--------|------------|
-| `src/core` | Data model, `.gel.zip` IO, HDR merge, ladder database, quant math. |
-| `src/detect` | Pluggable detectors, ladder ID, orientation, evaluation harness. |
-| `src/sim` | Synthetic gel simulator with effects + exact ground truth (rayon). |
-| `src/camera` | USB camera capture + exposure (mock always; nokhwa behind `--features camera`). |
-| `src/cli` | The `gel` binary (headless: analyze, eval, simulate, import-masks, …). |
-| `src/gui` | The `opengel` binary — the Slint desktop GUI. |
+*The Trace view: per-lane densitometry profiles over all lanes*
 
 ## The `.gel.zip` format
 
@@ -49,82 +35,58 @@ analysis.json   lanes, bands, blobs, ladder assignments, calibration, quant
 images/img_NN.png   raw captures (8- or 16-bit)
 ```
 
-## Detection & quantification
-
-* **Lanes** — column-sum intensity profile; lanes are the peaks (`src/detect/classical.rs`).
-* **Bands** — per-lane vertical densitometry trace, rolling-ball baseline
-  subtraction, peak detection + integration (`src/detect/signal.rs`).
-* **Ladder ID** — match a lane's band pattern to a commercial template via a
-  semi-log fit (`ln(size) ∝ migration`); pick the best-explained lane
-  (`src/detect/ladder_match.rs`).
-* **Sizing** — semi-log calibration from the ladder sizes every other band.
-* **Amounts** — intensity→mass calibration from ladder bands of known mass;
-  molarity via `mass / (size × g·mol⁻¹·unit⁻¹)` (650/bp DNA, 340/nt RNA, Da for
-  protein) — `src/core/quant.rs`.
-* **Cellpose** — plug real bindings into `opengel::detect::cellpose::BlobSegmenter`;
-  `CellposeDetector` clusters blobs into lanes/bands. Benchmark it against the
-  classical detector with the eval harness.
-
-The detector to ship as default is decided by numbers, not assertion: the
-**evaluation harness** (`src/detect/eval.rs`) scores any `GelDetector`
-against Claude-annotated ground truth (lane IoU, band precision/recall, position
-error).
-
 ## Build & run
 
 ```sh
-cargo build                      # lib + gel + opengel bins (mock camera)
-cargo test                       # all crates
+cargo build --release             # optimized build (USB camera backend on by default)
+
+# GUI (the default binary)
+cargo run --release
 
 # CLI
-cargo run --bin gel -- make-demo demo.gel.zip
-cargo run --bin gel -- analyze demo.gel.zip
-cargo run --bin gel -- info demo.gel.zip
-cargo run --bin gel -- ladders --gel-type dna
-cargo run --bin gel -- make-dataset datasets/demo
-cargo run --bin gel -- eval datasets/demo
-
-# Simulator: render degraded gels (rotation, warp, background, overexposure,
-# run-out-of-frame, Poisson noise) with exact ground truth, in parallel, then
-# benchmark the detector on them.
-cargo run --bin gel -- simulate datasets/sim --count 50 --seed 1 --eval
-cargo run --bin gel -- simulate datasets/sim --count 50 --upright --eval   # no rotation
-
-# Analyze a loose image (jpg/png/tif), not just a .gel.zip
-cargo run --bin gel -- analyze path/to/gel.jpg --out out.gel.zip
-
-# Real annotated gels: convert GelGenie segmentation masks to ground truth,
-# then benchmark the detector on them (see datasets/real_gels/).
-cargo run --bin gel -- import-masks datasets/real_gels/gelgenie/quantitation_ladder_gels
-cargo run --bin gel -- eval        datasets/real_gels/gelgenie/quantitation_ladder_gels/test_images
-
-# GUI (needs a display)
-cargo run --bin opengel
-cargo run --bin opengel -- demo.gel.zip          # open a file on launch
-cargo run --bin opengel --features camera        # enable real USB capture
+cargo run --release --bin gel
 ```
 
-## GUI viewer
-
-The desktop app is an image viewer first: **zoom** (buttons / mouse wheel),
-**pan** (drag), **live rotation** (slider + auto-straighten), and a display
-**level** control. Lane/band overlays are composited into the image so they
-zoom, pan and rotate together with it.
-
-**Demo annotation → measurement.** *Analyze ▸ Demo annotation* drops 4 example
-lanes (one ladder, three samples) with band regions; *Measure* then integrates
-each region's background-subtracted density straight from the pixels
-(densitometry) and fills the Bands table. This region-measurement step is
-**independent of the detection algorithm** — regions can come from the demo,
-manual editing, or a detector plugged in later behind
-`opengel::detect::detector::GelDetector`. Automatic lane/band detection is currently
-deferred pending detector retuning/replacement.
+The crate ships two binaries — `opengel` (the desktop GUI) and `gel` (the CLI).
+`default-run` points bare `cargo run` at the GUI; pass `--bin gel` for the CLI.
+The USB camera backend is on by default on every platform. On Linux it needs
+`libv4l-dev` at build time (`sudo apt-get install libv4l-dev`); build with
+`--no-default-features` to drop it for a headless build without the v4l toolchain.
 
 
-## Datasets
+## Citing
 
-`datasets/real_gels/` holds ~1,270 openly-licensed real gel images plus 575
-hand-labelled band masks (GelGenie, CC BY 4.0; rice CAPS gels, CC BY-SA 2.1 JP;
-Wikimedia/PLOS mixed) — image blobs are git-ignored, source/license sidecars and
-manifests are tracked. `gel import-masks` turns GelGenie masks into eval ground
-truth.
+
+The initial detection of bands is done using the ML model of [GelGenie](https://github.com/mattaq31/GelGenie),
+converted to Rust and adapted for the NURBS model. It is an important component and it would thus be
+fair you could cite:
+
+> Aquilina, M., Wu, N. J. W., Kwan, K., Bušić, F., Dodd, J., Nicolás-Sáenz, L.,
+> O'Callaghan, A., Bankhead, P., & Dunn, K. E. (2025). GelGenie: an AI-powered
+> framework for gel electrophoresis image analysis. *Nature Communications*, 16,
+> 4087. https://doi.org/10.1038/s41467-025-59189-0
+
+```bibtex
+@article{aquilina2025gelgenie,
+  title   = {GelGenie: an AI-powered framework for gel electrophoresis image analysis},
+  author  = {Aquilina, Matthew and Wu, Nathan J. W. and Kwan, Kiros and Bu{\v{s}}i{\'c}, Filip and Dodd, James and Nicol{\'a}s-S{\'a}enz, Laura and O'Callaghan, Alan and Bankhead, Peter and Dunn, Katherine E.},
+  journal = {Nature Communications},
+  volume  = {16},
+  pages   = {4087},
+  year    = {2025},
+  doi     = {10.1038/s41467-025-59189-0}
+}
+```
+
+
+In addition, please cite this git repository. So you could write something like:
+*Gels were analyzed using https://github.com/henriksson-lab/opengel, using GelGenie[1] for band detection*
+
+
+## License
+
+The code is under MIT licens
+
+Note that code has been produced using agentic AI; in case you
+wish to copy out any part of the code, please first please review
+the code for accidental reuse of copyrighted material.

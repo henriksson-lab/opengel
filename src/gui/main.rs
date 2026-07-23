@@ -627,8 +627,8 @@ fn main() -> anyhow::Result<()> {
             });
         }};
     }
-    edit_cb!(on_add_lane, |s: &mut AppState, nx: f64, _ny: f64| s
-        .add_lane_at(nx, None));
+    edit_cb!(on_add_lane, |s: &mut AppState, _nx: f64, _ny: f64| s
+        .add_lane(None));
     // Add band targets the currently selected lane (not the last image click).
     {
         let ui_weak = ui.as_weak();
@@ -748,13 +748,10 @@ fn main() -> anyhow::Result<()> {
         ui.on_apply_add_lane_dialog(move || {
             let ui = ui_weak.unwrap();
             ui.set_add_lane_dialog_open(false);
-            // Place the lane at the last gel click x (centre if none).
-            let nx = {
-                let x = ui.get_click_x() as f64;
-                if x > 0.0 { x } else { 0.5 }
-            };
+            // Placement is automatic (left-to-right, no overlap) — the name is
+            // all we take from the dialog.
             let name = ui.get_add_lane_dialog_value().to_string();
-            let msg = state.borrow_mut().add_lane_at(nx, Some(name));
+            let msg = state.borrow_mut().add_lane(Some(name));
             ui.set_status(msg.into());
             view::refresh(&ui, &state.borrow());
         });

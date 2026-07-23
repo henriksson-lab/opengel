@@ -1941,22 +1941,38 @@ impl AppState {
         format!("Lane {next}")
     }
 
-    pub fn add_lane_at(&mut self, nx: f64, label: Option<String>) -> String {
+    /// Add a lane, placed **left-to-right** in the first horizontal slot that
+    /// doesn't overlap an existing lane (fills gaps from the left, else appends
+    /// to the right).
+    pub fn add_lane(&mut self, label: Option<String>) -> String {
         self.with_analysis_mut(|a, img| {
             let (w, h) = (img.width() as u32, img.height() as u32);
             let warp = a.warp_or_identity(w, h);
-            let cx = nx.clamp(0.0, 1.0) * w as f64;
-            let half = (0.04 * w as f64).max(4.0);
-            let (u_lo, _) = warp.invert((cx - half).max(0.0), 0.0);
-            let (u_hi, _) = warp.invert((cx + half).min(w as f64), 0.0);
+            // Lane half-width in u, from a default pixel width at the gel centre.
+            let halfpx = (0.04 * w as f64).max(4.0);
+            let cxpx = w as f64 / 2.0;
+            let (ul, _) = warp.invert((cxpx - halfpx).max(0.0), 0.0);
+            let (ur, _) = warp.invert((cxpx + halfpx).min(w as f64), 0.0);
+            let uhalf = ((ur - ul).abs() / 2.0).clamp(0.01, 0.45);
+            let gap = uhalf * 0.3;
+            // Sweep left→right, jumping past any lane the candidate would overlap.
+            let mut lanes: Vec<(f64, f64)> = a.lanes.iter().map(|l| (l.u_min, l.u_max)).collect();
+            lanes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            let mut c = uhalf;
+            for (lmin, lmax) in &lanes {
+                if c + uhalf + gap > *lmin && c - uhalf - gap < *lmax {
+                    c = lmax + gap + uhalf;
+                }
+            }
+            c = c.clamp(uhalf, 1.0 - uhalf);
             let id = a.lanes.iter().map(|l| l.id).max().map_or(0, |m| m + 1);
             // A label that's just the default "Lane N" stays None so downstream
             // display keeps using the derived name.
             let label = label.filter(|s| !s.trim().is_empty() && s.trim() != format!("Lane {id}"));
             a.lanes.push(Lane {
                 id,
-                u_min: u_lo.min(u_hi),
-                u_max: u_lo.max(u_hi),
+                u_min: c - uhalf,
+                u_max: c + uhalf,
                 label,
                 is_ladder: false,
             });
@@ -1965,8 +1981,9 @@ impl AppState {
     }
 
     /// Add a band to the currently selected lane (or the selected band's lane),
-    /// at the lane centre and mid-migration. Falls back to a hint if nothing is
-    /// selected.
+    /// at the lane centre, placed **top-to-bottom** in the first migration slot
+    /// that doesn't overlap an existing band in that lane. Falls back to a hint
+    /// if nothing is selected.
     pub fn add_band_to_selected(&mut self) -> String {
         let lane_id = match self.selected {
             Some(Selection::Lane(id)) => Some(id),
@@ -1978,14 +1995,31 @@ impl AppState {
         let Some(lane_id) = lane_id else {
             return "Select a lane first, then Add band.".into();
         };
-        let Some(nx) = self
-            .analysis()
-            .and_then(|a| a.lanes.iter().find(|l| l.id == lane_id))
-            .map(|l| (l.u_min + l.u_max) / 2.0)
-        else {
+        let Some((nx, v)) = self.analysis().and_then(|a| {
+            let lane = a.lanes.iter().find(|l| l.id == lane_id)?;
+            let nx = (lane.u_min + lane.u_max) / 2.0;
+            // Existing bands in this lane, sorted by migration (top→bottom).
+            let mut bands: Vec<(f64, f64)> = a
+                .bands
+                .iter()
+                .filter(|b| b.lane_id == lane_id)
+                .map(|b| (b.v_center, b.v_half_width))
+                .collect();
+            bands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            // Sweep top→bottom, jumping past any band the candidate would overlap.
+            let half = 0.02;
+            let gap = 0.008;
+            let mut v = half;
+            for (bc, bh) in &bands {
+                if v + half + gap > bc - bh && v - half - gap < bc + bh {
+                    v = bc + bh + gap + half;
+                }
+            }
+            Some((nx, v.clamp(half, 1.0 - half)))
+        }) else {
             return "No such lane.".into();
         };
-        self.add_band_at(nx, 0.5)
+        self.add_band_at(nx, v)
     }
 
     pub fn add_band_at(&mut self, nx: f64, ny: f64) -> String {
@@ -2290,7 +2324,7 @@ mod tests {
         let before = st.analysis().unwrap().bands.len();
 
         // Add a lane then a band in it.
-        st.add_lane_at(0.5, None);
+        st.add_lane(None);
         let lanes_after = st.analysis().unwrap().lanes.len();
         let new_lane_id = st
             .analysis()
@@ -2330,6 +2364,72 @@ mod tests {
             .any(|q| q.mass_ng.unwrap_or(0.0) > 0.0));
         // Sized DNA bands should also get a molarity.
         assert!(a.quantifications.iter().any(|q| q.molarity_nmol.is_some()));
+    }
+
+    #[test]
+    fn added_lanes_do_not_overlap_and_go_left_to_right() {
+        let mut st = AppState::new();
+        st.capture().unwrap();
+        // Start from a clean slate so placement is deterministic.
+        st.doc.as_mut().unwrap().project.analysis = Analysis::default();
+
+        for _ in 0..6 {
+            st.add_lane(None);
+        }
+        let mut lanes: Vec<(f64, f64)> = st
+            .analysis()
+            .unwrap()
+            .lanes
+            .iter()
+            .map(|l| (l.u_min, l.u_max))
+            .collect();
+        lanes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // Each lane sits strictly to the right of the previous, no overlap.
+        for w in lanes.windows(2) {
+            assert!(
+                w[0].1 <= w[1].0 + 1e-9,
+                "lanes overlap: {:?} then {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        // All within the image.
+        assert!(lanes.first().unwrap().0 >= -1e-9 && lanes.last().unwrap().1 <= 1.0 + 1e-9);
+    }
+
+    #[test]
+    fn added_bands_do_not_overlap_and_go_top_to_bottom() {
+        let mut st = AppState::new();
+        st.capture().unwrap();
+        st.doc.as_mut().unwrap().project.analysis = Analysis::default();
+
+        st.add_lane(None);
+        let lane_id = st.analysis().unwrap().lanes[0].id;
+        st.selected = Some(Selection::Lane(lane_id));
+        for _ in 0..5 {
+            st.add_band_to_selected();
+        }
+        let mut bands: Vec<(f64, f64)> = st
+            .analysis()
+            .unwrap()
+            .bands
+            .iter()
+            .filter(|b| b.lane_id == lane_id)
+            .map(|b| (b.v_center, b.v_half_width))
+            .collect();
+        bands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        assert_eq!(bands.len(), 5);
+        // Each band sits below the previous with no overlap of their extents.
+        for w in bands.windows(2) {
+            let prev_bottom = w[0].0 + w[0].1;
+            let next_top = w[1].0 - w[1].1;
+            assert!(
+                prev_bottom <= next_top + 1e-9,
+                "bands overlap: {:?} then {:?}",
+                w[0],
+                w[1]
+            );
+        }
     }
 
     #[test]

@@ -3,6 +3,9 @@ name = "opengel"
 description = "Capture, simulate, detect and quantify gel electrophoresis images"
 version = "0.1.0"
 edition = "2021"
+# The crate ships two binaries (`opengel` GUI, `gel` CLI); make bare `cargo run`
+# launch the GUI. Use `cargo run --bin gel` for the CLI.
+default-run = "opengel"
 license = "MIT OR Apache-2.0"
 authors = ["OpenGel contributors"]
 repository = "https://github.com/opengel/opengel"
@@ -56,8 +59,11 @@ slint-build = "1.17"
 opt-level = 3
 
 [features]
-default = []
-# Force-enable the real USB camera backend on platforms where it is opt-in
-# (Linux/other). It is already on by default for macOS/Windows. See build.rs,
-# which unifies both into the `camera_backend` cfg.
+# The real USB camera backend is on by default on every platform. On macOS /
+# Windows it is always compiled (native capture APIs, no extra system deps); on
+# Linux this feature pulls in nokhwa, which needs libv4l-dev at build time and a
+# libv4l-0 runtime dep. Build with `--no-default-features` to drop it on Linux
+# (e.g. a headless/CI build without the v4l toolchain). See build.rs, which
+# unifies both into the `camera_backend` cfg.
+default = ["camera"]
 camera = ["dep:nokhwa"]
