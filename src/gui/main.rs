@@ -587,6 +587,31 @@ fn main() -> anyhow::Result<()> {
             view::refresh(&ui, &state.borrow());
         });
     }
+    // Coarse 90° quick-rotate (gel photographed sideways/upside-down).
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_rotate_coarse_cw(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().rotate_coarse(true);
+            ui.set_rotation(0.0);
+            ui.set_show_warp(false);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_rotate_coarse_ccw(move || {
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().rotate_coarse(false);
+            ui.set_rotation(0.0);
+            ui.set_show_warp(false);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
     // Editing: each acts on the last click position (click-x/click-y).
     macro_rules! edit_cb {
         ($setter:ident, $body:expr) => {{

@@ -153,6 +153,7 @@ fn analysis_from_truth(truth: &GroundTruth) -> Analysis {
                 size: None,
                 known_size: None,
                 angle: 0.0,
+                merged_sizes: Vec::new(),
             });
             bid += 1;
         }

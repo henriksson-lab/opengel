@@ -328,7 +328,7 @@ impl AppState {
                     .map(|m| format!("{m:.3}"))
                     .unwrap_or_else(|| "-".into());
                 let name = match b.known_size {
-                    Some(s) => format!("{s:.0} {unit}"),
+                    Some(s) => merged_size_label(s, &b.merged_sizes, unit),
                     None => "band".to_string(),
                 };
                 out.push(TreeRow {
@@ -416,9 +416,13 @@ impl AppState {
     fn band_name(&self, id: u32) -> Option<String> {
         let a = self.analysis()?;
         let b = a.bands.iter().find(|b| b.id == id)?;
-        Some(match b.known_size.or(b.size) {
-            Some(s) => format!("{s:.0} {}", self.gel_type.size_unit()),
-            None => format!("band {id}"),
+        let unit = self.gel_type.size_unit();
+        Some(match b.known_size {
+            Some(s) => merged_size_label(s, &b.merged_sizes, unit),
+            None => match b.size {
+                Some(s) => format!("{s:.0} {unit}"),
+                None => format!("band {id}"),
+            },
         })
     }
 
@@ -1618,6 +1622,45 @@ impl AppState {
         format!("Auto-straighten applied {:.1}°.", self.rotation_deg)
     }
 
+    /// Coarse orientation: rotate the whole gel 90° (a gel photographed sideways
+    /// or upside-down). This is a **lossless** pixel rotation baked into the
+    /// working image *and* every source frame, so all downstream steps see one
+    /// consistent orientation; the fine `rotation_deg`/auto-straighten then
+    /// refines the residual tilt. Existing lanes/bands were measured in the old
+    /// orientation, so they are cleared — re-run Detect afterwards.
+    pub fn rotate_coarse(&mut self, clockwise: bool) -> String {
+        let Some(work) = self.work.as_ref() else {
+            return "No image loaded.".into();
+        };
+        self.work = Some(if clockwise {
+            work.rot90_cw()
+        } else {
+            work.rot90_ccw()
+        });
+        if let Some(doc) = self.doc.as_mut() {
+            for f in doc.frames.iter_mut() {
+                *f = if clockwise {
+                    f.rotate90()
+                } else {
+                    f.rotate270()
+                };
+            }
+            for im in doc.project.images.iter_mut() {
+                std::mem::swap(&mut im.width, &mut im.height);
+            }
+            // Annotations were in the old orientation; drop them (re-Detect).
+            doc.project.analysis = Analysis::default();
+        }
+        // A residual fine tilt no longer applies after a 90° turn.
+        self.rotation_deg = 0.0;
+        self.selected = None;
+        self.show_warp = false;
+        format!(
+            "Rotated 90° {}. Re-run Detect to re-annotate.",
+            if clockwise { "clockwise" } else { "counter-clockwise" }
+        )
+    }
+
     /// Ladder template names applicable to the current gel type.
     /// Ladder options for the dialog. The built-in templates first, then "Custom"
     /// at the end — Custom marks the lane as a ladder without assigning any rungs,
@@ -1661,6 +1704,7 @@ impl AppState {
             return "No such band.".into();
         };
         band.known_size = Some(size);
+        band.merged_sizes.clear(); // an explicit weight overrides any merge label
         resize_sample_lanes(a);
         format!("Set band weight to {size:.0} {}.", self.gel_type.size_unit())
     }
@@ -1968,6 +2012,7 @@ impl AppState {
                 size: None,
                 known_size: None,
                 angle: 0.0,
+                merged_sizes: Vec::new(),
             });
             format!("Added band {id} to lane {lane_id}.")
         })
@@ -2094,6 +2139,23 @@ fn fmt_size(s: Option<f64>) -> String {
         Some(v) => format!("{v:.0}"),
         None => "?".into(),
     }
+}
+
+/// Display label for a ladder band's size. A plain band shows "N unit"; a merged
+/// blob (two rungs too close to resolve) shows all its rungs largest-first, e.g.
+/// "10000 + 8000 bp".
+fn merged_size_label(known: f64, merged: &[f64], unit: &str) -> String {
+    if merged.is_empty() {
+        return format!("{known:.0} {unit}");
+    }
+    let mut sizes: Vec<f64> = std::iter::once(known).chain(merged.iter().copied()).collect();
+    sizes.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    let joined = sizes
+        .iter()
+        .map(|s| format!("{s:.0}"))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    format!("{joined} {unit}")
 }
 
 /// Match `template` against a lane's bands (top→bottom), assign `known_size`/

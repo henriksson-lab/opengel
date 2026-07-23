@@ -161,6 +161,8 @@ export component AppWindow inherits Window {
     callback about();
     callback rotate(float);
     callback auto-straighten();
+    callback rotate-coarse-cw();     // 90° clockwise coarse orientation
+    callback rotate-coarse-ccw();    // 90° counter-clockwise coarse orientation
     callback add-lane();
     callback add-band();
     callback calibrate();
@@ -289,6 +291,10 @@ export component AppWindow inherits Window {
                     vertical-stretch: 0;
                     changed(v) => { root.rotate(v); }
                 }
+                // Coarse orientation: 90° quick-rotate (gel shot sideways). Do
+                // this first, then auto-straighten refines the residual tilt.
+                Button { text: "CCW 90°"; vertical-stretch: 0; clicked => { root.rotate-coarse-ccw(); } }
+                Button { text: "CW 90°"; vertical-stretch: 0; clicked => { root.rotate-coarse-cw(); } }
                 Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.fit-view(); } }
                 Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.auto-straighten(); } }
             }

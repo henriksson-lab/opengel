@@ -17,6 +17,13 @@ NURBS warp grid overlaid](assets/screenshot.png)
 detected lanes/bands with orientation-fitted annotation boxes, the NURBS warp
 grid following the band smile, and the ladder lane highlighted.*
 
+![OpenGel Trace view: per-lane densitometry profiles with a migration-px bottom
+axis and a ladder-calibrated size (bp) top axis](assets/trace.png)
+
+*The Trace view: per-lane densitometry profiles over all lanes, with a
+migration-distance (px) bottom axis and a ladder-calibrated size (bp) top axis,
+pan/zoom, and PDF export.*
+
 ## Project layout
 
 A single `opengel` crate; each subdirectory of `src/` was previously its own

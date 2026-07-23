@@ -142,6 +142,11 @@ pub struct Band {
     /// rotated annotation box and constrains the gel warp. 0 = horizontal.
     #[serde(default)]
     pub angle: f64,
+    /// Extra ladder rung sizes this band carries because two or more rungs were
+    /// too close to resolve and merged into one blob (in addition to `known_size`).
+    /// Empty for ordinary single-rung bands. Displayed as "N + M bp".
+    #[serde(default)]
+    pub merged_sizes: Vec<f64>,
 }
 
 impl Band {

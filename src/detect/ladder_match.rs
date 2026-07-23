@@ -23,14 +23,27 @@ pub struct MatchPair {
     pub size: f64,
 }
 
+/// A template rung that is *present but merged* into an already-matched band —
+/// two rungs migrating too close to resolve as separate peaks (typically the
+/// large fragments near the well). Reported separately so the fit stays clean
+/// (a merged blob's centroid would bias it) while callers still know the rung is
+/// there and which band carries it.
+#[derive(Debug, Clone, Copy)]
+pub struct MergedRung {
+    pub band_index: usize,
+    pub size: f64,
+}
+
 /// Result of matching one lane to one template.
 #[derive(Debug, Clone)]
 pub struct LadderMatch {
     pub template_name: String,
     /// Goodness of the semi-log fit in `[0, 1]` over matched pairs.
     pub r2: f64,
-    /// Matched band↔size correspondences.
+    /// Matched band↔size correspondences (one band per rung).
     pub pairs: Vec<MatchPair>,
+    /// Rungs inferred to be merged into an already-matched band.
+    pub merged: Vec<MergedRung>,
     /// The fitted sizing model (for sizing other lanes).
     pub fit: SizingFit,
 }
@@ -78,6 +91,7 @@ fn finalize(
         template_name: template.name.clone(),
         r2,
         pairs,
+        merged: Vec::new(),
         fit,
     })
 }
@@ -110,6 +124,24 @@ pub fn align_template(
     tol_ln: f64,
     min_matches: usize,
 ) -> Option<LadderMatch> {
+    align_template_anchored(positions, template, tol_ln, min_matches, &[])
+}
+
+/// Like [`align_template`], but honoring **anchors** — bands whose size is
+/// already known (e.g. a user-set weight). Each anchor `(band_index, size)`
+/// forces that band to be assigned that size (matched to the template rung of
+/// that size), which is the strongest cue for resolving off-by-one ambiguity
+/// when the first/last rung is missing. Anchors whose size isn't in this
+/// template are ignored (this template simply can't satisfy them). After
+/// alignment, template rungs left unmatched whose predicted position collides
+/// with an already-matched band are reported as [`MergedRung`]s.
+pub fn align_template_anchored(
+    positions: &[f64],
+    template: &LadderTemplate,
+    tol_ln: f64,
+    min_matches: usize,
+    anchors: &[(usize, f64)],
+) -> Option<LadderMatch> {
     let sizes: Vec<f64> = template.bands.iter().map(|b| b.size).collect();
     let ln_sizes: Vec<f64> = sizes.iter().map(|s| s.ln()).collect();
     let (s, p) = (sizes.len(), positions.len());
@@ -117,6 +149,19 @@ pub fn align_template(
         // Fall back to exact when tiny.
         return match_template(positions, template);
     }
+
+    // Resolve anchors to (rung index, band index) for this template: the anchor
+    // size must match a template rung (within a small relative tolerance).
+    let anchor_rungs: Vec<(usize, usize)> = anchors
+        .iter()
+        .filter(|&&(j, _)| j < p)
+        .filter_map(|&(j, size)| {
+            sizes
+                .iter()
+                .position(|&rs| (rs - size).abs() <= 1e-3 * rs.max(size).max(1.0))
+                .map(|i| (i, j))
+        })
+        .collect();
 
     let mut best: Option<Vec<MatchPair>> = None;
     let mut best_count = 0usize;
@@ -167,6 +212,14 @@ pub fn align_template(
                             last_j = j as isize;
                         }
                     }
+                    // Reject hypotheses that contradict a known-weight anchor.
+                    if !anchor_rungs.iter().all(|&(i, j)| {
+                        pairs
+                            .iter()
+                            .any(|pr| pr.band_index == j && (pr.size - sizes[i]).abs() < 1e-9)
+                    }) {
+                        continue;
+                    }
                     let count = pairs.len();
                     if count > best_count || (count == best_count && resid_sum < best_resid) {
                         best_count = count;
@@ -182,7 +235,86 @@ pub fn align_template(
     if pairs.len() < min_matches {
         return None;
     }
-    finalize(template, pairs, positions)
+    let mut m = finalize(template, pairs, positions)?;
+    let (merged, clean_fit) = detect_merged(&m, &sizes, positions);
+    m.merged = merged;
+    // A merged blob's centroid biases the fit it's included in; when merges were
+    // found, size other lanes from the confident-band fit instead.
+    if !m.merged.is_empty() {
+        if let Some(fit) = clean_fit {
+            m.fit = fit;
+        }
+    }
+    Some(m)
+}
+
+/// Flag template rungs that are present-but-merged into a single blob — the
+/// large fragments near the well, too close to resolve. Merges skew a fit that
+/// includes the blob (its centroid gets one rung's label), so we refit from the
+/// confident bands *excluding* the top (merge-prone) band, then ask whether
+/// **two or more** template rungs predict onto that top band. If so, the extra
+/// rungs (beyond the one already assigned) are reported as merged.
+///
+/// Returns the merged rungs and — when a merge is found — the confident
+/// (blob-excluded) [`SizingFit`], which the caller can use to size other lanes
+/// without the centroid bias.
+fn detect_merged(
+    m: &LadderMatch,
+    sizes: &[f64],
+    positions: &[f64],
+) -> (Vec<MergedRung>, Option<SizingFit>) {
+    // Order matched bands top→bottom (ascending position). The topmost is the
+    // largest-fragment end, where merging happens.
+    let mut pairs: Vec<&MatchPair> = m.pairs.iter().collect();
+    pairs.sort_by(|x, y| positions[x.band_index].partial_cmp(&positions[y.band_index]).unwrap());
+    if pairs.len() < 3 {
+        return (Vec::new(), None); // need ≥2 clean bands to refit after excluding the top
+    }
+    let top = pairs[0];
+    // Refit the semi-log model from the clean lower bands (exclude the top).
+    let clean: Vec<(f64, f64)> = pairs[1..]
+        .iter()
+        .map(|pr| (positions[pr.band_index], pr.size))
+        .collect();
+    let Some(fit2) = SizingFit::fit(&clean) else {
+        return (Vec::new(), None);
+    };
+    if fit2.a.abs() < 1e-9 {
+        return (Vec::new(), None);
+    }
+    // Merge resolution: half the median spacing of the clean bands.
+    let mut clean_pos: Vec<f64> = clean.iter().map(|&(p, _)| p).collect();
+    clean_pos.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut gaps: Vec<f64> = clean_pos.windows(2).map(|w| w[1] - w[0]).collect();
+    if gaps.is_empty() {
+        return (Vec::new(), None);
+    }
+    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let merge_tol = 0.5 * gaps[gaps.len() / 2];
+
+    let ptop = positions[top.band_index];
+    // Template rungs whose predicted position lands on the top band.
+    let clustered: Vec<f64> = sizes
+        .iter()
+        .cloned()
+        .filter(|&size| {
+            let pred = (size.ln() - fit2.b) / fit2.a;
+            (pred - ptop).abs() <= merge_tol
+        })
+        .collect();
+    if clustered.len() < 2 {
+        return (Vec::new(), None); // the top band is a single, resolved rung
+    }
+    // All clustered rungs except the one already assigned to the top band are merged.
+    let merged = clustered
+        .into_iter()
+        .filter(|&size| (size - top.size).abs() >= 1e-9)
+        .map(|size| MergedRung {
+            band_index: top.band_index,
+            size,
+        })
+        .collect();
+    (merged, Some(fit2))
 }
 
 /// Best matching template for a lane among candidates at or above `min_r2`.
@@ -192,13 +324,27 @@ pub fn best_template<'a>(
     candidates: impl IntoIterator<Item = &'a LadderTemplate>,
     min_r2: f64,
 ) -> Option<LadderMatch> {
+    best_template_anchored(positions, candidates, min_r2, &[])
+}
+
+/// Like [`best_template`], but honoring known-weight `anchors` — `(band_index,
+/// size)` pairs that pin a band to a known ladder size (the primary cue when
+/// detection is imperfect). Anchors force count-mismatch (robust) alignment even
+/// when the band count happens to equal a template's rung count, since an anchor
+/// only makes sense as an ordering constraint on the robust matcher.
+pub fn best_template_anchored<'a>(
+    positions: &[f64],
+    candidates: impl IntoIterator<Item = &'a LadderTemplate>,
+    min_r2: f64,
+    anchors: &[(usize, f64)],
+) -> Option<LadderMatch> {
     candidates
         .into_iter()
         .filter_map(|t| {
-            if positions.len() == t.bands.len() {
+            if anchors.is_empty() && positions.len() == t.bands.len() {
                 match_template(positions, t)
             } else {
-                align_template(positions, t, 0.35, 4)
+                align_template_anchored(positions, t, 0.35, 4, anchors)
             }
         })
         .filter(|m| m.r2 >= min_r2)
@@ -223,4 +369,129 @@ pub fn identify_ladder_lane<'a>(
         .enumerate()
         .filter_map(|(i, pos)| best_template(pos, cands(), min_r2).map(|m| (i, m)))
         .max_by(|a, b| a.1.r2.partial_cmp(&b.1.r2).unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::{GelType, LadderBand, LadderTemplate};
+
+    const A: f64 = -1.5;
+    const B: f64 = 7.5;
+
+    fn template(sizes: &[f64]) -> LadderTemplate {
+        LadderTemplate {
+            name: "Test".into(),
+            gel_type: GelType::Dna,
+            vendor: None,
+            catalog: None,
+            standard_load_ng: None,
+            bands: sizes
+                .iter()
+                .map(|&size| LadderBand {
+                    size,
+                    mass_ng: None,
+                    reference: false,
+                })
+                .collect(),
+        }
+    }
+
+    /// Semi-log model position for a size: ln(size) = A*pos + B.
+    fn pos_of(size: f64) -> f64 {
+        (size.ln() - B) / A
+    }
+
+    /// Detected band positions (ascending) for a subset of the true sizes.
+    fn detected(sizes_subset: &[f64]) -> Vec<f64> {
+        let mut p: Vec<f64> = sizes_subset.iter().map(|&s| pos_of(s)).collect();
+        p.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        p
+    }
+
+    /// Every matched pair maps a band to the size whose model-position equals
+    /// that band's position — i.e. no off-by-one.
+    fn assert_pairs_correct(m: &LadderMatch, positions: &[f64]) {
+        for pr in &m.pairs {
+            let want = pos_of(pr.size);
+            let got = positions[pr.band_index];
+            assert!(
+                (want - got).abs() < 1e-6,
+                "band {} at pos {got} assigned size {} (model pos {want})",
+                pr.band_index,
+                pr.size
+            );
+        }
+    }
+
+    const SIZES: &[f64] = &[1000.0, 700.0, 500.0, 400.0, 300.0, 200.0, 100.0];
+
+    #[test]
+    fn all_rungs_present_matches_all() {
+        let t = template(SIZES);
+        let pos = detected(SIZES);
+        let m = align_template(&pos, &t, 0.35, 4).expect("match");
+        assert_eq!(m.pairs.len(), SIZES.len());
+        assert_pairs_correct(&m, &pos);
+        assert!(m.merged.is_empty());
+    }
+
+    #[test]
+    fn missing_first_rung_no_off_by_one() {
+        // Largest (1000) rung not detected.
+        let t = template(SIZES);
+        let pos = detected(&SIZES[1..]);
+        let m = align_template(&pos, &t, 0.35, 4).expect("match");
+        assert_eq!(m.pairs.len(), SIZES.len() - 1);
+        assert_pairs_correct(&m, &pos);
+        assert!(m.merged.is_empty(), "no merges expected, got {:?}", m.merged);
+    }
+
+    #[test]
+    fn missing_last_rung_no_off_by_one() {
+        // Smallest (100) rung not detected.
+        let t = template(SIZES);
+        let pos = detected(&SIZES[..SIZES.len() - 1]);
+        let m = align_template(&pos, &t, 0.35, 4).expect("match");
+        assert_eq!(m.pairs.len(), SIZES.len() - 1);
+        assert_pairs_correct(&m, &pos);
+        assert!(m.merged.is_empty());
+    }
+
+    #[test]
+    fn merged_top_rungs_flagged() {
+        // Top two rungs (1000, 700) collapse into one blob at their midpoint.
+        let t = template(SIZES);
+        let blob = (pos_of(1000.0) + pos_of(700.0)) / 2.0;
+        let mut pos: Vec<f64> = vec![blob];
+        pos.extend(SIZES[2..].iter().map(|&s| pos_of(s)));
+        pos.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let m = align_template(&pos, &t, 0.35, 4).expect("match");
+        // Exactly one of the two top rungs is reported as merged.
+        assert_eq!(m.merged.len(), 1, "merged = {:?}", m.merged);
+        let merged_size = m.merged[0].size;
+        assert!(
+            merged_size == 1000.0 || merged_size == 700.0,
+            "unexpected merged size {merged_size}"
+        );
+        // The merged rung points at the blob band.
+        assert!((pos[m.merged[0].band_index] - blob).abs() < 1e-9);
+        // Sizing uses the confident (blob-excluded) fit, which recovers the true
+        // model (A, B) rather than the centroid-biased fit that includes the blob.
+        assert!((m.fit.a - A).abs() < 1e-6, "fit.a = {} (want {A})", m.fit.a);
+        assert!((m.fit.b - B).abs() < 1e-6, "fit.b = {} (want {B})", m.fit.b);
+    }
+
+    #[test]
+    fn anchor_is_honored() {
+        // Pin the band that is really 500 bp to 500; the result must map it so.
+        let t = template(SIZES);
+        let pos = detected(SIZES);
+        let j500 = pos.iter().position(|&p| (p - pos_of(500.0)).abs() < 1e-9).unwrap();
+        let m = align_template_anchored(&pos, &t, 0.35, 4, &[(j500, 500.0)]).expect("match");
+        let pr = m.pairs.iter().find(|pr| pr.band_index == j500).expect("anchored band matched");
+        assert_eq!(pr.size, 500.0);
+        assert_pairs_correct(&m, &pos);
+    }
 }

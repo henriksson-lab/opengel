@@ -93,6 +93,34 @@ impl GrayF32 {
         top + (bot - top) * fy
     }
 
+    /// Rotate 90° **clockwise**, swapping width/height. Lossless pixel
+    /// permutation (no resampling) — four calls return the original exactly.
+    /// Used for coarse orientation (a gel photographed sideways/upside-down).
+    pub fn rot90_cw(&self) -> GrayF32 {
+        let (h, w) = (self.height(), self.width());
+        let mut out = Array2::<f32>::zeros((w, h)); // dims swap: rows=w, cols=h
+        for y in 0..h {
+            for x in 0..w {
+                // 90° CW: source (y,x) -> dest (x, h-1-y).
+                out[[x, h - 1 - y]] = self.data[[y, x]];
+            }
+        }
+        GrayF32 { data: out }
+    }
+
+    /// Rotate 90° **counter-clockwise**, swapping width/height. Lossless.
+    pub fn rot90_ccw(&self) -> GrayF32 {
+        let (h, w) = (self.height(), self.width());
+        let mut out = Array2::<f32>::zeros((w, h));
+        for y in 0..h {
+            for x in 0..w {
+                // 90° CCW: source (y,x) -> dest (w-1-x, y).
+                out[[w - 1 - x, y]] = self.data[[y, x]];
+            }
+        }
+        GrayF32 { data: out }
+    }
+
     /// Rotate the image about its center by `angle_deg` (counter-clockwise),
     /// keeping the same dimensions (content may clip at corners). Uses inverse
     /// bilinear sampling. Areas outside the source read as 0.
@@ -136,5 +164,47 @@ impl GrayF32 {
         } else {
             (lo, hi)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn img(w: usize, h: usize) -> GrayF32 {
+        // Distinct value per pixel so any mis-mapping is caught: v = y*w + x.
+        let mut g = GrayF32::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                g.data[[y, x]] = (y * w + x) as f32;
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn rot90_swaps_dims_and_maps_corners() {
+        let g = img(3, 2); // w=3, h=2
+        let cw = g.rot90_cw();
+        assert_eq!((cw.width(), cw.height()), (2, 3)); // dims swapped
+                                                       // top-left of source -> top-right of dest
+        assert_eq!(cw.get(cw.width() - 1, 0), g.get(0, 0));
+        // top-right of source -> bottom-right of dest
+        assert_eq!(cw.get(cw.width() - 1, cw.height() - 1), g.get(g.width() - 1, 0));
+    }
+
+    #[test]
+    fn rot90_cw_four_times_is_identity() {
+        let g = img(5, 3);
+        let r = g.rot90_cw().rot90_cw().rot90_cw().rot90_cw();
+        assert_eq!((r.width(), r.height()), (g.width(), g.height()));
+        assert_eq!(r.data, g.data);
+    }
+
+    #[test]
+    fn rot90_cw_and_ccw_are_inverses() {
+        let g = img(4, 6);
+        let back = g.rot90_cw().rot90_ccw();
+        assert_eq!(back.data, g.data);
     }
 }

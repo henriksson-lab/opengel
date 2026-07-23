@@ -69,6 +69,37 @@ fn pipeline_fits_smile_from_two_ladders() {
 }
 
 #[test]
+fn cofit_identifies_all_ladder_lanes() {
+    // Two ladder lanes of the same template → co-fitting should mark BOTH as
+    // ladders and size the sample lanes from their pooled semi-log fit.
+    let mut cfg = SimConfig::clean(3);
+    cfg.lanes[2] = opengel::sim::SimLane::ladder("NEB 1 kb DNA Ladder");
+    let g = simulate(&cfg);
+    let img = work_image(&g);
+
+    let analysis =
+        opengel::detect::analyze(&img, cfg.gel.gel_type, &DetectParams::default(), &[], 0.9);
+
+    // Both ladder lanes are identified (co-fit marks every lane matching the
+    // winning template, not just the single best one).
+    let ladders = analysis.ladder_assignments.len();
+    assert!(
+        ladders >= 2,
+        "co-fit should identify both ladder lanes, got {ladders}"
+    );
+    let ladder_lanes = analysis.lanes.iter().filter(|l| l.is_ladder).count();
+    assert!(
+        ladder_lanes >= 2,
+        "expected ≥2 lanes marked as ladder, got {ladder_lanes}"
+    );
+    // Sample (non-ladder) bands are sized from the shared fit.
+    assert!(analysis
+        .bands
+        .iter()
+        .any(|b| b.size.is_some() && b.known_size.is_none()));
+}
+
+#[test]
 fn clean_detects_ladder() {
     let cfg = SimConfig::clean(7);
     let g = simulate(&cfg);

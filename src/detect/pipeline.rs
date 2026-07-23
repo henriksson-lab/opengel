@@ -6,12 +6,13 @@
 use std::collections::BTreeMap;
 
 use crate::core::model::{Analysis, Band, GelType, LadderAssignment, LadderTemplate, Lane};
+use crate::core::quant::SizingFit;
 use crate::core::warp::GelWarp;
 use crate::core::{ladders, GrayF32};
 
 use crate::detect::classical::{lane_row_profile, ClassicalDetector};
 use crate::detect::detector::{DetectParams, GelDetector};
-use crate::detect::ladder_match::{best_template, LadderMatch};
+use crate::detect::ladder_match::{best_template, best_template_anchored, LadderMatch};
 
 type WarpRungGroups = Vec<(f64, Vec<(f64, f64, f64)>)>;
 use crate::detect::signal::subtract_baseline;
@@ -428,7 +429,17 @@ pub fn analyze_detection(
     let mut best: Option<(u32, LadderMatch)> = None;
     for (&lane_id, idxs) in &per_lane {
         let positions: Vec<f64> = idxs.iter().map(|&i| analysis.bands[i].v_center).collect();
-        if let Some(m) = best_template(&positions, cand_refs.iter().copied(), min_r2) {
+        // Known-weight anchors (user-set sizes) are the primary cue: any band in
+        // this lane already carrying a `known_size` pins that rung, resolving
+        // off-by-one ambiguity when the first/last rung is missing.
+        let anchors: Vec<(usize, f64)> = idxs
+            .iter()
+            .enumerate()
+            .filter_map(|(local, &bi)| analysis.bands[bi].known_size.map(|s| (local, s)))
+            .collect();
+        if let Some(m) =
+            best_template_anchored(&positions, cand_refs.iter().copied(), min_r2, &anchors)
+        {
             if best
                 .as_ref()
                 .is_none_or(|(_, bm)| best_ladder_match(&m, bm).is_gt())
@@ -438,37 +449,95 @@ pub fn analyze_detection(
         }
     }
 
-    if let Some((lane_id, m)) = best {
-        // Mark the ladder lane and assign known sizes to its matched bands.
-        if let Some(lane) = analysis.lanes.iter_mut().find(|l| l.id == lane_id) {
-            lane.is_ladder = true;
-            lane.label.get_or_insert_with(|| m.template_name.clone());
-        }
-        let idxs = &per_lane[&lane_id];
-        let mut rung_to_band = Vec::with_capacity(m.pairs.len());
-        for pair in &m.pairs {
-            if let Some(&bi) = idxs.get(pair.band_index) {
-                analysis.bands[bi].known_size = Some(pair.size);
-                analysis.bands[bi].size = Some(pair.size);
-                rung_to_band.push(Some(analysis.bands[bi].id));
+    if let Some((best_lane, best_m)) = best {
+        let template = cand_refs.iter().copied().find(|t| t.name == best_m.template_name);
+
+        // Every lane that matches the *winning* template well is a ladder lane.
+        // Each lane's missing/merged rungs are solved independently — a rotated
+        // gel or a lane running slightly fast/slow can drop or merge a *different*
+        // subset — and then reconciled by pooling all lanes' rung inliers into one
+        // shared sizing fit (they share one gel migration model).
+        let mut ladder_lanes: Vec<(u32, LadderMatch)> = Vec::new();
+        for (&lane_id, idxs) in &per_lane {
+            let m = if lane_id == best_lane {
+                best_m.clone()
+            } else if let Some(t) = template {
+                let positions: Vec<f64> =
+                    idxs.iter().map(|&i| analysis.bands[i].v_center).collect();
+                let anchors: Vec<(usize, f64)> = idxs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(local, &bi)| analysis.bands[bi].known_size.map(|s| (local, s)))
+                    .collect();
+                // Same strict bar as detection (r2 ≥ min_r2) plus enough rungs, so
+                // sample lanes aren't mistaken for ladders.
+                match best_template_anchored(&positions, std::iter::once(t), min_r2, &anchors) {
+                    Some(m) if m.pairs.len() >= 4 => m,
+                    _ => continue,
+                }
             } else {
-                rung_to_band.push(None);
+                continue;
+            };
+            ladder_lanes.push((lane_id, m));
+        }
+
+        // Pool rung inliers (rectified migration ↔ size) across all ladder lanes,
+        // excluding merged blobs (their centroid biases the fit), into one fit.
+        let mut pooled: Vec<(f64, f64)> = Vec::new();
+        for (lane_id, m) in &ladder_lanes {
+            let idxs = &per_lane[lane_id];
+            for pair in &m.pairs {
+                if m.merged.iter().any(|mr| mr.band_index == pair.band_index) {
+                    continue;
+                }
+                if let Some(&bi) = idxs.get(pair.band_index) {
+                    pooled.push((analysis.bands[bi].v_center, pair.size));
+                }
             }
         }
-        analysis.ladder_assignments.push(LadderAssignment {
-            lane_id,
-            template_name: m.template_name.clone(),
-            rung_to_band,
-        });
+        let shared_fit = SizingFit::fit(&pooled).unwrap_or(best_m.fit);
 
-        // Size every non-ladder band from the ladder's semi-log fit.
+        // Mark ladder lanes and assign known sizes to their matched bands.
+        let ladder_ids: Vec<u32> = ladder_lanes.iter().map(|(id, _)| *id).collect();
+        for (lane_id, m) in &ladder_lanes {
+            if let Some(lane) = analysis.lanes.iter_mut().find(|l| l.id == *lane_id) {
+                lane.is_ladder = true;
+                lane.label.get_or_insert_with(|| m.template_name.clone());
+            }
+            let idxs = &per_lane[lane_id];
+            let mut rung_to_band = Vec::with_capacity(m.pairs.len());
+            for pair in &m.pairs {
+                if let Some(&bi) = idxs.get(pair.band_index) {
+                    analysis.bands[bi].known_size = Some(pair.size);
+                    analysis.bands[bi].size = Some(pair.size);
+                    analysis.bands[bi].merged_sizes.clear();
+                    rung_to_band.push(Some(analysis.bands[bi].id));
+                } else {
+                    rung_to_band.push(None);
+                }
+            }
+            // Record rungs that merged into an already-matched blob (unresolved
+            // large fragments) so the UI can show "N + M bp".
+            for mr in &m.merged {
+                if let Some(&bi) = idxs.get(mr.band_index) {
+                    analysis.bands[bi].merged_sizes.push(mr.size);
+                }
+            }
+            analysis.ladder_assignments.push(LadderAssignment {
+                lane_id: *lane_id,
+                template_name: m.template_name.clone(),
+                rung_to_band,
+            });
+        }
+
+        // Size every non-ladder band from the shared (co-fitted) semi-log fit.
         for (&lid, idxs) in &per_lane {
-            if lid == lane_id {
+            if ladder_ids.contains(&lid) {
                 continue;
             }
             for &bi in idxs {
                 let v = analysis.bands[bi].v_center;
-                analysis.bands[bi].size = Some(m.fit.size_at(v));
+                analysis.bands[bi].size = Some(shared_fit.size_at(v));
             }
         }
     }

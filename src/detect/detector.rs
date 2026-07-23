@@ -163,6 +163,7 @@ impl Detection {
                     size: None,
                     known_size: None,
                     angle: b.angle,
+                    merged_sizes: Vec::new(),
                 }
             })
             .collect();
