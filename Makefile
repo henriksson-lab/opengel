@@ -24,6 +24,7 @@ ICONDIR := $(DATADIR)/icons/hicolor
 MODELDIR := $(DATADIR)/opengel/models
 MIMEDIR := $(DATADIR)/mime
 MIMEPKGDIR := $(MIMEDIR)/packages
+UDEVDIR := $(DESTDIR)/usr/lib/udev/rules.d
 # The window's Wayland app_id / X11 WM_CLASS; the icon PNG/SVG and the .desktop
 # StartupWMClass are all keyed to this name so the desktop finds the icon.
 LINUX_APP_ID := opengel
@@ -67,9 +68,12 @@ install:
 		"$(MODELDIR)/gelgenie_unet_1024.bpk"
 	install -Dm644 assets/models/gelgenie_unet_1024.NOTICE.md \
 		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md"
+	install -Dm644 packaging/60-opengel-toupcam.rules \
+		"$(UDEVDIR)/60-opengel-toupcam.rules"
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
+	if [ -z "$(DESTDIR)" ] && command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; udevadm trigger --subsystem-match=usb || true; fi
 	@printf 'Installed to %s\n' "$(DESTDIR)$(PREFIX)"
 
 uninstall:
@@ -80,10 +84,12 @@ uninstall:
 		"$(ICONDIR)/scalable/apps/$(LINUX_APP_ID).svg" \
 		"$(ICONDIR)/256x256/apps/$(LINUX_APP_ID).png" \
 		"$(MODELDIR)/gelgenie_unet_1024.bpk" \
-		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md"
+		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md" \
+		"$(UDEVDIR)/60-opengel-toupcam.rules"
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
+	if [ -z "$(DESTDIR)" ] && command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; udevadm trigger --subsystem-match=usb || true; fi
 
 deb:
 	rm -rf "$(DEB_ROOT)"
@@ -197,6 +203,7 @@ deb:
 		'if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/share/mime || true; fi' \
 		'if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications || true; fi' \
 		'if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true; fi' \
+		'if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; udevadm trigger --subsystem-match=usb || true; fi' \
 		'exit 0' \
 		> "$(DEB_ROOT)/DEBIAN/postinst"
 	printf '%s\n' \
@@ -205,6 +212,7 @@ deb:
 		'if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/share/mime || true; fi' \
 		'if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications || true; fi' \
 		'if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true; fi' \
+		'if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; udevadm trigger --subsystem-match=usb || true; fi' \
 		'exit 0' \
 		> "$(DEB_ROOT)/DEBIAN/postrm"
 	chmod 755 "$(DEB_ROOT)/usr/share/doc" "$(DEB_DOCDIR)"

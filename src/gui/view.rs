@@ -36,7 +36,25 @@ enum OverlayShape {
 
 /// Full refresh: labels, ladder names, tree and composited image.
 pub fn refresh(ui: &AppWindow, state: &AppState) {
+    let files: Vec<SharedString> = state
+        .document_labels()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    ui.set_file_names(ModelRc::new(VecModel::from(files)));
+    ui.set_file_index(state.active_document_index());
+    ui.set_has_open_file(state.has_open_file());
+    ui.set_active_file_dirty(state.active_document_dirty());
     ui.set_gel_type_label(format!("{:?}", state.gel_type).into());
+    ui.set_rotation(state.rotation_deg as f32);
+    ui.set_disp_lo(state.disp_lo);
+    ui.set_disp_hi(state.disp_hi);
+    ui.set_invert(state.invert);
+    ui.set_show_unwarped(state.show_unwarped);
+    ui.set_show_warp(state.show_warp);
+    ui.set_normalize_inner_knots(state.normalize_inner_knots);
+    ui.set_show_overexposed(state.show_overexposed);
+    ui.set_annotation_alpha(state.annotation_alpha);
 
     // Ladder template names (for the "Use as ladder" dialog dropdown).
     let vendors: Vec<SharedString> = state

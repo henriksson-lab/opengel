@@ -14,7 +14,11 @@ Cargo.lock.orig
 /datasets/real_gels/**/*.jpeg
 /datasets/real_gels/**/*.png
 /datasets/real_gels/**/*.tif
+/datasets/real_gels/**/*.Tif
+/datasets/real_gels/**/*.TIF
 /datasets/real_gels/**/*.tiff
+/datasets/real_gels/**/*.Tiff
+/datasets/real_gels/**/*.TIFF
 /datasets/real_gels/**/*.gif
 /datasets/real_gels/**/*.html
 

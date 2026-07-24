@@ -33,11 +33,22 @@ pub fn list_cameras() -> Result<Vec<CameraInfo>> {
     let cams = query(ApiBackend::Auto).map_err(backend_err)?;
     Ok(cams
         .into_iter()
-        .map(|c| CameraInfo {
-            index: index_to_usize(c.index()),
-            name: c.human_name(),
+        .filter_map(|c| {
+            let name = c.human_name();
+            if is_builtin_apple_camera(&name) {
+                return None;
+            }
+            Some(CameraInfo {
+                index: index_to_usize(c.index()),
+                name,
+            })
         })
         .collect())
+}
+
+fn is_builtin_apple_camera(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("facetime") || name.contains("built-in") || name == "apple camera"
 }
 
 fn index_to_usize(idx: &CameraIndex) -> usize {

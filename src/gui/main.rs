@@ -251,16 +251,54 @@ fn main() -> anyhow::Result<()> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.on_file_changed(move |idx| {
+            if idx < 0 {
+                return;
+            }
+            let ui = ui_weak.unwrap();
+            let msg = state.borrow_mut().set_active_document(idx as usize);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_close_current_file(move || {
+            let ui = ui_weak.unwrap();
+            ui.set_close_confirm_open(false);
+            let msg = state.borrow_mut().close_active_document();
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
         ui.on_save(move || {
             let ui = ui_weak.unwrap();
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("OpenGel", &["zip"])
-                .set_file_name("gel.gel.zip")
-                .save_file()
-            {
-                match state.borrow().save_path(&path) {
-                    Ok(()) => ui.set_status(format!("Saved {}", path.display()).into()),
-                    Err(e) => ui.set_status(format!("Save failed: {e}").into()),
+            let existing_path = state.borrow().source_path.clone();
+            match existing_path {
+                Some(path) => {
+                    match state.borrow_mut().save_path(&path) {
+                        Ok(()) => ui.set_status(format!("Saved {}", path.display()).into()),
+                        Err(e) => ui.set_status(format!("Save failed: {e}").into()),
+                    }
+                    view::refresh(&ui, &state.borrow());
+                }
+                None => {
+                    let default_name = state.borrow().save_dialog_filename();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("OpenGel", &["zip"])
+                        .set_file_name(default_name)
+                        .save_file()
+                    {
+                        match state.borrow_mut().save_as(&path) {
+                            Ok(()) => ui.set_status(format!("Saved {}", path.display()).into()),
+                            Err(e) => ui.set_status(format!("Save failed: {e}").into()),
+                        }
+                        view::refresh(&ui, &state.borrow());
+                    }
                 }
             }
         });
@@ -280,6 +318,7 @@ fn main() -> anyhow::Result<()> {
                     Ok(()) => ui.set_status(format!("Saved {}", path.display()).into()),
                     Err(e) => ui.set_status(format!("Save failed: {e}").into()),
                 }
+                view::refresh(&ui, &state.borrow());
             }
         });
     }

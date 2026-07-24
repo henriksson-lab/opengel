@@ -2,9 +2,9 @@
 
 Capture, detect and quantify gel electrophoresis images
 
-**under development! feature requests can go into github issues**
+**under development! possibly already working**
 
-Features:
+**Features:**
 
 * Supports **DNA, RNA and protein** gels.
 * Camera snapshots, including multi-exposure **HDR** for dynamic range
@@ -12,20 +12,15 @@ Features:
 * Quantification of densitys and molarities, taking gel warping into account
 * Quick compute of relative mass and molarity ratios
 
+**Hardware support:**
+
+* USB cameras
+* Toupcam cameras
+* If you want support for another camera, make a github issue
+
 ![OpenGel GUI: a detected gel with per-band annotation boxes and the fitted NURBS warp grid overlaid](assets/screenshot.png)
 
 ![OpenGel Trace view: per-lane densitometry profiles with a migration-px bottom axis and a ladder-calibrated size (bp) top axis](assets/trace.png)
-
-## The `.gel.zip` format
-
-A ZIP container:
-
-```
-manifest.json   { format, version, gel_type }
-metadata.json   [ per-image capture params: exposure, gain, camera, bracket ]
-analysis.json   lanes, bands, blobs, ladder assignments, calibration, quant
-images/img_NN.png   raw captures (8- or 16-bit)
-```
 
 ## Build & run
 
@@ -56,6 +51,9 @@ The crate ships two binaries — `opengel` (the desktop GUI) and `gel` (the CLI)
 The USB camera backend is on by default on every platform. On Linux it needs
 `libv4l-dev` at build time (`sudo apt-get install libv4l-dev`); build with
 `--no-default-features` to drop it for a headless build without the v4l toolchain.
+The Debian package installs a udev rule for Toupcam/ToupTek USB devices. For a
+raw binary install, copy `packaging/60-opengel-toupcam.rules` to
+`/etc/udev/rules.d/`, reload udev, then replug the camera.
 
 
 ## Citing

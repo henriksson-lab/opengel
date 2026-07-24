@@ -48,6 +48,8 @@ burn = { version = "0.21", default-features = false, features = ["std", "flex", 
 burn-store = { version = "0.21", optional = true }
 # Optional on Linux/other (needs libv4l-dev): enable with `--features camera`.
 nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+nusb = { version = "0.1", optional = true }
+futures-lite = { version = "2", optional = true }
 
 # macOS (AVFoundation) and Windows (MediaFoundation) ship native capture with no
 # extra system deps, so the real camera backend is always compiled there.
@@ -71,5 +73,7 @@ opt-level = 3
 # (e.g. a headless/CI build without the v4l toolchain). See build.rs, which
 # unifies both into the `camera_backend` cfg.
 default = ["camera", "gelgenie-ml"]
-camera = ["dep:nokhwa"]
+camera = ["nokhwa-camera", "toupcam-camera"]
+nokhwa-camera = ["dep:nokhwa"]
+toupcam-camera = ["dep:nusb", "dep:futures-lite"]
 gelgenie-ml = ["dep:burn", "dep:burn-store"]

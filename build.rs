@@ -1,15 +1,24 @@
 fn main() {
     slint_build::compile("src/gui/ui/app.slint").expect("compile app.slint");
 
-    // The real camera backend (nokhwa) is compiled when either the `camera`
-    // feature is set, or the target OS ships the native capture APIs with no
-    // extra system deps (macOS AVFoundation, Windows MediaFoundation). Linux
-    // stays opt-in via `--features camera` because it needs libv4l-dev at build
-    // time. Both paths are unified behind the `camera_backend` cfg.
+    // Real camera backends are compiled when their feature is set, or when the
+    // target OS ships the native nokhwa capture APIs with no extra system deps
+    // (macOS AVFoundation, Windows MediaFoundation). Backend-specific cfgs keep
+    // each implementation gated by the dependencies it actually needs.
     println!("cargo:rustc-check-cfg=cfg(camera_backend)");
-    let feature = std::env::var_os("CARGO_FEATURE_CAMERA").is_some();
+    println!("cargo:rustc-check-cfg=cfg(nokhwa_backend)");
+    println!("cargo:rustc-check-cfg=cfg(toupcam_backend)");
+    let nokhwa_feature = std::env::var_os("CARGO_FEATURE_NOKHWA_CAMERA").is_some();
+    let toupcam_feature = std::env::var_os("CARGO_FEATURE_TOUPCAM_CAMERA").is_some();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if feature || matches!(target_os.as_str(), "macos" | "windows") {
+    let native_nokhwa = matches!(target_os.as_str(), "macos" | "windows");
+    if nokhwa_feature || native_nokhwa {
+        println!("cargo:rustc-cfg=nokhwa_backend");
+    }
+    if toupcam_feature {
+        println!("cargo:rustc-cfg=toupcam_backend");
+    }
+    if nokhwa_feature || native_nokhwa || toupcam_feature {
         println!("cargo:rustc-cfg=camera_backend");
     }
 
@@ -30,7 +39,9 @@ fn check_model_weights_present() {
     // only an *existing* too-small file signals a missing LFS object.
     const MIN_BYTES: u64 = 1_000_000; // 1 MB — far above any pointer, below any model
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let dir = std::path::Path::new(&manifest).join("assets").join("models");
+    let dir = std::path::Path::new(&manifest)
+        .join("assets")
+        .join("models");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };

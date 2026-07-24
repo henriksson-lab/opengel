@@ -70,11 +70,56 @@ pub struct LaneTrace {
     pub values: Vec<f64>,
 }
 
+pub struct OpenDocumentState {
+    pub doc: GelDocument,
+    pub work: Option<GrayF32>,
+    pub gel_type: GelType,
+    pub source_path: Option<PathBuf>,
+    pub display_name: String,
+    pub dirty: bool,
+    pub rotation_deg: f64,
+    pub disp_lo: f32,
+    pub disp_hi: f32,
+    pub invert: bool,
+    pub show_unwarped: bool,
+    pub hdr_bias_subtraction: bool,
+    pub hdr_align: bool,
+    pub hdr_deghost: bool,
+    pub view_frame: Option<usize>,
+    pub trace_mode: TraceMode,
+    pub trace_zoom: f64,
+    pub trace_pan: f64,
+    pub trace_view: std::cell::Cell<(f64, f64, usize)>,
+    pub selected_lanes: std::collections::BTreeSet<u32>,
+    pub ladder_volume: std::collections::BTreeMap<u32, f64>,
+    pub ladder_conc: std::collections::BTreeMap<u32, f64>,
+    pub collapsed_lanes: std::collections::BTreeSet<u32>,
+    pub selected: Option<Selection>,
+    pub ratio_a: Option<u32>,
+    pub ratio_b: Option<u32>,
+    pub dragging: bool,
+    pub warp_edit: Option<(u64, opengel::core::warp::GelWarp)>,
+    pub dragging_knot: Option<(usize, usize)>,
+    pub warp_drag_base: Option<opengel::core::warp::GelWarp>,
+    pub doc_gen: u64,
+    pub show_warp: bool,
+    pub normalize_inner_knots: bool,
+    pub show_overexposed: bool,
+    pub annotation_alpha: f32,
+    pub hover_x: f32,
+    pub hover_y: f32,
+}
+
 pub struct AppState {
+    pub documents: Vec<Option<OpenDocumentState>>,
+    pub active_document: Option<usize>,
+    next_doc_gen: u64,
     pub doc: Option<GelDocument>,
     pub work: Option<GrayF32>,
     pub gel_type: GelType,
     pub source_path: Option<PathBuf>,
+    pub current_label: String,
+    pub dirty: bool,
     /// Rotation correction applied before analysis/display (degrees).
     pub rotation_deg: f64,
     /// Display window (contrast/brightness) as fractions of the current image's
@@ -211,10 +256,15 @@ pub const DEFAULT_LADDER_CONC_NG_UL: f64 = 50.0;
 impl AppState {
     pub fn new() -> Self {
         AppState {
+            documents: Vec::new(),
+            active_document: None,
+            next_doc_gen: 1,
             doc: None,
             work: None,
             gel_type: GelType::Dna,
             source_path: None,
+            current_label: "Untitled gel".to_string(),
+            dirty: false,
             hdr_bias_subtraction: false,
             hdr_align: false,
             hdr_deghost: false,
@@ -273,6 +323,297 @@ impl AppState {
         }
     }
 
+    fn display_name_for(path: Option<&Path>, fallback: &str) -> String {
+        path.and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or(fallback)
+            .to_string()
+    }
+
+    fn current_display_name(&self) -> String {
+        self.source_path.as_deref().map_or_else(
+            || self.current_label.clone(),
+            |path| Self::display_name_for(Some(path), "Untitled gel"),
+        )
+    }
+
+    fn snapshot_current_document(&mut self) -> Option<OpenDocumentState> {
+        let display_name = self.current_display_name();
+        let doc = self.doc.take()?;
+        Some(OpenDocumentState {
+            doc,
+            work: self.work.take(),
+            gel_type: self.gel_type,
+            source_path: self.source_path.take(),
+            display_name,
+            dirty: self.dirty,
+            rotation_deg: self.rotation_deg,
+            disp_lo: self.disp_lo,
+            disp_hi: self.disp_hi,
+            invert: self.invert,
+            show_unwarped: self.show_unwarped,
+            hdr_bias_subtraction: self.hdr_bias_subtraction,
+            hdr_align: self.hdr_align,
+            hdr_deghost: self.hdr_deghost,
+            view_frame: self.view_frame,
+            trace_mode: self.trace_mode,
+            trace_zoom: self.trace_zoom,
+            trace_pan: self.trace_pan,
+            trace_view: std::cell::Cell::new(self.trace_view.get()),
+            selected_lanes: std::mem::take(&mut self.selected_lanes),
+            ladder_volume: std::mem::take(&mut self.ladder_volume),
+            ladder_conc: std::mem::take(&mut self.ladder_conc),
+            collapsed_lanes: std::mem::take(&mut self.collapsed_lanes),
+            selected: self.selected.take(),
+            ratio_a: self.ratio_a.take(),
+            ratio_b: self.ratio_b.take(),
+            dragging: self.dragging,
+            warp_edit: self.warp_edit.take(),
+            dragging_knot: self.dragging_knot.take(),
+            warp_drag_base: self.warp_drag_base.take(),
+            doc_gen: self.doc_gen,
+            show_warp: self.show_warp,
+            normalize_inner_knots: self.normalize_inner_knots,
+            show_overexposed: self.show_overexposed,
+            annotation_alpha: self.annotation_alpha,
+            hover_x: self.hover_x,
+            hover_y: self.hover_y,
+        })
+    }
+
+    fn restore_document(&mut self, mut open: OpenDocumentState) {
+        self.gel_type = open.gel_type;
+        self.work = open.work.take();
+        self.doc = Some(open.doc);
+        self.source_path = open.source_path.take();
+        self.current_label = open.display_name;
+        self.dirty = open.dirty;
+        self.rotation_deg = open.rotation_deg;
+        self.disp_lo = open.disp_lo;
+        self.disp_hi = open.disp_hi;
+        self.invert = open.invert;
+        self.show_unwarped = open.show_unwarped;
+        self.hdr_bias_subtraction = open.hdr_bias_subtraction;
+        self.hdr_align = open.hdr_align;
+        self.hdr_deghost = open.hdr_deghost;
+        self.view_frame = open.view_frame;
+        self.trace_mode = open.trace_mode;
+        self.trace_zoom = open.trace_zoom;
+        self.trace_pan = open.trace_pan;
+        self.trace_view = std::cell::Cell::new(open.trace_view.get());
+        self.selected_lanes = open.selected_lanes;
+        self.ladder_volume = open.ladder_volume;
+        self.ladder_conc = open.ladder_conc;
+        self.collapsed_lanes = open.collapsed_lanes;
+        self.selected = open.selected;
+        self.ratio_a = open.ratio_a;
+        self.ratio_b = open.ratio_b;
+        self.dragging = open.dragging;
+        self.warp_edit = open.warp_edit;
+        self.dragging_knot = open.dragging_knot;
+        self.warp_drag_base = open.warp_drag_base;
+        self.doc_gen = open.doc_gen;
+        self.show_warp = open.show_warp;
+        self.normalize_inner_knots = open.normalize_inner_knots;
+        self.show_overexposed = open.show_overexposed;
+        self.annotation_alpha = open.annotation_alpha;
+        self.hover_x = open.hover_x;
+        self.hover_y = open.hover_y;
+    }
+
+    fn clear_current_document(&mut self) {
+        self.doc = None;
+        self.work = None;
+        self.source_path = None;
+        self.current_label = "Untitled gel".to_string();
+        self.dirty = false;
+        self.gel_type = GelType::Dna;
+        self.rotation_deg = 0.0;
+        self.disp_lo = 0.0;
+        self.disp_hi = 1.0;
+        self.invert = false;
+        self.show_unwarped = false;
+        self.hdr_bias_subtraction = false;
+        self.hdr_align = false;
+        self.hdr_deghost = false;
+        self.view_frame = None;
+        self.trace_mode = TraceMode::Intensity;
+        self.trace_zoom = 1.0;
+        self.trace_pan = 0.5;
+        self.trace_view = std::cell::Cell::new((0.0, 0.0, 0));
+        self.selected_lanes.clear();
+        self.ladder_volume.clear();
+        self.ladder_conc.clear();
+        self.collapsed_lanes.clear();
+        self.clear_selection();
+        self.warp_edit = None;
+        self.dragging_knot = None;
+        self.warp_drag_base = None;
+        self.bump_doc_gen();
+        self.show_warp = false;
+        self.normalize_inner_knots = true;
+        self.show_overexposed = false;
+        self.annotation_alpha = 0.25;
+        self.hover_x = -1.0;
+        self.hover_y = -1.0;
+    }
+
+    fn save_active_slot(&mut self) {
+        let Some(idx) = self.active_document else {
+            return;
+        };
+        if idx >= self.documents.len() || self.documents[idx].is_some() {
+            return;
+        }
+        if let Some(snapshot) = self.snapshot_current_document() {
+            self.documents[idx] = Some(snapshot);
+        }
+    }
+
+    fn replace_active_with_document(
+        &mut self,
+        doc: GelDocument,
+        source_path: Option<PathBuf>,
+        fallback_name: &str,
+    ) {
+        self.save_active_slot();
+        let idx = self.documents.len();
+        self.documents.push(None);
+        self.active_document = Some(idx);
+        self.gel_type = doc.project.gel_type;
+        self.work = doc.working_image();
+        self.doc = Some(doc);
+        let dirty = source_path.is_none();
+        self.current_label = Self::display_name_for(source_path.as_deref(), fallback_name);
+        self.dirty = dirty;
+        self.source_path = source_path;
+        self.rotation_deg = 0.0;
+        self.invert = false;
+        self.show_unwarped = false;
+        self.view_frame = None;
+        self.hdr_bias_subtraction = false;
+        self.hdr_align = false;
+        self.hdr_deghost = false;
+        self.trace_mode = TraceMode::Intensity;
+        self.trace_zoom = 1.0;
+        self.trace_pan = 0.5;
+        self.trace_view = std::cell::Cell::new((0.0, 0.0, 0));
+        self.selected_lanes.clear();
+        self.ladder_volume.clear();
+        self.ladder_conc.clear();
+        self.collapsed_lanes.clear();
+        self.show_warp = false;
+        self.normalize_inner_knots = true;
+        self.show_overexposed = false;
+        self.annotation_alpha = 0.25;
+        self.hover_x = -1.0;
+        self.hover_y = -1.0;
+        self.reset_display_window();
+        self.clear_selection();
+        self.warp_edit = None;
+        self.dragging_knot = None;
+        self.warp_drag_base = None;
+        self.bump_doc_gen();
+    }
+
+    fn bump_doc_gen(&mut self) {
+        self.doc_gen = self.next_doc_gen;
+        self.next_doc_gen = self.next_doc_gen.wrapping_add(1).max(1);
+    }
+
+    fn mark_dirty(&mut self) {
+        if self.doc.is_some() {
+            self.dirty = true;
+        }
+    }
+
+    fn paths_same(a: &Path, b: &Path) -> bool {
+        match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        }
+    }
+
+    pub fn document_labels(&self) -> Vec<String> {
+        self.documents
+            .iter()
+            .enumerate()
+            .map(|(i, doc)| {
+                if Some(i) == self.active_document && doc.is_none() {
+                    if self.dirty {
+                        format!("{} *", self.current_display_name())
+                    } else {
+                        self.current_display_name()
+                    }
+                } else {
+                    doc.as_ref().map_or_else(
+                        || "Untitled gel".to_string(),
+                        |d| {
+                            if d.dirty {
+                                format!("{} *", d.display_name)
+                            } else {
+                                d.display_name.clone()
+                            }
+                        },
+                    )
+                }
+            })
+            .collect()
+    }
+
+    pub fn active_document_index(&self) -> i32 {
+        self.active_document.map_or(-1, |i| i as i32)
+    }
+
+    pub fn has_open_file(&self) -> bool {
+        self.doc.is_some()
+    }
+
+    pub fn active_document_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn set_active_document(&mut self, idx: usize) -> String {
+        if Some(idx) == self.active_document {
+            return self.current_display_name();
+        }
+        if idx >= self.documents.len() {
+            return "No such open file.".into();
+        }
+        self.save_active_slot();
+        match self.documents[idx].take() {
+            Some(open) => {
+                self.active_document = Some(idx);
+                let label = open.display_name.clone();
+                self.restore_document(open);
+                format!("Switched to {label}.")
+            }
+            None => "No such open file.".into(),
+        }
+    }
+
+    pub fn close_active_document(&mut self) -> String {
+        let Some(idx) = self.active_document else {
+            return "No file open.".into();
+        };
+        let label = self.current_display_name();
+        self.doc = None;
+        self.work = None;
+        self.documents.remove(idx);
+        if self.documents.is_empty() {
+            self.active_document = None;
+            self.clear_current_document();
+        } else {
+            let next = idx.min(self.documents.len() - 1);
+            self.active_document = Some(next);
+            if let Some(open) = self.documents[next].take() {
+                self.restore_document(open);
+            }
+        }
+        format!("Closed {label}.")
+    }
+
     /// Loaded volume (µL) for a ladder lane.
     pub fn ladder_volume(&self, lane_id: u32) -> f64 {
         self.ladder_volume
@@ -298,6 +639,7 @@ impl AppState {
     pub fn set_ladder_amounts(&mut self, lane_id: u32, volume_ul: f64, conc_ng_ul: f64) {
         self.ladder_volume.insert(lane_id, volume_ul);
         self.ladder_conc.insert(lane_id, conc_ng_ul);
+        self.mark_dirty();
     }
 
     // ---- lane/band tree list ----
@@ -393,6 +735,7 @@ impl AppState {
             } else {
                 Some(name.trim().to_string())
             };
+            self.mark_dirty();
             format!("Renamed lane {lane_id}.")
         } else {
             "No such lane.".into()
@@ -528,13 +871,41 @@ impl AppState {
         };
         let a = &mut doc.project.analysis;
         let before = a.lanes.len();
+        let deleted_bands: std::collections::BTreeSet<u32> = a
+            .bands
+            .iter()
+            .filter(|b| b.lane_id == lane_id)
+            .map(|b| b.id)
+            .collect();
         a.lanes.retain(|l| l.id != lane_id);
         a.bands.retain(|b| b.lane_id != lane_id);
         a.ladder_assignments.retain(|la| la.lane_id != lane_id);
+        a.quantifications
+            .retain(|q| !deleted_bands.contains(&q.target_id));
+        for la in &mut a.ladder_assignments {
+            for slot in &mut la.rung_to_band {
+                if slot.is_some_and(|id| deleted_bands.contains(&id)) {
+                    *slot = None;
+                }
+            }
+        }
         self.ladder_volume.remove(&lane_id);
         self.ladder_conc.remove(&lane_id);
         self.selected_lanes.remove(&lane_id);
+        self.collapsed_lanes.remove(&lane_id);
         if a.lanes.len() < before {
+            self.selected = match self.selected {
+                Some(Selection::Lane(id)) if id == lane_id => None,
+                Some(Selection::Band(id)) if deleted_bands.contains(&id) => None,
+                other => other,
+            };
+            if self.ratio_a.is_some_and(|id| deleted_bands.contains(&id)) {
+                self.ratio_a = None;
+            }
+            if self.ratio_b.is_some_and(|id| deleted_bands.contains(&id)) {
+                self.ratio_b = None;
+            }
+            self.mark_dirty();
             format!("Deleted lane {lane_id}.")
         } else {
             "No such lane.".into()
@@ -559,6 +930,7 @@ impl AppState {
             }
             resize_sample_lanes(a);
         }
+        self.mark_dirty();
         format!("Lane {lane_id} ladder = {on}.")
     }
 
@@ -837,6 +1209,7 @@ impl AppState {
     pub fn release_warp_knot(&mut self) {
         self.dragging_knot = None;
         self.warp_drag_base = None;
+        self.mark_dirty();
     }
 
     pub fn is_dragging_knot(&self) -> bool {
@@ -991,13 +1364,7 @@ impl AppState {
     /// UI event loop when the worker reports a finished capture.
     pub fn adopt_capture(&mut self, imgs: Vec<image::DynamicImage>, metas: Vec<CaptureMeta>) {
         let doc = GelDocument::from_frames(self.gel_type, imgs, metas);
-        self.work = doc.working_image();
-        self.doc = Some(doc);
-        self.source_path = None;
-        self.view_frame = None;
-        self.reset_display_window();
-        self.clear_selection();
-        self.doc_gen = self.doc_gen.wrapping_add(1);
+        self.replace_active_with_document(doc, None, "Captured gel");
     }
 
     /// Start an HDR capture on the worker (non-blocking). The result arrives via
@@ -1456,6 +1823,9 @@ impl AppState {
                 }
             }
         }
+        if n > 0 {
+            self.mark_dirty();
+        }
         format!("Measured {n} region(s) by densitometry.")
     }
 
@@ -1736,6 +2106,7 @@ impl AppState {
         band.known_size = Some(size);
         band.merged_sizes.clear(); // an explicit weight overrides any merge label
         resize_sample_lanes(a);
+        self.mark_dirty();
         format!(
             "Set band weight to {size:.0} {}.",
             self.gel_type.size_unit()
@@ -1791,6 +2162,15 @@ impl AppState {
         volume_ul: f64,
         conc_ng_ul: f64,
     ) -> String {
+        let valid_lane = self
+            .analysis()
+            .is_some_and(|a| a.lanes.iter().any(|l| l.id == lane_id));
+        if !valid_lane {
+            return "No such lane.".into();
+        }
+        if !template_name.starts_with("Custom") && ladders::by_name(template_name).is_none() {
+            return format!("Unknown ladder {template_name}.");
+        }
         self.set_ladder_amounts(lane_id, volume_ul, conc_ng_ul);
         let msg = self.set_lane_ladder_by_name(lane_id, template_name);
         let load = self.ladder_load(lane_id);
@@ -1814,6 +2194,17 @@ impl AppState {
             }
         }
         if a.bands.len() < before {
+            self.selected = match self.selected {
+                Some(Selection::Band(id)) if id == band_id => None,
+                other => other,
+            };
+            if self.ratio_a == Some(band_id) {
+                self.ratio_a = None;
+            }
+            if self.ratio_b == Some(band_id) {
+                self.ratio_b = None;
+            }
+            self.mark_dirty();
             format!("Deleted band {band_id}.")
         } else {
             "No such band.".into()
@@ -1836,6 +2227,7 @@ impl AppState {
             {
                 Some(lane) => {
                     lane.is_ladder = true;
+                    self.mark_dirty();
                     return format!("Lane {lane_id} = custom ladder (set band weights manually).");
                 }
                 None => return "No such lane.".into(),
@@ -1857,6 +2249,7 @@ impl AppState {
             Some(n) => {
                 resize_sample_lanes(a);
                 self.remember_ladder(name);
+                self.mark_dirty();
                 format!("Lane {lane_id} = {name} ({n} rungs matched).")
             }
             None => format!("Lane {lane_id}: could not match {name} to its bands."),
@@ -1867,37 +2260,41 @@ impl AppState {
     /// NEB 1 kb ladders) with its aligned annotation, then measure the bands.
     pub fn load_demo(&mut self) -> String {
         let doc = opengel::core::demo::demo_document_annotated();
-        self.gel_type = doc.project.gel_type;
-        self.work = doc.working_image();
-        self.doc = Some(doc);
-        self.source_path = None;
-        self.view_frame = None;
-        self.reset_display_window();
-        self.clear_selection();
-        self.doc_gen = self.doc_gen.wrapping_add(1);
+        self.replace_active_with_document(doc, None, "Demo gel");
         let msg = self.measure_regions();
         format!("Loaded demo gel (8 lanes, 3 ladders). {msg}")
     }
 
     pub fn open_path(&mut self, path: &Path) -> Result<()> {
+        if self
+            .source_path
+            .as_deref()
+            .is_some_and(|p| Self::paths_same(p, path))
+        {
+            return Ok(());
+        }
+        for i in 0..self.documents.len() {
+            let is_match = self.documents[i]
+                .as_ref()
+                .and_then(|d| d.source_path.as_deref())
+                .is_some_and(|p| Self::paths_same(p, path));
+            if is_match {
+                let _ = self.set_active_document(i);
+                return Ok(());
+            }
+        }
         let doc = GelDocument::load(path).with_context(|| format!("loading {}", path.display()))?;
-        self.gel_type = doc.project.gel_type;
-        self.work = doc.working_image();
-        self.doc = Some(doc);
-        self.source_path = Some(path.to_path_buf());
-        self.view_frame = None;
-        self.reset_display_window();
-        self.clear_selection();
-        self.doc_gen = self.doc_gen.wrapping_add(1);
+        self.replace_active_with_document(doc, Some(path.to_path_buf()), "Untitled gel");
         Ok(())
     }
 
-    pub fn save_path(&self, path: &Path) -> Result<()> {
+    pub fn save_path(&mut self, path: &Path) -> Result<()> {
         let doc = self
             .doc
             .as_ref()
             .ok_or_else(|| anyhow!("nothing to save"))?;
         doc.save(path)?;
+        self.dirty = false;
         Ok(())
     }
 
@@ -1906,6 +2303,15 @@ impl AppState {
     pub fn save_as(&mut self, path: &Path) -> Result<()> {
         self.save_path(path)?;
         self.source_path = Some(path.to_path_buf());
+        self.current_label = Self::display_name_for(Some(path), "gel.gel.zip");
+        self.dirty = false;
+        if let Some(idx) = self.active_document {
+            if let Some(Some(doc)) = self.documents.get_mut(idx) {
+                doc.source_path = Some(path.to_path_buf());
+                doc.display_name = Self::display_name_for(Some(path), "gel.gel.zip");
+                doc.dirty = false;
+            }
+        }
         Ok(())
     }
 
@@ -1986,11 +2392,15 @@ impl AppState {
         };
         // Radiance scale for persisting the merge as a normalized 16-bit PNG.
         let scale = (merged.data.iter().cloned().fold(0.0f32, f32::max) as f64).max(1e-6);
-        doc.project.hdr = Some(HdrRecord { options: opts, scale });
+        doc.project.hdr = Some(HdrRecord {
+            options: opts,
+            scale,
+        });
         doc.merged = Some(merged.clone());
         self.work = Some(merged);
         self.view_frame = None; // show the merged image
-        self.doc_gen = self.doc_gen.wrapping_add(1);
+        self.bump_doc_gen();
+        self.mark_dirty();
 
         let mut parts = Vec::new();
         if opts.bias_subtraction {
@@ -2037,13 +2447,7 @@ impl AppState {
         let n = frames.len();
         let (imgs, metas): (Vec<_>, Vec<_>) = frames.into_iter().unzip();
         let doc = GelDocument::from_frames(self.gel_type, imgs, metas);
-        self.work = doc.working_image();
-        self.doc = Some(doc);
-        self.source_path = None;
-        self.view_frame = None;
-        self.reset_display_window();
-        self.clear_selection();
-        self.doc_gen = self.doc_gen.wrapping_add(1);
+        self.replace_active_with_document(doc, None, "Captured gel");
         Ok(format!("Captured {n}-frame HDR bracket from {source}."))
     }
 
@@ -2127,6 +2531,11 @@ impl AppState {
 
         let doc = self.doc.as_mut().ok_or_else(|| anyhow!("no document"))?;
         doc.project.analysis = analysis;
+        self.warp_edit = None;
+        self.dragging_knot = None;
+        self.warp_drag_base = None;
+        self.bump_doc_gen();
+        self.mark_dirty();
         let detector = if self.use_gelgenie_ml {
             #[cfg(feature = "gelgenie-ml")]
             {
@@ -2158,7 +2567,9 @@ impl AppState {
         let Some(doc) = self.doc.as_mut() else {
             return "No document.".into();
         };
-        f(&mut doc.project.analysis, &img)
+        let msg = f(&mut doc.project.analysis, &img);
+        self.mark_dirty();
+        msg
     }
 
     /// Default name for a new lane — "Lane N" where N is the next lane id.
@@ -2583,6 +2994,15 @@ fn window_density(img: &GrayF32, x0: usize, x1: usize, yc: f64, half: f64) -> f6
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_gel_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("opengel-{name}-{nonce}.gel.zip"))
+    }
 
     #[test]
     fn capture_analyze_compare_headless() {
@@ -2605,6 +3025,145 @@ mod tests {
 
         let cmp = st.compare_first_two(10.0);
         assert!(cmp.contains("ratio"));
+    }
+
+    #[test]
+    fn multiple_open_files_switch_preserves_document_state() {
+        let path_a = temp_gel_path("a");
+        let path_b = temp_gel_path("b");
+
+        let mut seed = AppState::new();
+        seed.load_demo();
+        seed.save_path(&path_a).unwrap();
+        seed.capture().unwrap();
+        seed.save_path(&path_b).unwrap();
+
+        let mut st = AppState::new();
+        st.open_path(&path_a).unwrap();
+        assert_eq!(st.document_labels().len(), 1);
+        assert_eq!(st.active_document_index(), 0);
+        st.set_trace_mode(1);
+        st.toggle_lane(0);
+        st.set_invert(true);
+
+        st.open_path(&path_b).unwrap();
+        assert_eq!(st.document_labels().len(), 2);
+        assert_eq!(st.active_document_index(), 1);
+        assert_eq!(st.trace_mode, TraceMode::Intensity);
+        assert!(!st.invert);
+        st.set_trace_mode(2);
+
+        let msg = st.set_active_document(0);
+        assert!(msg.contains(path_a.file_name().unwrap().to_str().unwrap()));
+        assert_eq!(st.source_path.as_deref(), Some(path_a.as_path()));
+        assert_eq!(st.trace_mode, TraceMode::Ng);
+        assert!(st.invert);
+        assert!(st.selected_lanes.contains(&0));
+
+        st.set_active_document(1);
+        assert_eq!(st.source_path.as_deref(), Some(path_b.as_path()));
+        assert_eq!(st.trace_mode, TraceMode::Molarity);
+        assert!(!st.invert);
+
+        st.open_path(&path_a).unwrap();
+        assert_eq!(st.document_labels().len(), 2);
+        assert_eq!(st.active_document_index(), 0);
+
+        let msg = st.close_active_document();
+        assert!(msg.contains("Closed"));
+        assert_eq!(st.document_labels().len(), 1);
+        assert_eq!(st.active_document_index(), 0);
+        assert_eq!(st.source_path.as_deref(), Some(path_b.as_path()));
+
+        st.close_active_document();
+        assert!(st.document_labels().is_empty());
+        assert_eq!(st.active_document_index(), -1);
+        assert!(!st.has_open_file());
+
+        let _ = std::fs::remove_file(path_a);
+        let _ = std::fs::remove_file(path_b);
+    }
+
+    #[test]
+    fn document_generations_stay_unique_after_switching() {
+        let mut st = AppState::new();
+        st.load_demo();
+        let gen_a = st.doc_gen;
+        st.capture().unwrap();
+        let gen_b = st.doc_gen;
+        assert_ne!(gen_a, gen_b);
+
+        st.set_active_document(0);
+        assert_eq!(st.doc_gen, gen_a);
+        st.capture().unwrap();
+        let gen_c = st.doc_gen;
+        assert_ne!(gen_c, gen_a);
+        assert_ne!(gen_c, gen_b);
+    }
+
+    #[test]
+    fn dirty_flag_tracks_edits_and_successful_saves() {
+        let path = temp_gel_path("dirty");
+        let mut st = AppState::new();
+        st.capture().unwrap();
+        assert!(st.active_document_dirty());
+        assert!(st.document_labels()[0].ends_with(" *"));
+
+        st.save_as(&path).unwrap();
+        assert!(!st.active_document_dirty());
+        assert!(!st.document_labels()[0].ends_with(" *"));
+        assert_eq!(st.source_path.as_deref(), Some(path.as_path()));
+
+        st.add_lane(None);
+        assert!(st.active_document_dirty());
+        st.save_path(&path).unwrap();
+        assert!(!st.active_document_dirty());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn analyze_invalidates_manual_warp_and_delete_lane_cleans_dependents() {
+        let mut st = AppState::new();
+        st.capture().unwrap();
+        st.analyze(None).unwrap();
+
+        let img = st.work.as_ref().unwrap();
+        let (w, h) = (img.width() as f64, img.height() as f64);
+        st.warp_edit = Some((st.doc_gen, GelWarp::identity_grid(w, h, 4, 5)));
+        let gen_before = st.doc_gen;
+        st.analyze(None).unwrap();
+        assert!(st.warp_edit.is_none());
+        assert_ne!(st.doc_gen, gen_before);
+
+        st.calibrate(10.0);
+        let lane_id = st.analysis().unwrap().lanes[0].id;
+        let deleted_bands: std::collections::BTreeSet<u32> = st
+            .analysis()
+            .unwrap()
+            .bands
+            .iter()
+            .filter(|b| b.lane_id == lane_id)
+            .map(|b| b.id)
+            .collect();
+        let band_id = *deleted_bands.iter().next().expect("band in deleted lane");
+        st.selected = Some(Selection::Band(band_id));
+        st.ratio_a = Some(band_id);
+        st.ratio_b = Some(band_id);
+        st.collapsed_lanes.insert(lane_id);
+
+        st.delete_lane(lane_id);
+        let a = st.analysis().unwrap();
+        assert!(!a.lanes.iter().any(|l| l.id == lane_id));
+        assert!(!a.bands.iter().any(|b| b.lane_id == lane_id));
+        assert!(!a
+            .quantifications
+            .iter()
+            .any(|q| deleted_bands.contains(&q.target_id)));
+        assert!(st.selected.is_none());
+        assert!(st.ratio_a.is_none());
+        assert!(st.ratio_b.is_none());
+        assert!(!st.collapsed_lanes.contains(&lane_id));
     }
 
     #[test]

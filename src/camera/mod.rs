@@ -10,12 +10,15 @@
 //! * [`mock`] — a synthetic backend (always available) used for headless tests,
 //!   demos, and developing the UI without hardware. Its exposure scales frame
 //!   brightness so exposure bracketing and HDR merge can be exercised.
-//! * `nokhwa` backend — real capture (V4L2 / AVFoundation / MediaFoundation),
-//!   compiled only with the `camera` feature.
+//! * `nokhwa` backend — real capture (V4L2 / AVFoundation / MediaFoundation).
+//! * `toupcam` backend — clean-room userspace USB support for ToupTek/Toupcam
+//!   Cypress FX3 cameras.
 
 pub mod mock;
-#[cfg(camera_backend)]
+#[cfg(nokhwa_backend)]
 pub mod nokhwa_backend;
+#[cfg(toupcam_backend)]
+pub mod toupcam_backend;
 
 use crate::core::model::CaptureMeta;
 use image::DynamicImage;

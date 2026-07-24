@@ -55,6 +55,10 @@ export component AppWindow inherits Window {
     // --- state in ---
     in property <image> gel-image;
     in property <image> histogram-image;
+    in property <[string]> file-names;
+    in-out property <int> file-index: -1;
+    in property <bool> has-open-file: false;
+    in property <bool> active-file-dirty: false;
     in property <[string]> ladder-vendor-names;
     in property <[string]> ladder-names;
     in property <[string]> frame-names;
@@ -83,6 +87,7 @@ export component AppWindow inherits Window {
     // Add-lane dialog.
     in-out property <bool> add-lane-dialog-open: false;
     in-out property <string> add-lane-dialog-value: "";
+    in-out property <bool> close-confirm-open: false;
     in property <[WarpKnot]> warp-knots;   // control-point handles (overlay)
     in-out property <int> renaming-lane: -1;
     in property <string> status: "Open a .gel.zip, or run `opengel --demo` to load a demo gel.";
@@ -167,6 +172,8 @@ export component AppWindow inherits Window {
     callback open();
     callback save();
     callback save-as();
+    callback file-changed(int);
+    callback close-current-file();
     callback open-hdr-dialog();
     callback apply-hdr-dialog();     // recompute the HDR merge with the options
     callback cancel-hdr-dialog();
@@ -266,10 +273,10 @@ export component AppWindow inherits Window {
         Menu {
             title: "File";
             MenuItem { title: "Open…"; activated => { root.open(); } }
-            MenuItem { title: "Save"; activated => { root.save(); } }
-            MenuItem { title: "Save as…"; activated => { root.save-as(); } }
+            MenuItem { title: "Save"; enabled: root.has-open-file; activated => { root.save(); } }
+            MenuItem { title: "Save as…"; enabled: root.has-open-file; activated => { root.save-as(); } }
             MenuItem { title: "Email settings…"; activated => { root.open-email-settings(); } }
-            MenuItem { title: "Email data to…"; activated => { root.open-email-to-dialog(); } }
+            MenuItem { title: "Email data to…"; enabled: root.has-open-file; activated => { root.open-email-to-dialog(); } }
         }
         Menu {
             title: "Help";
@@ -279,6 +286,28 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+    HorizontalLayout {
+        padding: 6px;
+        spacing: 6px;
+        Text { text: "File:"; vertical-alignment: center; }
+        ComboBox {
+            model: root.file-names;
+            current-index <=> root.file-index;
+            horizontal-stretch: 1;
+            vertical-stretch: 0;
+            enabled: root.has-open-file;
+            selected(v) => { root.file-changed(self.current-index); }
+        }
+        Button {
+            text: "Close";
+            vertical-stretch: 0;
+            enabled: root.has-open-file;
+            clicked => {
+                if (root.active-file-dirty) { root.close-confirm-open = true; }
+                else { root.close-current-file(); }
+            }
+        }
+    }
     TabWidget {
       vertical-stretch: 1;
       Tab {
@@ -297,10 +326,12 @@ export component AppWindow inherits Window {
                     current-index <=> root.frame-index;
                     width: 145px;
                     vertical-stretch: 0;
+                    enabled: root.has-open-file;
                     selected(v) => { root.frame-changed(self.current-index); }
                 }
                 Button {
                     text: "Recompute HDR…";
+                    enabled: root.has-open-file;
                     vertical-stretch: 0;
                     clicked => { root.open-hdr-dialog(); }
                 }
@@ -309,16 +340,18 @@ export component AppWindow inherits Window {
                     minimum: 0.2; maximum: 8.0; value <=> root.zoom;
                     horizontal-stretch: 1;
                     vertical-stretch: 0;
+                    enabled: root.has-open-file;
                 }
                 Text { text: "R:"; vertical-alignment: center; }
                 Slider {
                     minimum: -180; maximum: 180; value <=> root.rotation;
                     horizontal-stretch: 1;
                     vertical-stretch: 0;
+                    enabled: root.has-open-file;
                     changed(v) => { root.rotate(v); }
                 }
-                Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.fit-view(); } }
-                Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; clicked => { root.auto-straighten(); } }
+                Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.fit-view(); } }
+                Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.auto-straighten(); } }
             }
 
             // Zoom / pan / rotate viewport.
@@ -352,6 +385,7 @@ export component AppWindow inherits Window {
                 ta := TouchArea {
                     width: 100%;
                     height: 100%;
+                    enabled: root.has-open-file;
                     property <length> start-pan-x;
                     property <length> start-pan-y;
                     property <bool> drag-mode;   // dragging an annotation (vs panning)
@@ -457,6 +491,7 @@ export component AppWindow inherits Window {
                             width: 12px; height: 10px; background: #114499; border-radius: 2px;
                         }
                         hist-ta := TouchArea {
+                            enabled: root.has-open-file;
                             property <int> active: 1;
                             property <float> frac: Math.max(0, Math.min(1, self.mouse-x / self.width));
                             pointer-event(e) => {
@@ -480,26 +515,31 @@ export component AppWindow inherits Window {
                     CheckBox {
                         text: "Invert colors";
                         checked <=> root.invert;
+                        enabled: root.has-open-file;
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
                         text: "Show unwarped";
                         checked <=> root.show-unwarped;
+                        enabled: root.has-open-file;
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
                         text: "Show warp model";
                         checked <=> root.show-warp;
+                        enabled: root.has-open-file;
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
                         text: "Normalize inner knots";
                         checked <=> root.normalize-inner-knots;
+                        enabled: root.has-open-file;
                         toggled => { root.display-changed(); }
                     }
                     CheckBox {
                         text: "Show overexposed (red)";
                         checked <=> root.show-overexposed;
+                        enabled: root.has-open-file;
                         toggled => { root.display-changed(); }
                     }
                     HorizontalLayout {
@@ -508,6 +548,7 @@ export component AppWindow inherits Window {
                         Slider {
                             minimum: 0.0; maximum: 1.0; value <=> root.annotation-alpha;
                             horizontal-stretch: 1;
+                            enabled: root.has-open-file;
                             changed(v) => { root.display-changed(); }
                         }
                     }
@@ -592,8 +633,8 @@ export component AppWindow inherits Window {
                 // gel), in two right-aligned rows.
                 HorizontalLayout {
                     spacing: 6px;
-                    Button { text: "Add lane"; horizontal-stretch: 1; clicked => { root.open-add-lane-dialog(); } }
-                    Button { text: "Add band"; horizontal-stretch: 1; clicked => { root.add-band(); } }
+                    Button { text: "Add lane"; horizontal-stretch: 1; enabled: root.has-open-file; clicked => { root.open-add-lane-dialog(); } }
+                    Button { text: "Add band"; horizontal-stretch: 1; enabled: root.has-open-file; clicked => { root.add-band(); } }
                     Button {
                         text: "Delete";
                         horizontal-stretch: 1;
@@ -637,10 +678,12 @@ export component AppWindow inherits Window {
                         border-radius: 5px;
                         background: dt.has-hover ? #c0392b : #e74c3c;
                         dt := TouchArea {
-                            clicked => {
+                        clicked => {
+                            if (root.has-open-file) {
                                 if (root.has-annotations) { root.confirm-detect-open = true; }
                                 else { root.open-fit-dialog(); }
                             }
+                        }
                         }
                         Text { text: "Detect bands"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
@@ -665,6 +708,7 @@ export component AppWindow inherits Window {
               model: ["Intensity", "ng", "Molarity"];
               current-index <=> root.trace-mode-idx;
               vertical-stretch: 0;
+              enabled: root.has-open-file;
               selected(v) => { root.trace-mode-changed(self.current-index); }
             }
             Text { text: "Zoom:"; vertical-alignment: center; }
@@ -672,9 +716,10 @@ export component AppWindow inherits Window {
               minimum: 1.0; maximum: 40.0; value <=> root.trace-zoom;
               horizontal-stretch: 1;
               vertical-stretch: 0;
+              enabled: root.has-open-file;
               changed(v) => { root.trace-set-zoom(v); }
             }
-            Button { text: "Fit"; vertical-stretch: 0; clicked => { root.trace-reset-view(); } }
+            Button { text: "Fit"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.trace-reset-view(); } }
           }
 
           plot := Rectangle {
@@ -779,6 +824,7 @@ export component AppWindow inherits Window {
               y: plot.mt;
               width: plot.pw;
               height: plot.ph;
+              enabled: root.has-open-file;
               property <length> last-x;
               property <bool> dragging;
               mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.grab;
@@ -872,9 +918,9 @@ export component AppWindow inherits Window {
             padding-top: 4px;
             alignment: start;
             spacing: 6px;
-            Button { text: "Select all"; vertical-stretch: 0; clicked => { root.select-all-lanes(); } }
-            Button { text: "Select none"; vertical-stretch: 0; clicked => { root.select-none-lanes(); } }
-            Button { text: "Export as PDF"; vertical-stretch: 0; clicked => { root.export-trace-pdf(); } }
+            Button { text: "Select all"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-all-lanes(); } }
+            Button { text: "Select none"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-none-lanes(); } }
+            Button { text: "Export as PDF"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.export-trace-pdf(); } }
           }
         }
       }
@@ -1043,6 +1089,47 @@ export component AppWindow inherits Window {
             x: 8px;
         }
     }
+    }
+
+    // ---- Close dirty document confirmation ----
+    if root.close-confirm-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { }
+        Rectangle {
+            width: 380px;
+            height: 170px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: white;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #cccccc;
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: "Close unsaved file?"; font-size: 15px; font-weight: 700; }
+                Text {
+                    text: "This file has unsaved changes. Closing it will discard them.";
+                    color: #555555;
+                    wrap: word-wrap;
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.close-confirm-open = false; } }
+                    Button {
+                        text: "Discard";
+                        clicked => {
+                            root.close-confirm-open = false;
+                            root.close-current-file();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ---- Capture progress dialog (camera I/O runs off the UI thread) ----
