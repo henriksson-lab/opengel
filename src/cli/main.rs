@@ -61,6 +61,11 @@ enum Command {
     /// Convert GelGenie-style segmentation masks into `*.gt.json` ground truth
     /// (written next to each image) so real annotated gels can be `eval`'d.
     ImportMasks { dir: PathBuf },
+    /// Print Linux udev rules granting access to the USB devices nu-manager
+    /// drives (cameras and friends). Generated from nu-manager's own vendor
+    /// list, so it stays correct as it gains drivers:
+    /// `gel udev-rules | sudo tee /etc/udev/rules.d/60-opengel-numanager.rules`
+    UdevRules,
     /// Render a batch of simulated gels (with effects + ground truth) in
     /// parallel to a dataset directory.
     Simulate {
@@ -81,6 +86,22 @@ enum Command {
         #[arg(long)]
         eval: bool,
     },
+}
+
+#[cfg(numanager_backend)]
+fn cmd_udev_rules() -> Result<()> {
+    print!("{}", opengel::camera::numanager_backend::udev_rules());
+    Ok(())
+}
+
+/// Without the nu-manager backend there is no vendor list to generate from, and
+/// emitting an empty rules file would look like "no devices need access".
+#[cfg(not(numanager_backend))]
+fn cmd_udev_rules() -> Result<()> {
+    anyhow::bail!(
+        "this build has no nu-manager backend, so there are no USB access \
+         rules to generate (rebuild with the `numanager-camera` feature)"
+    )
 }
 
 fn parse_gel_type(s: &str) -> Result<GelType> {
@@ -123,6 +144,7 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Command::UdevRules => cmd_udev_rules(),
         Command::Simulate {
             dir,
             count,

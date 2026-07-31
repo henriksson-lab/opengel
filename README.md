@@ -14,13 +14,9 @@ Capture, detect and quantify gel electrophoresis images
 
 **Hardware support:**
 
-* Scientific cameras through [nu-manager](https://github.com/henriksson-lab/numanager),
-  which owns the device drivers and USB autodiscovery — Toupcam/ToupTek is what
-  the bench camera uses, and every camera nu-manager gains support for shows up
-  in OpenGel with no changes here
+* All auto-discoverable cameras through [nu-manager](https://github.com/henriksson-lab/numanager),
 * Plain USB webcams (UVC), for framing a gel with whatever is at hand
-* If you want support for another camera, make a github issue — ideally on
-  nu-manager, which is where camera drivers live
+* If you want support for another camera, make a github issue on the nu-manager repository
 
 ![OpenGel GUI: a detected gel with per-band annotation boxes and the fitted NURBS warp grid overlaid](assets/screenshot.png)
 
@@ -56,10 +52,20 @@ The USB camera backends are on by default on every platform. The webcam backend
 needs `libv4l-dev` at build time on Linux (`sudo apt-get install libv4l-dev`);
 build with `--no-default-features` to drop it for a headless build without the
 v4l toolchain. nu-manager's cameras need no build-time system deps, but on Linux
-they do need USB access: the Debian package installs a udev rule for
-Toupcam/ToupTek devices, and for a raw binary install copy
-`packaging/60-opengel-toupcam.rules` to `/etc/udev/rules.d/`, reload udev, then
-replug the camera.
+they do need raw USB access. The Debian package installs the udev rules for you;
+for a raw binary install, generate and install them yourself:
+
+```sh
+cargo run --release --bin gel -- udev-rules \
+  | sudo tee /etc/udev/rules.d/60-opengel-numanager.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb
+# then replug the camera
+```
+
+The rules are *generated*, not checked in: `gel udev-rules` derives them from
+nu-manager's own list of claimed USB vendor ids — the same declaration that
+decides which drivers probe the bus — so they cannot fall behind as nu-manager
+gains device support. Regenerate after updating nu-manager.
 
 
 ## Citing

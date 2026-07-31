@@ -25,6 +25,10 @@ MODELDIR := $(DATADIR)/opengel/models
 MIMEDIR := $(DATADIR)/mime
 MIMEPKGDIR := $(MIMEDIR)/packages
 UDEVDIR := $(DESTDIR)/usr/lib/udev/rules.d
+# Access rules for the USB devices nu-manager drives. NOT a checked-in file:
+# `gel udev-rules` generates it from nu-manager's own vendor list, so it cannot
+# fall behind the drivers the way a hand-maintained list would.
+UDEV_RULES := 60-opengel-numanager.rules
 # The window's Wayland app_id / X11 WM_CLASS; the icon PNG/SVG and the .desktop
 # StartupWMClass are all keyed to this name so the desktop finds the icon.
 LINUX_APP_ID := opengel
@@ -68,8 +72,8 @@ install:
 		"$(MODELDIR)/gelgenie_unet_1024.bpk"
 	install -Dm644 assets/models/gelgenie_unet_1024.NOTICE.md \
 		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md"
-	install -Dm644 packaging/60-opengel-toupcam.rules \
-		"$(UDEVDIR)/60-opengel-toupcam.rules"
+	install -d "$(UDEVDIR)"
+	if "$(CLI_BINARY)" udev-rules > "$(UDEVDIR)/$(UDEV_RULES)"; then chmod 644 "$(UDEVDIR)/$(UDEV_RULES)"; else rm -f "$(UDEVDIR)/$(UDEV_RULES)"; printf 'note: built without the nu-manager backend, so no USB access rules were installed\n'; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
@@ -85,7 +89,7 @@ uninstall:
 		"$(ICONDIR)/256x256/apps/$(LINUX_APP_ID).png" \
 		"$(MODELDIR)/gelgenie_unet_1024.bpk" \
 		"$(MODELDIR)/gelgenie_unet_1024.NOTICE.md" \
-		"$(UDEVDIR)/60-opengel-toupcam.rules"
+		"$(UDEVDIR)/$(UDEV_RULES)"
 	if [ -z "$(DESTDIR)" ] && command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$(MIMEDIR)"; fi
 	if [ -z "$(DESTDIR)" ] && command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(DATADIR)/applications"; fi
 	if [ -z "$(DESTDIR)" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t -f "$(ICONDIR)"; fi
