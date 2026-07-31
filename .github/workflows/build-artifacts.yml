@@ -40,7 +40,7 @@ jobs:
           fi
 
   checks:
-    name: Tests and package checks
+    name: Tests
     needs: release-preflight
     runs-on: ubuntu-latest
     env:
@@ -60,9 +60,10 @@ jobs:
           lfs: true
 
       - name: Install Linux GUI build dependencies
-        # libv4l-dev: the camera backend is a default feature, so the Linux build
-        # (cargo test / cargo package) needs the v4l headers.
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev libv4l-dev
+        # libv4l-dev: the webcam backend is a default feature, so the Linux
+        # build needs the v4l headers. libsqlite3-dev: nu-manager's driver crate
+        # links system sqlite.
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev libv4l-dev libsqlite3-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -70,8 +71,10 @@ jobs:
       - name: Test
         run: cargo test
 
-      - name: Package
-        run: cargo package --allow-dirty
+      # `cargo package` is disabled: camera support comes from nu-manager, which
+      # is a git dependency, and cargo refuses to package a crate whose deps have
+      # no version requirement. Re-enable (`cargo package --allow-dirty`) once
+      # nu-manager is on crates.io and the dependency can carry a version.
 
   windows-exe:
     name: Windows executables
@@ -119,8 +122,9 @@ jobs:
           lfs: true
 
       - name: Install Linux build dependencies
-        # libv4l-dev: the camera backend is a default feature, baked into the .deb.
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev libv4l-dev
+        # libv4l-dev: the webcam backend is a default feature, baked into the
+        # .deb. libsqlite3-dev: nu-manager's driver crate links system sqlite.
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev libv4l-dev libsqlite3-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

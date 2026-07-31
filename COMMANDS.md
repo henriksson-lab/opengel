@@ -28,5 +28,8 @@ cargo run --bin gel -- eval        datasets/real_gels/gelgenie/quantitation_ladd
 cargo run --bin opengel
 cargo run --bin opengel -- demo.gel.zip          # open a file on launch
 cargo run --bin opengel --features camera        # enable real USB capture
+
+# Cameras: which devices each backend sees (nu-manager devices + webcams)
+cargo run --release --example list_cameras
 ```
 

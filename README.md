@@ -14,9 +14,13 @@ Capture, detect and quantify gel electrophoresis images
 
 **Hardware support:**
 
-* USB cameras
-* Toupcam cameras
-* If you want support for another camera, make a github issue
+* Scientific cameras through [nu-manager](https://github.com/henriksson-lab/numanager),
+  which owns the device drivers and USB autodiscovery — Toupcam/ToupTek is what
+  the bench camera uses, and every camera nu-manager gains support for shows up
+  in OpenGel with no changes here
+* Plain USB webcams (UVC), for framing a gel with whatever is at hand
+* If you want support for another camera, make a github issue — ideally on
+  nu-manager, which is where camera drivers live
 
 ![OpenGel GUI: a detected gel with per-band annotation boxes and the fitted NURBS warp grid overlaid](assets/screenshot.png)
 
@@ -48,12 +52,14 @@ cargo run --release --bin gel
 
 The crate ships two binaries — `opengel` (the desktop GUI) and `gel` (the CLI).
 `default-run` points bare `cargo run` at the GUI; pass `--bin gel` for the CLI.
-The USB camera backend is on by default on every platform. On Linux it needs
-`libv4l-dev` at build time (`sudo apt-get install libv4l-dev`); build with
-`--no-default-features` to drop it for a headless build without the v4l toolchain.
-The Debian package installs a udev rule for Toupcam/ToupTek USB devices. For a
-raw binary install, copy `packaging/60-opengel-toupcam.rules` to
-`/etc/udev/rules.d/`, reload udev, then replug the camera.
+The USB camera backends are on by default on every platform. The webcam backend
+needs `libv4l-dev` at build time on Linux (`sudo apt-get install libv4l-dev`);
+build with `--no-default-features` to drop it for a headless build without the
+v4l toolchain. nu-manager's cameras need no build-time system deps, but on Linux
+they do need USB access: the Debian package installs a udev rule for
+Toupcam/ToupTek devices, and for a raw binary install copy
+`packaging/60-opengel-toupcam.rules` to `/etc/udev/rules.d/`, reload udev, then
+replug the camera.
 
 
 ## Citing

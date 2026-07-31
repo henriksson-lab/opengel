@@ -48,8 +48,12 @@ burn = { version = "0.21", default-features = false, features = ["std", "flex", 
 burn-store = { version = "0.21", optional = true }
 # Optional on Linux/other (needs libv4l-dev): enable with `--features camera`.
 nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
-nusb = { version = "0.1", optional = true }
-futures-lite = { version = "2", optional = true }
+# nu-manager (https://github.com/henriksson-lab/numanager) is the device layer:
+# scientific cameras (Toupcam/ToupTek and friends) are consumed as *devices* it
+# discovers and drives, rather than through USB backends of our own. `os-usb`
+# enables its live userspace USB transport.
+numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true }
+numanager-drivers = { git = "https://github.com/henriksson-lab/numanager", optional = true, features = ["os-usb"] }
 
 # macOS (AVFoundation) and Windows (MediaFoundation) ship native capture with no
 # extra system deps, so the real camera backend is always compiled there.
@@ -66,14 +70,16 @@ slint-build = "1.17"
 opt-level = 3
 
 [features]
-# The real USB camera backend is on by default on every platform. On macOS /
-# Windows it is always compiled (native capture APIs, no extra system deps); on
-# Linux this feature pulls in nokhwa, which needs libv4l-dev at build time and a
-# libv4l-0 runtime dep. Build with `--no-default-features` to drop it on Linux
-# (e.g. a headless/CI build without the v4l toolchain). See build.rs, which
-# unifies both into the `camera_backend` cfg.
+# Real camera capture is on by default on every platform, from two backends:
+# nu-manager devices (scientific cameras) and nokhwa (plain webcams). Build with
+# `--no-default-features` to drop both — e.g. a headless Linux/CI build, where
+# nokhwa would otherwise need libv4l-dev at build time and libv4l-0 at runtime.
+# On macOS / Windows nokhwa is always compiled (native capture APIs, no extra
+# system deps). See build.rs, which unifies these into the `camera_backend` cfg.
 default = ["camera", "gelgenie-ml"]
-camera = ["nokhwa-camera", "toupcam-camera"]
+camera = ["nokhwa-camera", "numanager-camera"]
 nokhwa-camera = ["dep:nokhwa"]
-toupcam-camera = ["dep:nusb", "dep:futures-lite"]
+# Cameras as nu-manager devices. This is the path for scientific cameras
+# (Toupcam/ToupTek, and everything else nu-manager grows a driver for).
+numanager-camera = ["dep:numanager-core", "dep:numanager-drivers"]
 gelgenie-ml = ["dep:burn", "dep:burn-store"]

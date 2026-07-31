@@ -1,4 +1,5 @@
-# Toupcam / ToupTek Cypress USB cameras supported by OpenGel's userspace backend.
+# Toupcam / ToupTek Cypress USB cameras, driven from userspace by nu-manager
+# (https://github.com/henriksson-lab/numanager), which needs raw USB access.
 #
 # TAG+="uaccess" lets systemd-logind grant access to the active local desktop
 # user. GROUP="plugdev" is a fallback for lab workstations and headless setups

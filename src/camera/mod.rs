@@ -10,15 +10,23 @@
 //! * [`mock`] — a synthetic backend (always available) used for headless tests,
 //!   demos, and developing the UI without hardware. Its exposure scales frame
 //!   brightness so exposure bracketing and HDR merge can be exercised.
-//! * `nokhwa` backend — real capture (V4L2 / AVFoundation / MediaFoundation).
-//! * `toupcam` backend — clean-room userspace USB support for ToupTek/Toupcam
-//!   Cypress FX3 cameras.
+//! * `numanager` backend — scientific cameras as
+//!   [nu-manager](https://github.com/henriksson-lab/numanager) *devices*. This
+//!   is where hardware support lives now: nu-manager owns the protocols and
+//!   autodiscovery, we consume the typed device.
+//! * `nokhwa` backend — plain UVC/webcam capture (V4L2 / AVFoundation /
+//!   MediaFoundation), for framing a gel with whatever camera is at hand.
+//!
+//! OpenGel used to carry its own clean-room userspace USB driver for
+//! ToupTek/Toupcam Cypress FX3 cameras. nu-manager's `toupcam` driver was
+//! derived from it and now supersedes it, so that code lives there instead —
+//! new camera support belongs in nu-manager, not here.
 
 pub mod mock;
 #[cfg(nokhwa_backend)]
 pub mod nokhwa_backend;
-#[cfg(toupcam_backend)]
-pub mod toupcam_backend;
+#[cfg(numanager_backend)]
+pub mod numanager_backend;
 
 use crate::core::model::CaptureMeta;
 use image::DynamicImage;

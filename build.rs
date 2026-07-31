@@ -7,18 +7,18 @@ fn main() {
     // each implementation gated by the dependencies it actually needs.
     println!("cargo:rustc-check-cfg=cfg(camera_backend)");
     println!("cargo:rustc-check-cfg=cfg(nokhwa_backend)");
-    println!("cargo:rustc-check-cfg=cfg(toupcam_backend)");
+    println!("cargo:rustc-check-cfg=cfg(numanager_backend)");
     let nokhwa_feature = std::env::var_os("CARGO_FEATURE_NOKHWA_CAMERA").is_some();
-    let toupcam_feature = std::env::var_os("CARGO_FEATURE_TOUPCAM_CAMERA").is_some();
+    let numanager_feature = std::env::var_os("CARGO_FEATURE_NUMANAGER_CAMERA").is_some();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let native_nokhwa = matches!(target_os.as_str(), "macos" | "windows");
     if nokhwa_feature || native_nokhwa {
         println!("cargo:rustc-cfg=nokhwa_backend");
     }
-    if toupcam_feature {
-        println!("cargo:rustc-cfg=toupcam_backend");
+    if numanager_feature {
+        println!("cargo:rustc-cfg=numanager_backend");
     }
-    if nokhwa_feature || native_nokhwa || toupcam_feature {
+    if nokhwa_feature || native_nokhwa || numanager_feature {
         println!("cargo:rustc-cfg=camera_backend");
     }
 
