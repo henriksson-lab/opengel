@@ -2,7 +2,7 @@
 
 Capture, detect and quantify gel electrophoresis images
 
-**under development! possibly already working**
+**Work for basic cameras; not yet gel docs**
 
 **Features:**
 
@@ -22,54 +22,24 @@ Capture, detect and quantify gel electrophoresis images
 | PNG, JPEG, TIFF, BMP and friends — a loose image, imported as one gel | ✅ | — |
 | PDF — report of the current analysis | — | ✅ |
 
-Image Lab scans are read whole: 16-bit pixels, every channel, and the
-instrument's acquisition record (exposure, application, excitation source,
-emission filter, serial number). A multi-channel scan opens as one gel with a
-channel selector — the channels share lane and band geometry, because they are
-the same gel photographed under different light. Everything the file recorded
-about how it was taken is shown in the **Metadata** tab.
-
-The "secured" variants are not encrypted — they carry an extra unkeyed MD5 of
-their own contents, which the reader ignores — so they read like any other scan.
 
 **Hardware support:**
 
 * All auto-discoverable cameras through [nu-manager](https://github.com/henriksson-lab/numanager),
-* Plain USB webcams (UVC), for framing a gel with whatever is at hand
-* **Bio-Rad Gel Doc EZ** imaging enclosures (and the Criterion Stain Free, which
-  shares its command set) — see below
+* Plain USB webcams (UVC)
+* Bio-Rad Gel Doc EZ (specialized view)
 * If you want support for another camera, make a github issue on the nu-manager repository
 
 ## Gel Doc EZ
 
-A Gel Doc EZ is a darkroom *around* a camera, not a camera: it senses which
-sample tray is inserted (which is what selects the light source), gates the
-lamps on the door interlock, latches faults and carries a front Run button. Its
-own **Gel Doc EZ** tab drives all of that, while the camera inside it is picked
-from the same list as any other camera.
-
-The tab covers instrument status, the live tray and door state, the fault list
-with remedies, applications (sample type × reagent, with the tray each implies),
-auto exposure — *intense bands* to keep everything quantifiable, *faint bands* to
-lift the faint end and let the brightest clip — or manual exposure over the
-instrument's 0.001–10 s range, stain-free gel activation, and saved protocols
-with one default per tray bound to the hardware Run button.
-
-An exposure interrupted by the door opening is discarded, not saved: the
-instrument latches that condition, and an image taken across it is not data.
-
-The enclosure is a plain USB HID device, so on Linux it needs only `hidraw`
-access:
+Gel doc requires additional rules on Linux:
 
 ```sh
 gel udev-rules | sudo tee /etc/udev/rules.d/60-opengel.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-With no instrument attached the tab offers a **simulated Gel Doc EZ** that
-answers the same wire protocol, including a bench panel for moving the tray,
-opening the door, injecting faults and pressing the Run button — the whole tab
-is usable, and testable, without hardware.
+## Screenshots
 
 ![OpenGel GUI: a detected gel with per-band annotation boxes and the fitted NURBS warp grid overlaid](assets/screenshot.png)
 
