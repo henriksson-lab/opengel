@@ -22,6 +22,30 @@ pub enum GelType {
 }
 
 impl GelType {
+    /// Every gel type, in the order the UI presents them. Selectors index into
+    /// this, so the order is part of the contract between the two.
+    pub const ALL: [GelType; 3] = [GelType::Dna, GelType::Rna, GelType::Protein];
+
+    /// Human-readable name, as shown in the gel-type and ladder-type selectors.
+    pub fn label(self) -> &'static str {
+        match self {
+            GelType::Dna => "DNA",
+            GelType::Rna => "RNA",
+            GelType::Protein => "Protein",
+        }
+    }
+
+    /// Position in [`GelType::ALL`] — the index a selector uses.
+    pub fn index(self) -> usize {
+        GelType::ALL.iter().position(|t| *t == self).unwrap_or(0)
+    }
+
+    /// The type at `index` in [`GelType::ALL`], falling back to DNA for an
+    /// out-of-range index (a selector that has not been populated yet).
+    pub fn from_index(index: usize) -> GelType {
+        GelType::ALL.get(index).copied().unwrap_or(GelType::Dna)
+    }
+
     /// Average molar mass used to convert a size into g/mol.
     ///
     /// * DNA:  ~650 g/mol per base pair.

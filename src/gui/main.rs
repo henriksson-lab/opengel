@@ -19,6 +19,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
+use opengel::core::model::GelType;
 use state::AppState;
 
 slint::include_modules!();
@@ -37,8 +38,13 @@ fn gelgenie_model_available() -> bool {
     }
 }
 
-fn set_ladder_dialog_models(ui: &AppWindow, state: &AppState, vendor_index: usize) {
-    let (vendors, names) = state.ladder_dialog_options_for_vendor_index(vendor_index);
+fn set_ladder_dialog_models(
+    ui: &AppWindow,
+    state: &AppState,
+    gel_type: GelType,
+    vendor_index: usize,
+) {
+    let (vendors, names) = state.ladder_dialog_options_for_vendor_index(gel_type, vendor_index);
     let vendor_model: Vec<SharedString> = vendors.into_iter().map(SharedString::from).collect();
     let ladder_model: Vec<SharedString> = names.into_iter().map(SharedString::from).collect();
     ui.set_ladder_vendor_names(ModelRc::new(VecModel::from(vendor_model)));
@@ -86,9 +92,7 @@ fn main() -> anyhow::Result<()> {
         // argument, so it has to be excluded before hunting for the file path —
         // otherwise `--tab 3` tries to open a file called "3".
         const VALUE_FLAGS: [&str; 2] = ["--transparency", "--tab"];
-        let is_flag_value = |i: usize| {
-            i > 0 && VALUE_FLAGS.contains(&args[i - 1].as_str())
-        };
+        let is_flag_value = |i: usize| i > 0 && VALUE_FLAGS.contains(&args[i - 1].as_str());
 
         // Load the document first (demo or positional path).
         if has("--demo") {
@@ -121,7 +125,10 @@ fn main() -> anyhow::Result<()> {
             ui.set_annotation_alpha(alpha);
         }
         if has("--detect") {
-            match state.borrow_mut().analyze(None) {
+            // Bind the result first: a `state.borrow_mut()` in the scrutinee
+            // stays alive for the whole `match`, and the Ok arm borrows again.
+            let result = state.borrow_mut().analyze(None);
+            match result {
                 Ok(msg) => {
                     ui.set_rotation(state.borrow().rotation_deg as f32);
                     ui.set_status(msg.into());
@@ -238,8 +245,7 @@ fn main() -> anyhow::Result<()> {
                                 drop(st);
                                 ui.set_status(msg.into());
                             } else {
-                                st.geldoc.message =
-                                    format!("Sense bit 0x{mask:04x} went high.");
+                                st.geldoc.message = format!("Sense bit 0x{mask:04x} went high.");
                             }
                         }
                         InstEvent::Activating { elapsed_s, total_s } => {
@@ -301,7 +307,10 @@ fn main() -> anyhow::Result<()> {
                             st.preview = Some(frame);
                             live_dirty = true;
                         }
-                        CamEvent::Metering { attempt, exposure_s } => {
+                        CamEvent::Metering {
+                            attempt,
+                            exposure_s,
+                        } => {
                             st.capture_status =
                                 format!("Metering (attempt {attempt}) at {exposure_s:.3} s…");
                             live_dirty = true;
@@ -734,15 +743,32 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_open_ladder_dialog(move |lane_id| {
             let ui = ui_weak.unwrap();
-            let (name, vidx, tidx, vol, conc) =
+            let (name, type_idx, vidx, tidx, vol, conc) =
                 state.borrow().ladder_dialog_prefill(lane_id as u32);
-            set_ladder_dialog_models(&ui, &state.borrow(), vidx.max(0) as usize);
+            let gel_type = GelType::from_index(type_idx.max(0) as usize);
+            set_ladder_dialog_models(&ui, &state.borrow(), gel_type, vidx.max(0) as usize);
             ui.set_dialog_lane_name(name.into());
+            ui.set_dialog_ladder_type_index(type_idx.max(0));
             ui.set_dialog_ladder_vendor_index(vidx.max(0));
             ui.set_dialog_ladder_index(tidx.max(0));
             ui.set_dialog_volume(format!("{vol:.1}").into());
             ui.set_dialog_conc(format!("{conc:.1}").into());
             ui.set_ladder_dialog_lane(lane_id);
+        });
+    }
+    // Ladder category (DNA / RNA / protein). Switching it re-populates the
+    // company and ladder lists from scratch, so both selections reset.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_ladder_type_changed(move |type_index| {
+            let ui = ui_weak.unwrap();
+            let type_index = type_index.max(0);
+            let gel_type = GelType::from_index(type_index as usize);
+            set_ladder_dialog_models(&ui, &state.borrow(), gel_type, 0);
+            ui.set_dialog_ladder_type_index(type_index);
+            ui.set_dialog_ladder_vendor_index(0);
+            ui.set_dialog_ladder_index(0);
         });
     }
     {
@@ -751,9 +777,23 @@ fn main() -> anyhow::Result<()> {
         ui.on_ladder_vendor_changed(move |vendor_index| {
             let ui = ui_weak.unwrap();
             let vendor_index = vendor_index.max(0) as usize;
-            set_ladder_dialog_models(&ui, &state.borrow(), vendor_index);
+            let gel_type = GelType::from_index(ui.get_dialog_ladder_type_index().max(0) as usize);
+            set_ladder_dialog_models(&ui, &state.borrow(), gel_type, vendor_index);
             ui.set_dialog_ladder_vendor_index(vendor_index as i32);
             ui.set_dialog_ladder_index(0);
+        });
+    }
+    // Document gel type: what kind of gel this is. Also sets the default
+    // category the "Use as ladder" dialog opens on.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_gel_type_changed(move |type_index| {
+            let ui = ui_weak.unwrap();
+            let gel_type = GelType::from_index(type_index.max(0) as usize);
+            let msg = state.borrow_mut().set_gel_type(gel_type);
+            ui.set_status(msg.into());
+            view::refresh(&ui, &state.borrow());
         });
     }
     {
@@ -764,17 +804,22 @@ fn main() -> anyhow::Result<()> {
             let ui = ui_weak.unwrap();
             let lane_id = ui.get_ladder_dialog_lane();
             if lane_id >= 0 {
+                let gel_type =
+                    GelType::from_index(ui.get_dialog_ladder_type_index().max(0) as usize);
                 let vidx = ui.get_dialog_ladder_vendor_index().max(0) as usize;
                 let tidx = ui.get_dialog_ladder_index().max(0) as usize;
                 let vol: f64 = ui.get_dialog_volume().parse().unwrap_or(0.0);
                 let conc: f64 = ui.get_dialog_conc().parse().unwrap_or(0.0);
                 let ladder_name = {
-                    let (_, names) = state.borrow().ladder_dialog_options_for_vendor_index(vidx);
+                    let (_, names) = state
+                        .borrow()
+                        .ladder_dialog_options_for_vendor_index(gel_type, vidx);
                     names.get(tidx).cloned()
                 };
                 let msg = match ladder_name {
                     Some(name) => state.borrow_mut().apply_ladder_dialog_by_name(
                         lane_id as u32,
+                        gel_type,
                         &name,
                         vol,
                         conc,
@@ -1503,7 +1548,10 @@ fn main() -> anyhow::Result<()> {
             let state = state.clone();
             ui.on_gd_protocol_selected(move |idx| {
                 let ui = ui_weak.unwrap();
-                state.borrow_mut().geldoc.select_protocol(idx.max(0) as usize);
+                state
+                    .borrow_mut()
+                    .geldoc
+                    .select_protocol(idx.max(0) as usize);
                 view::refresh_geldoc(&ui, &state.borrow());
             });
         }
@@ -1572,8 +1620,8 @@ fn main() -> anyhow::Result<()> {
             let state = state.clone();
             ui.on_gd_step_selected(move |idx| {
                 let ui = ui_weak.unwrap();
-                let step = opengel::instrument::protocol::ProtocolStep::ALL
-                    [(idx.max(0) as usize).min(3)];
+                let step =
+                    opengel::instrument::protocol::ProtocolStep::ALL[(idx.max(0) as usize).min(3)];
                 state.borrow_mut().geldoc.selected_step = step;
                 view::refresh_geldoc(&ui, &state.borrow());
             });
@@ -1584,8 +1632,8 @@ fn main() -> anyhow::Result<()> {
             let persist = persist.clone();
             ui.on_gd_step_toggled(move |idx, enabled| {
                 let ui = ui_weak.unwrap();
-                let step = opengel::instrument::protocol::ProtocolStep::ALL
-                    [(idx.max(0) as usize).min(3)];
+                let step =
+                    opengel::instrument::protocol::ProtocolStep::ALL[(idx.max(0) as usize).min(3)];
                 state.borrow_mut().geldoc.set_step_enabled(step, enabled);
                 persist();
                 view::refresh_geldoc(&ui, &state.borrow());

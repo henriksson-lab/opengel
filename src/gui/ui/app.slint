@@ -127,7 +127,10 @@ export component AppWindow inherits Window {
     in property <[WarpKnot]> warp-knots;   // control-point handles (overlay)
     in-out property <int> renaming-lane: -1;
     in property <string> status: "Open a .gel.zip, or run `opengel --demo` to load a demo gel.";
-    in property <string> gel-type-label: "-";
+    // What the open document is: DNA / RNA / protein. Drives the size unit, the
+    // molarity conversion and which ladders the "Use as ladder" dialog offers.
+    in property <[string]> gel-type-names;
+    in-out property <int> gel-type-index: 0;
     in-out property <int> frame-index: 0;
     // Acquisition channels. The selector is hidden entirely for the ordinary
     // single-channel gel, where a control offering one choice is just noise.
@@ -177,6 +180,7 @@ export component AppWindow inherits Window {
     // "Use as ladder" dialog.
     in-out property <int> ladder-dialog-lane: -1;   // -1 = closed
     in-out property <string> dialog-lane-name: "";
+    in-out property <int> dialog-ladder-type-index: 0;
     in-out property <int> dialog-ladder-vendor-index: 0;
     in-out property <int> dialog-ladder-index: 0;
     in-out property <string> dialog-volume: "10";
@@ -314,7 +318,9 @@ export component AppWindow inherits Window {
     callback lane-renamed(int, string);   // commit an inline rename
     callback band-menu(int, string);      // "delete" for a band
     // Ladder dialog.
+    callback gel-type-changed(int);
     callback open-ladder-dialog(int);
+    callback ladder-type-changed(int);
     callback ladder-vendor-changed(int);
     callback apply-ladder-dialog();
     callback cancel-ladder-dialog();
@@ -415,6 +421,15 @@ export component AppWindow inherits Window {
             vertical-stretch: 0;
             enabled: root.has-open-file;
             selected(v) => { root.file-changed(self.current-index); }
+        }
+        Text { text: "Gel:"; vertical-alignment: center; }
+        ComboBox {
+            model: root.gel-type-names;
+            current-index <=> root.gel-type-index;
+            vertical-stretch: 0;
+            width: 110px;
+            enabled: root.has-open-file;
+            selected(v) => { root.gel-type-changed(self.current-index); }
         }
         Button {
             text: "Close";
@@ -2267,7 +2282,7 @@ export component AppWindow inherits Window {
         TouchArea { }
         Rectangle {
             width: 430px;
-            height: 365px;
+            height: 415px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: white;
@@ -2278,6 +2293,15 @@ export component AppWindow inherits Window {
                 padding: 16px;
                 spacing: 10px;
                 Text { text: "Use “" + root.dialog-lane-name + "” as ladder"; font-size: 15px; font-weight: 700; }
+                HorizontalBox {
+                    Text { text: "Type:"; vertical-alignment: center; width: 120px; }
+                    ComboBox {
+                        model: root.gel-type-names;
+                        current-index <=> root.dialog-ladder-type-index;
+                        horizontal-stretch: 1;
+                        selected(value) => { root.ladder-type-changed(root.dialog-ladder-type-index); }
+                    }
+                }
                 HorizontalBox {
                     Text { text: "Company:"; vertical-alignment: center; width: 120px; }
                     ComboBox {

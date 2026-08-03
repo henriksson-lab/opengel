@@ -6,11 +6,47 @@
     "catalog": "N3232",
     "standard_load_ng": 500,
     "bands": [
-      { "size": 10000, "mass_ng": 42 }, { "size": 8000, "mass_ng": 42 },
-      { "size": 6000, "mass_ng": 50 }, { "size": 5000, "mass_ng": 42 },
-      { "size": 4000, "mass_ng": 33 }, { "size": 3000, "mass_ng": 125, "reference": true },
-      { "size": 2000, "mass_ng": 48 }, { "size": 1500, "mass_ng": 36 },
-      { "size": 1000, "mass_ng": 42 }, { "size": 500, "mass_ng": 42 }
+      {
+        "size": 10000,
+        "mass_ng": 42
+      },
+      {
+        "size": 8000,
+        "mass_ng": 42
+      },
+      {
+        "size": 6000,
+        "mass_ng": 50
+      },
+      {
+        "size": 5000,
+        "mass_ng": 42
+      },
+      {
+        "size": 4000,
+        "mass_ng": 33
+      },
+      {
+        "size": 3000,
+        "mass_ng": 125,
+        "reference": true
+      },
+      {
+        "size": 2000,
+        "mass_ng": 48
+      },
+      {
+        "size": 1500,
+        "mass_ng": 36
+      },
+      {
+        "size": 1000,
+        "mass_ng": 42
+      },
+      {
+        "size": 500,
+        "mass_ng": 42
+      }
     ]
   },
   {
@@ -19,12 +55,66 @@
     "vendor": "NEB",
     "catalog": "N3200",
     "bands": [
-      { "size": 10000 }, { "size": 8000 }, { "size": 6000 }, { "size": 5000 },
-      { "size": 4000 }, { "size": 3000, "reference": true }, { "size": 2000 },
-      { "size": 1500 }, { "size": 1200 }, { "size": 1000, "reference": true },
-      { "size": 900 }, { "size": 800 }, { "size": 700 }, { "size": 600 },
-      { "size": 500, "reference": true }, { "size": 400 }, { "size": 300 },
-      { "size": 200 }, { "size": 100 }
+      {
+        "size": 10000
+      },
+      {
+        "size": 8000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000,
+        "reference": true
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1200
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -34,12 +124,56 @@
     "catalog": "N3231",
     "standard_load_ng": 500,
     "bands": [
-      { "size": 1517, "mass_ng": 45 }, { "size": 1200, "mass_ng": 35 },
-      { "size": 1000, "mass_ng": 95, "reference": true }, { "size": 900, "mass_ng": 27 },
-      { "size": 800, "mass_ng": 24 }, { "size": 700, "mass_ng": 21 },
-      { "size": 600, "mass_ng": 18 }, { "size": 500, "mass_ng": 97, "reference": true },
-      { "size": 400, "mass_ng": 38 }, { "size": 300, "mass_ng": 29 },
-      { "size": 200, "mass_ng": 25 }, { "size": 100, "mass_ng": 48 }
+      {
+        "size": 1517,
+        "mass_ng": 45
+      },
+      {
+        "size": 1200,
+        "mass_ng": 35
+      },
+      {
+        "size": 1000,
+        "mass_ng": 95,
+        "reference": true
+      },
+      {
+        "size": 900,
+        "mass_ng": 27
+      },
+      {
+        "size": 800,
+        "mass_ng": 24
+      },
+      {
+        "size": 700,
+        "mass_ng": 21
+      },
+      {
+        "size": 600,
+        "mass_ng": 18
+      },
+      {
+        "size": 500,
+        "mass_ng": 97,
+        "reference": true
+      },
+      {
+        "size": 400,
+        "mass_ng": 38
+      },
+      {
+        "size": 300,
+        "mass_ng": 29
+      },
+      {
+        "size": 200,
+        "mass_ng": 25
+      },
+      {
+        "size": 100,
+        "mass_ng": 48
+      }
     ]
   },
   {
@@ -48,11 +182,51 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM0311",
     "bands": [
-      { "size": 10000 }, { "size": 8000 }, { "size": 6000, "reference": true },
-      { "size": 5000 }, { "size": 4000 }, { "size": 3500 },
-      { "size": 3000, "reference": true }, { "size": 2500 }, { "size": 2000 },
-      { "size": 1500 }, { "size": 1000, "reference": true }, { "size": 750 },
-      { "size": 500 }, { "size": 250 }
+      {
+        "size": 10000
+      },
+      {
+        "size": 8000
+      },
+      {
+        "size": 6000,
+        "reference": true
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3500
+      },
+      {
+        "size": 3000,
+        "reference": true
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 750
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 250
+      }
     ]
   },
   {
@@ -61,11 +235,54 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM1331",
     "bands": [
-      { "size": 20000 }, { "size": 10000 }, { "size": 7000 },
-      { "size": 5000, "reference": true }, { "size": 4000 }, { "size": 3000 },
-      { "size": 2000 }, { "size": 1500, "reference": true }, { "size": 1000 },
-      { "size": 700 }, { "size": 500, "reference": true }, { "size": 400 },
-      { "size": 300 }, { "size": 200 }, { "size": 75 }
+      {
+        "size": 20000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 7000
+      },
+      {
+        "size": 5000,
+        "reference": true
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500,
+        "reference": true
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 75
+      }
     ]
   },
   {
@@ -74,9 +291,37 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM0241",
     "bands": [
-      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
-      { "size": 600 }, { "size": 500, "reference": true }, { "size": 400 },
-      { "size": 300 }, { "size": 200 }, { "size": 100 }
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -85,10 +330,50 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM0321",
     "bands": [
-      { "size": 3000 }, { "size": 2000 }, { "size": 1500 }, { "size": 1200 },
-      { "size": 1000, "reference": true }, { "size": 900 }, { "size": 800 },
-      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
-      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1200
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -97,10 +382,38 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM1191",
     "bands": [
-      { "size": 700 }, { "size": 500 }, { "size": 400 },
-      { "size": 300, "reference": true }, { "size": 200 }, { "size": 150 },
-      { "size": 100, "reference": true }, { "size": 75 }, { "size": 50 },
-      { "size": 25 }
+      {
+        "size": 700
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300,
+        "reference": true
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 100,
+        "reference": true
+      },
+      {
+        "size": 75
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 25
+      }
     ]
   },
   {
@@ -109,8 +422,30 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM1351",
     "bands": [
-      { "size": 48502 }, { "size": 24508 }, { "size": 20555 }, { "size": 17000 },
-      { "size": 15258 }, { "size": 13825 }, { "size": 12119 }, { "size": 10171 }
+      {
+        "size": 48502
+      },
+      {
+        "size": 24508
+      },
+      {
+        "size": 20555
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 15258
+      },
+      {
+        "size": 13825
+      },
+      {
+        "size": 12119
+      },
+      {
+        "size": 10171
+      }
     ]
   },
   {
@@ -119,9 +454,40 @@
     "vendor": "Thermo Fisher",
     "catalog": "SM1211",
     "bands": [
-      { "size": 300 }, { "size": 200 }, { "size": 150 }, { "size": 100 },
-      { "size": 75 }, { "size": 50, "reference": true }, { "size": 35 },
-      { "size": 25 }, { "size": 20 }, { "size": 15 }, { "size": 10 }
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 75
+      },
+      {
+        "size": 50,
+        "reference": true
+      },
+      {
+        "size": 35
+      },
+      {
+        "size": 25
+      },
+      {
+        "size": 20
+      },
+      {
+        "size": 15
+      },
+      {
+        "size": 10
+      }
     ]
   },
   {
@@ -130,11 +496,61 @@
     "vendor": "Thermo Fisher",
     "catalog": "10787018",
     "bands": [
-      { "size": 15000 }, { "size": 10000 }, { "size": 8000 }, { "size": 7000 },
-      { "size": 6000 }, { "size": 5000 }, { "size": 4000 }, { "size": 3000 },
-      { "size": 2000 }, { "size": 1500, "reference": true }, { "size": 1000 },
-      { "size": 850 }, { "size": 650 }, { "size": 500 }, { "size": 400 },
-      { "size": 300 }, { "size": 200 }, { "size": 100 }
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 8000
+      },
+      {
+        "size": 7000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500,
+        "reference": true
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 850
+      },
+      {
+        "size": 650
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -143,9 +559,37 @@
     "vendor": "Bio-Rad",
     "catalog": "1708352",
     "bands": [
-      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
-      { "size": 600 }, { "size": 500 }, { "size": 400 }, { "size": 300 },
-      { "size": 200, "reference": true }, { "size": 100 }
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200,
+        "reference": true
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -155,9 +599,26 @@
     "catalog": "1708356",
     "standard_load_ng": 250,
     "bands": [
-      { "size": 1000, "mass_ng": 100 }, { "size": 700, "mass_ng": 70 },
-      { "size": 500, "mass_ng": 50 }, { "size": 200, "mass_ng": 20 },
-      { "size": 100, "mass_ng": 10 }
+      {
+        "size": 1000,
+        "mass_ng": 100
+      },
+      {
+        "size": 700,
+        "mass_ng": 70
+      },
+      {
+        "size": 500,
+        "mass_ng": 50
+      },
+      {
+        "size": 200,
+        "mass_ng": 20
+      },
+      {
+        "size": 100,
+        "mass_ng": 10
+      }
     ]
   },
   {
@@ -166,10 +627,47 @@
     "vendor": "Promega",
     "catalog": "G5711",
     "bands": [
-      { "size": 10000 }, { "size": 8000 }, { "size": 6000 }, { "size": 5000 },
-      { "size": 4000 }, { "size": 3000, "reference": true }, { "size": 2500 },
-      { "size": 2000 }, { "size": 1500 }, { "size": 1000, "reference": true },
-      { "size": 750 }, { "size": 500 }, { "size": 250 }
+      {
+        "size": 10000
+      },
+      {
+        "size": 8000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000,
+        "reference": true
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 750
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 250
+      }
     ]
   },
   {
@@ -178,9 +676,40 @@
     "vendor": "Promega",
     "catalog": "G2101",
     "bands": [
-      { "size": 1500 }, { "size": 1000 }, { "size": 900 }, { "size": 800 },
-      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
-      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -189,8 +718,24 @@
     "vendor": "Promega",
     "catalog": "G3161",
     "bands": [
-      { "size": 1000 }, { "size": 750 }, { "size": 500 }, { "size": 300 },
-      { "size": 150 }, { "size": 50 }
+      {
+        "size": 1000
+      },
+      {
+        "size": 750
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 50
+      }
     ]
   },
   {
@@ -199,8 +744,30 @@
     "vendor": "Promega",
     "catalog": "G1711",
     "bands": [
-      { "size": 23130 }, { "size": 9416 }, { "size": 6557 }, { "size": 4361 },
-      { "size": 2322 }, { "size": 2027 }, { "size": 564 }, { "size": 125 }
+      {
+        "size": 23130
+      },
+      {
+        "size": 9416
+      },
+      {
+        "size": 6557
+      },
+      {
+        "size": 4361
+      },
+      {
+        "size": 2322
+      },
+      {
+        "size": 2027
+      },
+      {
+        "size": 564
+      },
+      {
+        "size": 125
+      }
     ]
   },
   {
@@ -209,9 +776,28 @@
     "vendor": "NEB",
     "catalog": "N0362",
     "bands": [
-      { "size": 9000 }, { "size": 7000 }, { "size": 5000 },
-      { "size": 3000, "reference": true }, { "size": 2000 }, { "size": 1000 },
-      { "size": 500 }
+      {
+        "size": 9000
+      },
+      {
+        "size": 7000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 3000,
+        "reference": true
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      }
     ]
   },
   {
@@ -221,10 +807,38 @@
     "catalog": "SM1821",
     "standard_load_ng": 960,
     "bands": [
-      { "size": 6000, "mass_ng": 120 }, { "size": 4000, "mass_ng": 120 },
-      { "size": 3000, "mass_ng": 120 }, { "size": 2000, "mass_ng": 120 },
-      { "size": 1500, "mass_ng": 120 }, { "size": 1000, "mass_ng": 120 },
-      { "size": 500, "mass_ng": 120 }, { "size": 200, "mass_ng": 120 }
+      {
+        "size": 6000,
+        "mass_ng": 120
+      },
+      {
+        "size": 4000,
+        "mass_ng": 120
+      },
+      {
+        "size": 3000,
+        "mass_ng": 120
+      },
+      {
+        "size": 2000,
+        "mass_ng": 120
+      },
+      {
+        "size": 1500,
+        "mass_ng": 120
+      },
+      {
+        "size": 1000,
+        "mass_ng": 120
+      },
+      {
+        "size": 500,
+        "mass_ng": 120
+      },
+      {
+        "size": 200,
+        "mass_ng": 120
+      }
     ]
   },
   {
@@ -234,10 +848,34 @@
     "catalog": "SM1831",
     "standard_load_ng": 980,
     "bands": [
-      { "size": 1000, "mass_ng": 140 }, { "size": 800, "mass_ng": 140 },
-      { "size": 600, "mass_ng": 140 }, { "size": 400, "mass_ng": 140 },
-      { "size": 300, "mass_ng": 140 }, { "size": 200, "mass_ng": 140 },
-      { "size": 100, "mass_ng": 140 }
+      {
+        "size": 1000,
+        "mass_ng": 140
+      },
+      {
+        "size": 800,
+        "mass_ng": 140
+      },
+      {
+        "size": 600,
+        "mass_ng": 140
+      },
+      {
+        "size": 400,
+        "mass_ng": 140
+      },
+      {
+        "size": 300,
+        "mass_ng": 140
+      },
+      {
+        "size": 200,
+        "mass_ng": 140
+      },
+      {
+        "size": 100,
+        "mass_ng": 140
+      }
     ]
   },
   {
@@ -246,9 +884,36 @@
     "vendor": "Thermo Fisher",
     "catalog": "AM7150",
     "bands": [
-      { "size": 9000 }, { "size": 6000 }, { "size": 5000 }, { "size": 4000 },
-      { "size": 3000 }, { "size": 2500 }, { "size": 2000 }, { "size": 1500 },
-      { "size": 1000 }, { "size": 500 }
+      {
+        "size": 9000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      }
     ]
   },
   {
@@ -257,9 +922,33 @@
     "vendor": "Promega",
     "catalog": "G3191",
     "bands": [
-      { "size": 6583 }, { "size": 4981 }, { "size": 3638 }, { "size": 2604 },
-      { "size": 1908 }, { "size": 1383 }, { "size": 955 }, { "size": 623 },
-      { "size": 281 }
+      {
+        "size": 6583
+      },
+      {
+        "size": 4981
+      },
+      {
+        "size": 3638
+      },
+      {
+        "size": 2604
+      },
+      {
+        "size": 1908
+      },
+      {
+        "size": 1383
+      },
+      {
+        "size": 955
+      },
+      {
+        "size": 623
+      },
+      {
+        "size": 281
+      }
     ]
   },
   {
@@ -268,10 +957,41 @@
     "vendor": "NEB",
     "catalog": "P7719",
     "bands": [
-      { "size": 250000 }, { "size": 180000 }, { "size": 130000 }, { "size": 95000 },
-      { "size": 72000, "reference": true }, { "size": 55000 }, { "size": 43000 },
-      { "size": 34000 }, { "size": 26000, "reference": true }, { "size": 17000 },
-      { "size": 11000 }
+      {
+        "size": 250000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 95000
+      },
+      {
+        "size": 72000,
+        "reference": true
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 43000
+      },
+      {
+        "size": 34000
+      },
+      {
+        "size": 26000,
+        "reference": true
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
     ]
   },
   {
@@ -280,9 +1000,39 @@
     "vendor": "NEB",
     "catalog": "P7718",
     "bands": [
-      { "size": 250000 }, { "size": 180000 }, { "size": 130000 }, { "size": 95000 },
-      { "size": 72000 }, { "size": 55000 }, { "size": 43000 }, { "size": 34000 },
-      { "size": 26000 }, { "size": 17000 }, { "size": 11000 }
+      {
+        "size": 250000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 95000
+      },
+      {
+        "size": 72000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 43000
+      },
+      {
+        "size": 34000
+      },
+      {
+        "size": 26000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
     ]
   },
   {
@@ -291,10 +1041,45 @@
     "vendor": "NEB",
     "catalog": "P7717",
     "bands": [
-      { "size": 200000 }, { "size": 150000 }, { "size": 120000 }, { "size": 100000 },
-      { "size": 85000 }, { "size": 70000 }, { "size": 60000 }, { "size": 50000 },
-      { "size": 40000 }, { "size": 30000 }, { "size": 25000 }, { "size": 15000 },
-      { "size": 10000 }
+      {
+        "size": 200000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 120000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 85000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -303,10 +1088,38 @@
     "vendor": "Thermo Fisher",
     "catalog": "26616",
     "bands": [
-      { "size": 180000 }, { "size": 130000 }, { "size": 100000 },
-      { "size": 70000, "reference": true }, { "size": 55000 }, { "size": 40000 },
-      { "size": 35000 }, { "size": 25000 }, { "size": 15000 },
-      { "size": 10000, "reference": true }
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 70000,
+        "reference": true
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000,
+        "reference": true
+      }
     ]
   },
   {
@@ -315,9 +1128,33 @@
     "vendor": "Thermo Fisher",
     "catalog": "26619",
     "bands": [
-      { "size": 250000 }, { "size": 130000 }, { "size": 100000 }, { "size": 70000 },
-      { "size": 55000 }, { "size": 35000 }, { "size": 25000 }, { "size": 15000 },
-      { "size": 10000 }
+      {
+        "size": 250000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -326,10 +1163,49 @@
     "vendor": "Thermo Fisher",
     "catalog": "26614",
     "bands": [
-      { "size": 200000 }, { "size": 150000 }, { "size": 120000 }, { "size": 100000 },
-      { "size": 85000 }, { "size": 70000 }, { "size": 60000 },
-      { "size": 50000, "reference": true }, { "size": 40000 }, { "size": 30000 },
-      { "size": 25000 }, { "size": 20000 }, { "size": 15000 }, { "size": 10000 }
+      {
+        "size": 200000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 120000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 85000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -338,10 +1214,42 @@
     "vendor": "Thermo Fisher",
     "catalog": "26630",
     "bands": [
-      { "size": 250000 }, { "size": 150000 }, { "size": 100000, "reference": true },
-      { "size": 70000 }, { "size": 50000, "reference": true }, { "size": 40000 },
-      { "size": 30000 }, { "size": 20000, "reference": true }, { "size": 15000 },
-      { "size": 10000 }, { "size": 5000 }
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000,
+        "reference": true
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000,
+        "reference": true
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 5000
+      }
     ]
   },
   {
@@ -350,9 +1258,36 @@
     "vendor": "Thermo Fisher",
     "catalog": "26623",
     "bands": [
-      { "size": 260000 }, { "size": 140000 }, { "size": 100000 }, { "size": 70000 },
-      { "size": 50000 }, { "size": 40000 }, { "size": 35000 }, { "size": 25000 },
-      { "size": 15000 }, { "size": 10000 }
+      {
+        "size": 260000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -361,10 +1296,39 @@
     "vendor": "Bio-Rad",
     "catalog": "1610373",
     "bands": [
-      { "size": 250000 }, { "size": 150000 }, { "size": 100000 },
-      { "size": 75000, "reference": true }, { "size": 50000, "reference": true },
-      { "size": 37000 }, { "size": 25000, "reference": true }, { "size": 20000 },
-      { "size": 15000 }, { "size": 10000 }
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -373,11 +1337,46 @@
     "vendor": "Bio-Rad",
     "catalog": "1610377",
     "bands": [
-      { "size": 250000 }, { "size": 150000 }, { "size": 100000 },
-      { "size": 75000, "reference": true }, { "size": 50000, "reference": true },
-      { "size": 37000 }, { "size": 25000, "reference": true }, { "size": 20000 },
-      { "size": 15000 }, { "size": 10000 }, { "size": 5000 },
-      { "size": 2000, "reference": true }
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 2000,
+        "reference": true
+      }
     ]
   },
   {
@@ -386,9 +1385,34 @@
     "vendor": "Promega",
     "catalog": "V8491",
     "bands": [
-      { "size": 225000 }, { "size": 150000 }, { "size": 100000 }, { "size": 75000 },
-      { "size": 50000, "reference": true }, { "size": 35000 }, { "size": 25000 },
-      { "size": 15000 }, { "size": 10000 }
+      {
+        "size": 225000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
     ]
   },
   {
@@ -397,10 +1421,48 @@
     "vendor": "Takara Bio",
     "catalog": "3409A",
     "bands": [
-      { "size": 500, "reference": true }, { "size": 400 }, { "size": 300 },
-      { "size": 200, "reference": true }, { "size": 180 }, { "size": 160 },
-      { "size": 140 }, { "size": 120 }, { "size": 100, "reference": true },
-      { "size": 80 }, { "size": 60 }, { "size": 40 }, { "size": 20 }
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200,
+        "reference": true
+      },
+      {
+        "size": 180
+      },
+      {
+        "size": 160
+      },
+      {
+        "size": 140
+      },
+      {
+        "size": 120
+      },
+      {
+        "size": 100,
+        "reference": true
+      },
+      {
+        "size": 80
+      },
+      {
+        "size": 60
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 20
+      }
     ]
   },
   {
@@ -409,9 +1471,40 @@
     "vendor": "Takara Bio",
     "catalog": "3407A",
     "bands": [
-      { "size": 1500 }, { "size": 1000 }, { "size": 900 }, { "size": 800 },
-      { "size": 700 }, { "size": 600 }, { "size": 500, "reference": true },
-      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 }
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -420,10 +1513,47 @@
     "vendor": "Takara Bio",
     "catalog": "3410A",
     "bands": [
-      { "size": 4000 }, { "size": 3000 }, { "size": 2500 },
-      { "size": 2000, "reference": true }, { "size": 1800 }, { "size": 1600 },
-      { "size": 1400 }, { "size": 1200 }, { "size": 1000, "reference": true },
-      { "size": 800 }, { "size": 600 }, { "size": 400 }, { "size": 200 }
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000,
+        "reference": true
+      },
+      {
+        "size": 1800
+      },
+      {
+        "size": 1600
+      },
+      {
+        "size": 1400
+      },
+      {
+        "size": 1200
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 200
+      }
     ]
   },
   {
@@ -432,15 +1562,88 @@
     "vendor": "GoldBio",
     "catalog": "D015",
     "bands": [
-      { "size": 25000 }, { "size": 10000 }, { "size": 8000 },
-      { "size": 6000 }, { "size": 5000 }, { "size": 4000 },
-      { "size": 3000, "reference": true }, { "size": 2500 },
-      { "size": 2000 }, { "size": 1500 }, { "size": 1200, "reference": true },
-      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
-      { "size": 600 }, { "size": 500, "reference": true }, { "size": 450 },
-      { "size": 400 }, { "size": 350 }, { "size": 300 }, { "size": 250 },
-      { "size": 200, "reference": true }, { "size": 150 }, { "size": 100 },
-      { "size": 50 }
+      {
+        "size": 25000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 8000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000,
+        "reference": true
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1200,
+        "reference": true
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 450
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 350
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 250
+      },
+      {
+        "size": 200,
+        "reference": true
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 50
+      }
     ]
   },
   {
@@ -449,11 +1652,39 @@
     "vendor": "GenScript",
     "catalog": "M00624S",
     "bands": [
-      { "size": 270000, "reference": true }, { "size": 175000 },
-      { "size": 130000 }, { "size": 95000 }, { "size": 65000 },
-      { "size": 50000, "reference": true }, { "size": 35000 },
-      { "size": 30000, "reference": true }, { "size": 15000 },
-      { "size": 5000 }
+      {
+        "size": 270000,
+        "reference": true
+      },
+      {
+        "size": 175000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 95000
+      },
+      {
+        "size": 65000
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 30000,
+        "reference": true
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 5000
+      }
     ]
   },
   {
@@ -462,11 +1693,44 @@
     "vendor": "Abcam",
     "catalog": "ab116028",
     "bands": [
-      { "size": 245000 }, { "size": 180000 }, { "size": 135000 },
-      { "size": 100000 }, { "size": 75000, "reference": true },
-      { "size": 63000 }, { "size": 48000 }, { "size": 35000 },
-      { "size": 25000, "reference": true }, { "size": 20000 },
-      { "size": 17000 }, { "size": 10000 }
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 135000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
     ]
   },
   {
@@ -475,7 +1739,18 @@
     "vendor": "Zymo Research",
     "catalog": "R1090",
     "bands": [
-      { "size": 29 }, { "size": 25 }, { "size": 21 }, { "size": 17 }
+      {
+        "size": 29
+      },
+      {
+        "size": 25
+      },
+      {
+        "size": 21
+      },
+      {
+        "size": 17
+      }
     ]
   },
   {
@@ -484,13 +1759,81 @@
     "vendor": "Lonza",
     "catalog": "50330",
     "bands": [
-      { "size": 500 }, { "size": 480 }, { "size": 460 }, { "size": 440 },
-      { "size": 420 }, { "size": 400 }, { "size": 380 }, { "size": 360 },
-      { "size": 340 }, { "size": 320 }, { "size": 300 }, { "size": 280 },
-      { "size": 260 }, { "size": 240 }, { "size": 220 }, { "size": 200 },
-      { "size": 180 }, { "size": 160 }, { "size": 140 }, { "size": 120 },
-      { "size": 100 }, { "size": 80 }, { "size": 60 }, { "size": 40 },
-      { "size": 20 }
+      {
+        "size": 500
+      },
+      {
+        "size": 480
+      },
+      {
+        "size": 460
+      },
+      {
+        "size": 440
+      },
+      {
+        "size": 420
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 380
+      },
+      {
+        "size": 360
+      },
+      {
+        "size": 340
+      },
+      {
+        "size": 320
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 280
+      },
+      {
+        "size": 260
+      },
+      {
+        "size": 240
+      },
+      {
+        "size": 220
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 180
+      },
+      {
+        "size": 160
+      },
+      {
+        "size": 140
+      },
+      {
+        "size": 120
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 80
+      },
+      {
+        "size": 60
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 20
+      }
     ]
   },
   {
@@ -499,9 +1842,33 @@
     "vendor": "Lonza",
     "catalog": "50461",
     "bands": [
-      { "size": 1000 }, { "size": 700 }, { "size": 525 }, { "size": 500 },
-      { "size": 400 }, { "size": 300 }, { "size": 200 }, { "size": 100 },
-      { "size": 50 }
+      {
+        "size": 1000
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 525
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 50
+      }
     ]
   },
   {
@@ -510,14 +1877,96 @@
     "vendor": "Lonza",
     "catalog": "50322",
     "bands": [
-      { "size": 3000 }, { "size": 2900 }, { "size": 2800 }, { "size": 2700 },
-      { "size": 2600 }, { "size": 2500 }, { "size": 2400 }, { "size": 2300 },
-      { "size": 2200 }, { "size": 2100 }, { "size": 2000 }, { "size": 1900 },
-      { "size": 1800 }, { "size": 1700 }, { "size": 1600 }, { "size": 1500 },
-      { "size": 1400 }, { "size": 1300 }, { "size": 1200 }, { "size": 1100 },
-      { "size": 1000 }, { "size": 900 }, { "size": 800 }, { "size": 700 },
-      { "size": 600 }, { "size": 500 }, { "size": 400 }, { "size": 300 },
-      { "size": 200 }, { "size": 100 }
+      {
+        "size": 3000
+      },
+      {
+        "size": 2900
+      },
+      {
+        "size": 2800
+      },
+      {
+        "size": 2700
+      },
+      {
+        "size": 2600
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2400
+      },
+      {
+        "size": 2300
+      },
+      {
+        "size": 2200
+      },
+      {
+        "size": 2100
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1900
+      },
+      {
+        "size": 1800
+      },
+      {
+        "size": 1700
+      },
+      {
+        "size": 1600
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1400
+      },
+      {
+        "size": 1300
+      },
+      {
+        "size": 1200
+      },
+      {
+        "size": 1100
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 900
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 700
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
     ]
   },
   {
@@ -526,9 +1975,2927 @@
     "vendor": "Lonza",
     "catalog": "50471",
     "bands": [
-      { "size": 10000 }, { "size": 7000 }, { "size": 5000 }, { "size": 4000 },
-      { "size": 3000 }, { "size": 2500 }, { "size": 2000 }, { "size": 1500 },
-      { "size": 1000 }
+      {
+        "size": 10000
+      },
+      {
+        "size": 7000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2500
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      }
     ]
+  },
+  {
+    "name": "Invitrogen Novex Sharp Prestained (3.5-260 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5800",
+    "bands": [
+      {
+        "size": 260000
+      },
+      {
+        "size": 160000
+      },
+      {
+        "size": 110000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 3500
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen Novex Sharp Unstained (3.5-260 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5801",
+    "bands": [
+      {
+        "size": 260000
+      },
+      {
+        "size": 160000
+      },
+      {
+        "size": 110000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 3500
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen SeeBlue Plus2 Prestained (3-198 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5925",
+    "bands": [
+      {
+        "size": 198000
+      },
+      {
+        "size": 98000
+      },
+      {
+        "size": 62000
+      },
+      {
+        "size": 49000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 28000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 14000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 3000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen SeeBlue Prestained (3-198 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5625",
+    "bands": [
+      {
+        "size": 198000
+      },
+      {
+        "size": 62000
+      },
+      {
+        "size": 49000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 28000
+      },
+      {
+        "size": 18000
+      },
+      {
+        "size": 14000
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 3000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen MagicMark XP Western (20-220 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5602",
+    "bands": [
+      {
+        "size": 220000
+      },
+      {
+        "size": 120000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen BenchMark Protein Ladder (10-220 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "10747-012",
+    "bands": [
+      {
+        "size": 220000
+      },
+      {
+        "size": 160000
+      },
+      {
+        "size": 120000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 90000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 20000,
+        "reference": true
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen BenchMark Prestained (6-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "10748-010",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 115000
+      },
+      {
+        "size": 82000
+      },
+      {
+        "size": 64000,
+        "reference": true
+      },
+      {
+        "size": 49000
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 26000
+      },
+      {
+        "size": 19000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 6000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen BenchMark Fluorescent Protein Standard (11-155 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5928",
+    "bands": [
+      {
+        "size": 155000
+      },
+      {
+        "size": 98000
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 32000
+      },
+      {
+        "size": 21000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen Mark12 Unstained Standard (2.5-200 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5677",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116300
+      },
+      {
+        "size": 97400
+      },
+      {
+        "size": 66300
+      },
+      {
+        "size": 55400
+      },
+      {
+        "size": 36500
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 21500
+      },
+      {
+        "size": 14400
+      },
+      {
+        "size": 6000
+      },
+      {
+        "size": 3500
+      },
+      {
+        "size": 2500
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen HiMark Prestained HMW Standard (31-460 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5699",
+    "bands": [
+      {
+        "size": 460000
+      },
+      {
+        "size": 268000
+      },
+      {
+        "size": 238000
+      },
+      {
+        "size": 171000
+      },
+      {
+        "size": 117000
+      },
+      {
+        "size": 71000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 41000
+      },
+      {
+        "size": 31000
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen HiMark Unstained HMW Standard (40-500 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "LC5688",
+    "bands": [
+      {
+        "size": 500000
+      },
+      {
+        "size": 290000
+      },
+      {
+        "size": 240000
+      },
+      {
+        "size": 160000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 97000
+      },
+      {
+        "size": 66000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 40000
+      }
+    ]
+  },
+  {
+    "name": "Thermo Spectra Multicolor High Range (40-300 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26625",
+    "bands": [
+      {
+        "size": 300000
+      },
+      {
+        "size": 250000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      }
+    ]
+  },
+  {
+    "name": "Thermo Spectra Multicolor Low Range (1.7-40 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26628",
+    "bands": [
+      {
+        "size": 40000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 4600
+      },
+      {
+        "size": 1700
+      }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Unstained High Range (60-250 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26637",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 200000
+      },
+      {
+        "size": 150000,
+        "reference": true
+      },
+      {
+        "size": 120000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 85000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 60000
+      }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Unstained Low Range (3.4-100 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26632",
+    "bands": [
+      {
+        "size": 100000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 3400
+      }
+    ]
+  },
+  {
+    "name": "Thermo PageRuler Prestained NIR (11-250 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26635",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 95000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 55000,
+        "reference": true
+      },
+      {
+        "size": 43000
+      },
+      {
+        "size": 34000
+      },
+      {
+        "size": 26000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "Pierce Unstained Protein MW Marker (14.4-116 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26610",
+    "bands": [
+      {
+        "size": 116000
+      },
+      {
+        "size": 66200
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 18400
+      },
+      {
+        "size": 14400
+      }
+    ]
+  },
+  {
+    "name": "Pierce Prestained Protein MW Marker (20-120 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "26612",
+    "bands": [
+      {
+        "size": 120000
+      },
+      {
+        "size": 85000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 20000
+      }
+    ]
+  },
+  {
+    "name": "Thermo SuperSignal Molecular Weight Protein Ladder (20-150 kDa)",
+    "gel_type": "protein",
+    "vendor": "Thermo Fisher",
+    "catalog": "84785",
+    "bands": [
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus Dual Color",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610374",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus Kaleidoscope",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610375",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus Unstained",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610363",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad Precision Plus WesternC",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610376",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 50000,
+        "reference": true
+      },
+      {
+        "size": 37000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad SDS-PAGE Standards Broad Range",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610317",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116250
+      },
+      {
+        "size": 97400
+      },
+      {
+        "size": 66200
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 21500
+      },
+      {
+        "size": 14400
+      },
+      {
+        "size": 6500
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad SDS-PAGE Standards Low Range",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610304",
+    "bands": [
+      {
+        "size": 97400
+      },
+      {
+        "size": 66200
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 21500
+      },
+      {
+        "size": 14400
+      }
+    ]
+  },
+  {
+    "name": "Bio-Rad SDS-PAGE Standards High Range",
+    "gel_type": "protein",
+    "vendor": "Bio-Rad",
+    "catalog": "1610303",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116250
+      },
+      {
+        "size": 97400
+      },
+      {
+        "size": 66200
+      },
+      {
+        "size": 45000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham ECL Rainbow Marker Full Range",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "RPN800E",
+    "bands": [
+      {
+        "size": 225000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 102000
+      },
+      {
+        "size": 76000
+      },
+      {
+        "size": 52000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 12000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham ECL Rainbow Marker High Range",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "RPN756E",
+    "bands": [
+      {
+        "size": 225000
+      },
+      {
+        "size": 76000
+      },
+      {
+        "size": 52000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 12000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham ECL Rainbow Marker Low Range",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "RPN755E",
+    "bands": [
+      {
+        "size": 38000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 12000
+      },
+      {
+        "size": 8500
+      },
+      {
+        "size": 3500
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham ECL Plex Fluorescent Rainbow Markers",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "RPN850E",
+    "bands": [
+      {
+        "size": 225000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 102000
+      },
+      {
+        "size": 76000
+      },
+      {
+        "size": 52000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 31000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 12000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham ECL DualVue Western Blotting Markers",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "RPN810",
+    "bands": [
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham LMW-SDS Calibration Kit",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "17-0446-01",
+    "bands": [
+      {
+        "size": 97000
+      },
+      {
+        "size": 66000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20100
+      },
+      {
+        "size": 14400
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham HMW-SDS Calibration Kit",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "17-0615-01",
+    "bands": [
+      {
+        "size": 220000
+      },
+      {
+        "size": 170000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 76000
+      },
+      {
+        "size": 53000
+      }
+    ]
+  },
+  {
+    "name": "Cytiva Amersham HMW Native Calibration Kit (native PAGE)",
+    "gel_type": "protein",
+    "vendor": "Cytiva",
+    "catalog": "17-0445-01",
+    "bands": [
+      {
+        "size": 669000
+      },
+      {
+        "size": 440000
+      },
+      {
+        "size": 232000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 67000
+      }
+    ]
+  },
+  {
+    "name": "Sigma-Aldrich SigmaMarker Wide Range (6.5-200 kDa)",
+    "gel_type": "protein",
+    "vendor": "Sigma-Aldrich",
+    "catalog": "S8445",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 97000
+      },
+      {
+        "size": 66000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 36000
+      },
+      {
+        "size": 29000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 14200
+      },
+      {
+        "size": 6500
+      }
+    ]
+  },
+  {
+    "name": "Sigma-Aldrich SigmaMarker High Range (36-200 kDa)",
+    "gel_type": "protein",
+    "vendor": "Sigma-Aldrich",
+    "catalog": "S8320",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 97000
+      },
+      {
+        "size": 66000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 36000
+      }
+    ]
+  },
+  {
+    "name": "Sigma-Aldrich SigmaMarker Low Range (6.5-66 kDa)",
+    "gel_type": "protein",
+    "vendor": "Sigma-Aldrich",
+    "catalog": "M3913",
+    "bands": [
+      {
+        "size": 66000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 36000
+      },
+      {
+        "size": 29000
+      },
+      {
+        "size": 24000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 14200
+      },
+      {
+        "size": 6500
+      }
+    ]
+  },
+  {
+    "name": "Sigma-Aldrich ColorBurst Electrophoresis Marker (8-220 kDa)",
+    "gel_type": "protein",
+    "vendor": "Sigma-Aldrich",
+    "catalog": "C1992",
+    "bands": [
+      {
+        "size": 220000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 12000
+      },
+      {
+        "size": 8000
+      }
+    ]
+  },
+  {
+    "name": "Abcam Prestained Protein Ladder, Mid-range (10-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Abcam",
+    "catalog": "ab116027",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 28000,
+        "reference": true
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Abcam Prestained Protein Ladder, Extra Broad (5-245 kDa)",
+    "gel_type": "protein",
+    "vendor": "Abcam",
+    "catalog": "ab116029",
+    "bands": [
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 135000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      },
+      {
+        "size": 5000
+      }
+    ]
+  },
+  {
+    "name": "Abcam Prestained Protein Ladder, Mid-range Blue (10-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Abcam",
+    "catalog": "ab234617",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 72000,
+        "reference": true
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Abcam Unstained Protein Ladder (10-200 kDa)",
+    "gel_type": "protein",
+    "vendor": "Abcam",
+    "catalog": "ab234618",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 150000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 85000,
+        "reference": true
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "GenScript PAGE-MASTER Protein Standard",
+    "gel_type": "protein",
+    "vendor": "GenScript",
+    "catalog": "M00516",
+    "bands": [
+      {
+        "size": 120000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "GenScript PAGE-MASTER Protein Standard Plus",
+    "gel_type": "protein",
+    "vendor": "GenScript",
+    "catalog": "MM1397",
+    "bands": [
+      {
+        "size": 120000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "GenScript WB-MASTER Protein Standard",
+    "gel_type": "protein",
+    "vendor": "GenScript",
+    "catalog": "M00521",
+    "bands": [
+      {
+        "size": 120000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 40000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 20000
+      }
+    ]
+  },
+  {
+    "name": "LI-COR Chameleon Duo Pre-stained Protein Ladder",
+    "gel_type": "protein",
+    "vendor": "LI-COR",
+    "catalog": "928-60000",
+    "bands": [
+      {
+        "size": 260000
+      },
+      {
+        "size": 160000
+      },
+      {
+        "size": 125000
+      },
+      {
+        "size": 90000
+      },
+      {
+        "size": 70000
+      },
+      {
+        "size": 50000
+      },
+      {
+        "size": 38000
+      },
+      {
+        "size": 30000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 8000
+      }
+    ]
+  },
+  {
+    "name": "Takara Protein Molecular Weight Marker (Broad)",
+    "gel_type": "protein",
+    "vendor": "Takara Bio",
+    "catalog": "3452",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 97200
+      },
+      {
+        "size": 66409
+      },
+      {
+        "size": 44287
+      },
+      {
+        "size": 29000
+      },
+      {
+        "size": 20100
+      },
+      {
+        "size": 14300
+      },
+      {
+        "size": 6500
+      }
+    ]
+  },
+  {
+    "name": "Takara Protein Molecular Weight Marker (Low)",
+    "gel_type": "protein",
+    "vendor": "Takara Bio",
+    "catalog": "3450",
+    "bands": [
+      {
+        "size": 97200
+      },
+      {
+        "size": 66409
+      },
+      {
+        "size": 44287
+      },
+      {
+        "size": 29000
+      },
+      {
+        "size": 20100
+      },
+      {
+        "size": 14300
+      }
+    ]
+  },
+  {
+    "name": "Takara Protein Molecular Weight Marker (High)",
+    "gel_type": "protein",
+    "vendor": "Takara Bio",
+    "catalog": "3451",
+    "bands": [
+      {
+        "size": 200000
+      },
+      {
+        "size": 116000
+      },
+      {
+        "size": 97200
+      },
+      {
+        "size": 66409
+      },
+      {
+        "size": 44287
+      }
+    ]
+  },
+  {
+    "name": "Cell Signaling Prestained Protein Marker, Broad Range (11-190 kDa)",
+    "gel_type": "protein",
+    "vendor": "Cell Signaling",
+    "catalog": "13953",
+    "bands": [
+      {
+        "size": 190000
+      },
+      {
+        "size": 134000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 76000
+      },
+      {
+        "size": 57000
+      },
+      {
+        "size": 46000
+      },
+      {
+        "size": 32000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 22000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "Cell Signaling Color-coded Prestained Protein Marker, Broad Range (11-250 kDa)",
+    "gel_type": "protein",
+    "vendor": "Cell Signaling",
+    "catalog": "14208",
+    "bands": [
+      {
+        "size": 250000
+      },
+      {
+        "size": 190000
+      },
+      {
+        "size": 134000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 80000
+      },
+      {
+        "size": 57000
+      },
+      {
+        "size": 46000
+      },
+      {
+        "size": 32000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 22000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "GoldBio BLUEstain Protein Ladder (11-245 kDa)",
+    "gel_type": "protein",
+    "vendor": "GoldBio",
+    "catalog": "P007",
+    "bands": [
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Jena Bioscience BlueEye Prestained Protein Marker (10-245 kDa)",
+    "gel_type": "protein",
+    "vendor": "Jena Bioscience",
+    "catalog": "PS-104",
+    "bands": [
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 135000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "Jena Bioscience BlueRay Prestained Protein Marker (10-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Jena Bioscience",
+    "catalog": "PS-103",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 135000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "Proteintech Prestained Protein Marker (10-180 kDa)",
+    "gel_type": "protein",
+    "vendor": "Proteintech",
+    "catalog": "PL00001",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Proteintech Broad Range Prestained Protein Marker (3-245 kDa)",
+    "gel_type": "protein",
+    "vendor": "Proteintech",
+    "catalog": "PL00002",
+    "bands": [
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      },
+      {
+        "size": 3000
+      }
+    ]
+  },
+  {
+    "name": "Proteintech Extra Range Prestained Protein Marker (10-310 kDa)",
+    "gel_type": "protein",
+    "vendor": "Proteintech",
+    "catalog": "PL00003",
+    "bands": [
+      {
+        "size": 310000
+      },
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Biotium Peacock Plus Prestained Protein Marker",
+    "gel_type": "protein",
+    "vendor": "Biotium",
+    "catalog": "21531",
+    "bands": [
+      {
+        "size": 245000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 135000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 63000
+      },
+      {
+        "size": 48000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 11000
+      }
+    ]
+  },
+  {
+    "name": "SMOBIO ExcelBand All Blue Broad Range Protein Marker",
+    "gel_type": "protein",
+    "vendor": "SMOBIO",
+    "catalog": "PM1700",
+    "bands": [
+      {
+        "size": 240000
+      },
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 72000,
+        "reference": true
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 20000
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "SMOBIO ExcelBand 3-color Regular Range Protein Marker",
+    "gel_type": "protein",
+    "vendor": "SMOBIO",
+    "catalog": "PM2500",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 140000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 75000,
+        "reference": true
+      },
+      {
+        "size": 60000
+      },
+      {
+        "size": 45000
+      },
+      {
+        "size": 35000
+      },
+      {
+        "size": 25000,
+        "reference": true
+      },
+      {
+        "size": 15000
+      },
+      {
+        "size": 10000
+      }
+    ]
+  },
+  {
+    "name": "Yeasen Gold Band Plus 3-color Regular Range Protein Ladder",
+    "gel_type": "protein",
+    "vendor": "Yeasen",
+    "catalog": "20350ES",
+    "bands": [
+      {
+        "size": 180000
+      },
+      {
+        "size": 130000
+      },
+      {
+        "size": 100000
+      },
+      {
+        "size": 72000
+      },
+      {
+        "size": 55000
+      },
+      {
+        "size": 43000
+      },
+      {
+        "size": 33000
+      },
+      {
+        "size": 25000
+      },
+      {
+        "size": 17000
+      },
+      {
+        "size": 8000
+      }
+    ]
+  },
+  {
+    "name": "NEB Low Range ssRNA Ladder",
+    "gel_type": "rna",
+    "vendor": "NEB",
+    "catalog": "N0364",
+    "bands": [
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 300,
+        "reference": true
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 80
+      },
+      {
+        "size": 50
+      }
+    ]
+  },
+  {
+    "name": "NEB dsRNA Ladder (sizes in bp)",
+    "gel_type": "rna",
+    "vendor": "NEB",
+    "catalog": "N0363",
+    "bands": [
+      {
+        "size": 500
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 150
+      },
+      {
+        "size": 80,
+        "reference": true
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 21
+      }
+    ]
+  },
+  {
+    "name": "NEB microRNA Marker",
+    "gel_type": "rna",
+    "vendor": "NEB",
+    "catalog": "N2102",
+    "bands": [
+      {
+        "size": 25
+      },
+      {
+        "size": 21
+      },
+      {
+        "size": 17
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen Century-Plus RNA Markers",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "AM7145",
+    "bands": [
+      {
+        "size": 1000
+      },
+      {
+        "size": 750
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
+    ]
+  },
+  {
+    "name": "Invitrogen RNA 6000 Ladder",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "AM7152",
+    "bands": [
+      {
+        "size": 6000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 200
+      }
+    ]
+  },
+  {
+    "name": "Thermo Decade Markers System",
+    "gel_type": "rna",
+    "vendor": "Thermo Fisher",
+    "catalog": "AM7778",
+    "bands": [
+      {
+        "size": 150
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 90
+      },
+      {
+        "size": 80
+      },
+      {
+        "size": 70
+      },
+      {
+        "size": 60
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 20
+      },
+      {
+        "size": 10
+      }
+    ]
+  },
+  {
+    "name": "Takara 0.5-10 kb ssRNA Ladder Marker",
+    "gel_type": "rna",
+    "vendor": "Takara Bio",
+    "catalog": "3417A",
+    "standard_load_ng": 950,
+    "bands": [
+      {
+        "size": 10000,
+        "mass_ng": 150
+      },
+      {
+        "size": 8000,
+        "mass_ng": 100
+      },
+      {
+        "size": 6000,
+        "mass_ng": 100
+      },
+      {
+        "size": 4000,
+        "mass_ng": 100
+      },
+      {
+        "size": 3000,
+        "mass_ng": 200
+      },
+      {
+        "size": 2000,
+        "mass_ng": 100
+      },
+      {
+        "size": 1000,
+        "mass_ng": 100
+      },
+      {
+        "size": 500,
+        "mass_ng": 100
+      }
+    ]
+  },
+  {
+    "name": "Takara 14-30 ssRNA Ladder Marker",
+    "gel_type": "rna",
+    "vendor": "Takara Bio",
+    "catalog": "3416",
+    "standard_load_ng": 268,
+    "bands": [
+      {
+        "size": 30,
+        "mass_ng": 45
+      },
+      {
+        "size": 26,
+        "mass_ng": 39
+      },
+      {
+        "size": 22,
+        "mass_ng": 33
+      },
+      {
+        "size": 18,
+        "mass_ng": 109
+      },
+      {
+        "size": 14,
+        "mass_ng": 42
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker RNA High",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM160",
+    "bands": [
+      {
+        "size": 8000
+      },
+      {
+        "size": 5000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 200
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker RNA Low II",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM152",
+    "standard_load_ng": 700,
+    "bands": [
+      {
+        "size": 500,
+        "mass_ng": 100
+      },
+      {
+        "size": 400,
+        "mass_ng": 100
+      },
+      {
+        "size": 300,
+        "mass_ng": 100
+      },
+      {
+        "size": 200,
+        "mass_ng": 100
+      },
+      {
+        "size": 100,
+        "mass_ng": 100
+      },
+      {
+        "size": 50,
+        "mass_ng": 100
+      },
+      {
+        "size": 20,
+        "mass_ng": 100
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker Small RNA II",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM192",
+    "bands": [
+      {
+        "size": 100
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 20
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker dsRNA (sizes in bp)",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM180",
+    "bands": [
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 20
+      },
+      {
+        "size": 10
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker Prestain Marker for RNA High",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM260",
+    "bands": [
+      {
+        "size": 8000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 200
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker Prestain Marker for Small RNA Plus",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM253",
+    "bands": [
+      {
+        "size": 100
+      },
+      {
+        "size": 75
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 20
+      }
+    ]
+  },
+  {
+    "name": "BioDynamics DynaMarker DIG Labeled Blue Color Marker for Small RNA",
+    "gel_type": "rna",
+    "vendor": "BioDynamics",
+    "catalog": "DM270",
+    "bands": [
+      {
+        "size": 100
+      },
+      {
+        "size": 75
+      },
+      {
+        "size": 50
+      },
+      {
+        "size": 40
+      },
+      {
+        "size": 30
+      },
+      {
+        "size": 20
+      }
+    ]
+  },
+  {
+    "name": "Nippon Gene RNA Ladder (0.125-6.0 kb)",
+    "gel_type": "rna",
+    "vendor": "Nippon Gene",
+    "catalog": "311-06261",
+    "bands": [
+      {
+        "size": 6000
+      },
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000
+      },
+      {
+        "size": 500
+      },
+      {
+        "size": 250
+      },
+      {
+        "size": 125
+      }
+    ]
+  },
+  {
+    "name": "Norgen 100 b RNA Ladder",
+    "gel_type": "rna",
+    "vendor": "Norgen Biotek",
+    "catalog": "15002",
+    "bands": [
+      {
+        "size": 1000
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 500,
+        "reference": true
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 300
+      },
+      {
+        "size": 200
+      },
+      {
+        "size": 100
+      }
+    ]
+  },
+  {
+    "name": "Norgen 1 kb RNA Ladder",
+    "gel_type": "rna",
+    "vendor": "Norgen Biotek",
+    "catalog": "15003",
+    "bands": [
+      {
+        "size": 4000
+      },
+      {
+        "size": 3000
+      },
+      {
+        "size": 2000
+      },
+      {
+        "size": 1500
+      },
+      {
+        "size": 1000,
+        "reference": true
+      },
+      {
+        "size": 800
+      },
+      {
+        "size": 600
+      },
+      {
+        "size": 400
+      },
+      {
+        "size": 200
+      }
+    ]
+  },
+  {
+    "name": "Roche RNA Molecular Weight Marker I, DIG-labeled",
+    "gel_type": "rna",
+    "vendor": "Roche",
+    "catalog": "11526529910",
+    "bands": [
+      {
+        "size": 6948
+      },
+      {
+        "size": 4742
+      },
+      {
+        "size": 2661
+      },
+      {
+        "size": 1821
+      },
+      {
+        "size": 1517
+      },
+      {
+        "size": 1049
+      },
+      {
+        "size": 575
+      },
+      {
+        "size": 438
+      },
+      {
+        "size": 310
+      }
+    ]
+  },
+  {
+    "name": "Roche RNA Molecular Weight Marker II, DIG-labeled",
+    "gel_type": "rna",
+    "vendor": "Roche",
+    "catalog": "11526537910",
+    "bands": [
+      {
+        "size": 6948
+      },
+      {
+        "size": 4742
+      },
+      {
+        "size": 2661
+      },
+      {
+        "size": 1821
+      },
+      {
+        "size": 1517
+      }
+    ]
+  },
+  {
+    "name": "Roche RNA Molecular Weight Marker III, DIG-labeled",
+    "gel_type": "rna",
+    "vendor": "Roche",
+    "catalog": "11373099910",
+    "bands": [
+      {
+        "size": 1517
+      },
+      {
+        "size": 1049
+      },
+      {
+        "size": 575
+      },
+      {
+        "size": 438
+      },
+      {
+        "size": 310
+      }
+    ]
+  },
+  {
+    "name": "rRNA size reference (E. coli 16S/23S)",
+    "gel_type": "rna",
+    "bands": [
+      {
+        "size": 2904
+      },
+      {
+        "size": 1542
+      }
+    ],
+    "vendor": "RefSeq",
+    "catalog": "NR_103073.1 / NR_102804.1"
+  },
+  {
+    "name": "rRNA size reference (human 18S/28S)",
+    "gel_type": "rna",
+    "bands": [
+      {
+        "size": 5070
+      },
+      {
+        "size": 1869
+      }
+    ],
+    "vendor": "RefSeq",
+    "catalog": "NR_003287.4 / NR_003286.4"
+  },
+  {
+    "name": "rRNA size reference (mouse 18S/28S)",
+    "gel_type": "rna",
+    "bands": [
+      {
+        "size": 4730
+      },
+      {
+        "size": 1870
+      }
+    ],
+    "vendor": "RefSeq",
+    "catalog": "NR_003279.1 / NR_003278.3"
   }
 ]

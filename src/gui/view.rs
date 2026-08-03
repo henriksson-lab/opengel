@@ -74,7 +74,12 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
     ui.set_file_index(state.active_document_index());
     ui.set_has_open_file(state.has_open_file());
     ui.set_active_file_dirty(state.active_document_dirty());
-    ui.set_gel_type_label(format!("{:?}", state.gel_type).into());
+    let gel_types: Vec<SharedString> = AppState::gel_type_names()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    ui.set_gel_type_names(ModelRc::new(VecModel::from(gel_types)));
+    ui.set_gel_type_index(state.gel_type.index() as i32);
     ui.set_rotation(state.rotation_deg as f32);
     ui.set_disp_lo(state.disp_lo);
     ui.set_disp_hi(state.disp_hi);
@@ -87,7 +92,7 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
 
     // Ladder template names (for the "Use as ladder" dialog dropdown).
     let vendors: Vec<SharedString> = state
-        .ladder_vendor_names()
+        .ladder_vendor_names(state.gel_type)
         .into_iter()
         .map(SharedString::from)
         .collect();
@@ -627,7 +632,13 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
     let tray = gd.inserted_tray();
     ui.set_gd_tray_label(
         tray.map(|t| t.label().to_string())
-            .unwrap_or_else(|| if gd.connected { "none".into() } else { "—".into() })
+            .unwrap_or_else(|| {
+                if gd.connected {
+                    "none".into()
+                } else {
+                    "—".into()
+                }
+            })
             .into(),
     );
     ui.set_gd_tray_present(tray.is_some());

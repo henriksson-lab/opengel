@@ -1075,7 +1075,11 @@ impl AppState {
         let p = &doc.project;
         let mut rows = Vec::new();
 
-        rows.push(("Document".to_string(), "Gel type".to_string(), format!("{:?}", p.gel_type)));
+        rows.push((
+            "Document".to_string(),
+            "Gel type".to_string(),
+            format!("{:?}", p.gel_type),
+        ));
         if let Some(path) = &self.source_path {
             rows.push((
                 "Document".to_string(),
@@ -1094,7 +1098,11 @@ impl AppState {
                 "Acquisition".to_string()
             };
             if p.is_multichannel() {
-                rows.push((section.clone(), "Display colour".to_string(), channel.color.label().to_string()));
+                rows.push((
+                    section.clone(),
+                    "Display colour".to_string(),
+                    channel.color.label().to_string(),
+                ));
             }
             for &i in &p.image_indices_for_channel(channel.id) {
                 let img = &p.images[i];
@@ -2148,16 +2156,23 @@ impl AppState {
     /// at the end — Custom marks the lane as a ladder without assigning any rungs,
     /// so the user sets each band's weight manually (via "Set weight…").
     pub fn ladder_names(&self) -> Vec<String> {
-        self.ladder_names_for_vendor(None)
+        self.ladder_names_for_vendor(self.gel_type, None)
     }
 
-    pub fn ladder_vendor_names(&self) -> Vec<String> {
+    /// Vendors offering ladders for `gel_type`, with "Recent" first (when the
+    /// user has used any of that type) and "Custom" last.
+    ///
+    /// Takes the type explicitly rather than reading `self.gel_type`: the ladder
+    /// dialog lets the user browse a *different* category than the document is
+    /// currently flagged as — picking a protein ladder is how a mislabelled
+    /// document gets corrected to protein.
+    pub fn ladder_vendor_names(&self, gel_type: GelType) -> Vec<String> {
         let mut vendors = Vec::new();
-        let recent = self.ladder_names_for_vendor(Some("Recent"));
+        let recent = self.ladder_names_for_vendor(gel_type, Some("Recent"));
         if !recent.is_empty() {
             vendors.push("Recent".to_string());
         }
-        for template in ladders::for_gel_type(self.gel_type) {
+        for template in ladders::for_gel_type(gel_type) {
             let vendor = template.vendor.as_deref().unwrap_or("Other");
             if !vendors.iter().any(|v| v == vendor) {
                 vendors.push(vendor.to_string());
@@ -2167,8 +2182,8 @@ impl AppState {
         vendors
     }
 
-    pub fn ladder_names_for_vendor(&self, vendor: Option<&str>) -> Vec<String> {
-        let all: Vec<String> = ladders::for_gel_type(self.gel_type)
+    pub fn ladder_names_for_vendor(&self, gel_type: GelType, vendor: Option<&str>) -> Vec<String> {
+        let all: Vec<String> = ladders::for_gel_type(gel_type)
             .iter()
             .filter(|t| match vendor {
                 Some("Recent") => self.recent_ladders.iter().any(|n| n == &t.name),
@@ -2199,14 +2214,63 @@ impl AppState {
 
     pub fn ladder_dialog_options_for_vendor_index(
         &self,
+        gel_type: GelType,
         vendor_index: usize,
     ) -> (Vec<String>, Vec<String>) {
-        let vendors = self.ladder_vendor_names();
+        let vendors = self.ladder_vendor_names(gel_type);
         let names = vendors
             .get(vendor_index)
-            .map(|vendor| self.ladder_names_for_vendor(Some(vendor)))
-            .unwrap_or_else(|| self.ladder_names_for_vendor(None));
+            .map(|vendor| self.ladder_names_for_vendor(gel_type, Some(vendor)))
+            .unwrap_or_else(|| self.ladder_names_for_vendor(gel_type, None));
         (vendors, names)
+    }
+
+    /// Gel-type names for the document and ladder-type selectors.
+    pub fn gel_type_names() -> Vec<String> {
+        GelType::ALL.iter().map(|t| t.label().to_string()).collect()
+    }
+
+    /// Flag the open document as DNA / RNA / protein.
+    ///
+    /// The type drives the size unit, the molarity conversion and which ladders
+    /// are offered, so a ladder fitted under the old type no longer means
+    /// anything: assignments to templates of the wrong type are dropped and the
+    /// sample lanes re-fitted. Band weights the user entered by hand are kept —
+    /// only their unit changes.
+    pub fn set_gel_type(&mut self, gel_type: GelType) -> String {
+        if self.gel_type == gel_type
+            && self.doc.as_ref().map(|d| d.project.gel_type) == Some(gel_type)
+        {
+            return format!("Gel type is already {}.", gel_type.label());
+        }
+        self.gel_type = gel_type;
+        let Some(doc) = self.doc.as_mut() else {
+            return format!("Gel type: {}.", gel_type.label());
+        };
+        doc.project.gel_type = gel_type;
+        let a = &mut doc.project.analysis;
+        let before = a.ladder_assignments.len();
+        a.ladder_assignments.retain(|la| {
+            ladders::by_name(&la.template_name).is_none_or(|t| t.gel_type == gel_type)
+        });
+        let dropped = before - a.ladder_assignments.len();
+        if dropped > 0 {
+            resize_sample_lanes(a);
+        }
+        self.mark_dirty();
+        match dropped {
+            0 => format!("Gel type: {} ({}).", gel_type.label(), gel_type.size_unit()),
+            1 => format!(
+                "Gel type: {} ({}). Dropped 1 ladder assignment of the previous type.",
+                gel_type.label(),
+                gel_type.size_unit()
+            ),
+            n => format!(
+                "Gel type: {} ({}). Dropped {n} ladder assignments of the previous type.",
+                gel_type.label(),
+                gel_type.size_unit()
+            ),
+        }
     }
 
     pub fn set_recent_ladders(&mut self, names: Vec<String>) {
@@ -2259,10 +2323,11 @@ impl AppState {
     // ---- ladder lanes (any number, individually tunable) ----
 
     /// Prefill values for the "Use as ladder" dialog for a lane:
-    /// `(lane_name, template_index, volume_ul, conc_ng_ul)`. `template_index`
-    /// is the lane's currently assigned template (or 0 if none).
-    pub fn ladder_dialog_prefill(&self, lane_id: u32) -> (String, i32, i32, f64, f64) {
-        let vendors = self.ladder_vendor_names();
+    /// `(lane_name, type_index, vendor_index, template_index, volume_ul,
+    /// conc_ng_ul)`. `template_index` is the lane's currently assigned template
+    /// (or 0 if none); `type_index` is that template's category, falling back to
+    /// the document's own gel type.
+    pub fn ladder_dialog_prefill(&self, lane_id: u32) -> (String, i32, i32, i32, f64, f64) {
         let name = self
             .analysis()
             .and_then(|a| a.lanes.iter().find(|l| l.id == lane_id))
@@ -2272,10 +2337,13 @@ impl AppState {
             .analysis()
             .and_then(|a| a.ladder_assignments.iter().find(|la| la.lane_id == lane_id))
             .map(|la| la.template_name.clone());
+        let template = template_name.as_deref().and_then(ladders::by_name);
+        let gel_type = template.map(|t| t.gel_type).unwrap_or(self.gel_type);
+        let vendors = self.ladder_vendor_names(gel_type);
         let mut vidx = 0usize;
         let mut tidx = 0usize;
         if let Some(template_name) = template_name {
-            if let Some(template) = ladders::by_name(&template_name) {
+            if let Some(template) = template {
                 let vendor = template.vendor.as_deref().unwrap_or("Other");
                 if let Some(pos) = vendors.iter().position(|v| v == vendor) {
                     vidx = pos;
@@ -2283,14 +2351,15 @@ impl AppState {
             }
             let names = vendors
                 .get(vidx)
-                .map(|vendor| self.ladder_names_for_vendor(Some(vendor)))
-                .unwrap_or_else(|| self.ladder_names());
+                .map(|vendor| self.ladder_names_for_vendor(gel_type, Some(vendor)))
+                .unwrap_or_else(|| self.ladder_names_for_vendor(gel_type, None));
             if let Some(pos) = names.iter().position(|n| *n == template_name) {
                 tidx = pos;
             }
         }
         (
             name,
+            gel_type.index() as i32,
             vidx as i32,
             tidx as i32,
             self.ladder_volume(lane_id),
@@ -2298,7 +2367,32 @@ impl AppState {
         )
     }
 
+    /// Apply the dialog's selection to a lane.
+    ///
+    /// `gel_type` is the category the dialog was browsing. It wins over the
+    /// document's current flag: choosing a protein ladder on a gel that opened
+    /// as DNA means the document was mislabelled, so the document is re-flagged
+    /// before the ladder is applied.
     pub fn apply_ladder_dialog_by_name(
+        &mut self,
+        lane_id: u32,
+        gel_type: GelType,
+        template_name: &str,
+        volume_ul: f64,
+        conc_ng_ul: f64,
+    ) -> String {
+        let retype = if self.gel_type == gel_type {
+            String::new()
+        } else {
+            format!("{} ", self.set_gel_type(gel_type))
+        };
+        format!(
+            "{retype}{}",
+            self.apply_ladder_to_lane_by_name(lane_id, template_name, volume_ul, conc_ng_ul)
+        )
+    }
+
+    fn apply_ladder_to_lane_by_name(
         &mut self,
         lane_id: u32,
         template_name: &str,
@@ -3715,5 +3809,65 @@ mod tests {
         assert!(!names
             .iter()
             .any(|n| n == "Thermo PageRuler Prestained (10-180 kDa)"));
+    }
+
+    #[test]
+    fn ladder_dialog_browses_a_type_other_than_the_documents() {
+        // A DNA document can still browse the protein and RNA catalogues — that
+        // is how a mis-flagged gel gets corrected.
+        let st = AppState::new();
+        assert_eq!(st.gel_type, GelType::Dna);
+        for gel_type in [GelType::Protein, GelType::Rna] {
+            let names = st.ladder_names_for_vendor(gel_type, None);
+            assert!(names.len() > 1, "{gel_type:?} has no ladders");
+            assert!(names[..names.len() - 1]
+                .iter()
+                .all(|n| ladders::by_name(n).is_some_and(|t| t.gel_type == gel_type)));
+            let vendors = st.ladder_vendor_names(gel_type);
+            assert_eq!(vendors.last().unwrap(), "Custom");
+            let (v, n) = st.ladder_dialog_options_for_vendor_index(gel_type, 0);
+            assert_eq!(v, vendors);
+            assert!(!n.is_empty());
+        }
+    }
+
+    #[test]
+    fn setting_gel_type_reflags_the_document_and_drops_stale_ladders() {
+        let mut st = AppState::new();
+        st.load_demo();
+        assert_eq!(st.gel_type, GelType::Dna);
+        let lane_id = st.analysis().unwrap().lanes[0].id;
+        st.set_lane_ladder_by_name(lane_id, "NEB 1 kb DNA Ladder");
+        assert!(!st.analysis().unwrap().ladder_assignments.is_empty());
+
+        let msg = st.set_gel_type(GelType::Protein);
+        assert_eq!(st.gel_type, GelType::Protein);
+        assert_eq!(st.doc.as_ref().unwrap().project.gel_type, GelType::Protein);
+        // The demo's DNA ladders no longer apply to a protein gel.
+        assert!(st.analysis().unwrap().ladder_assignments.is_empty());
+        assert!(msg.contains("Protein"), "{msg}");
+        assert!(msg.contains("Dropped"), "{msg}");
+        assert!(st.dirty);
+    }
+
+    #[test]
+    fn applying_a_protein_ladder_reflags_a_dna_document() {
+        let mut st = AppState::new();
+        st.load_demo();
+        let lane_id = st.analysis().unwrap().lanes[0].id;
+        let msg = st.apply_ladder_dialog_by_name(
+            lane_id,
+            GelType::Protein,
+            "Thermo PageRuler Prestained (10-180 kDa)",
+            10.0,
+            50.0,
+        );
+        assert_eq!(st.gel_type, GelType::Protein);
+        assert_eq!(st.doc.as_ref().unwrap().project.gel_type, GelType::Protein);
+        assert!(msg.contains("Protein"), "{msg}");
+
+        // Re-opening the dialog for that lane offers the protein catalogue.
+        let (_, type_idx, _, _, _, _) = st.ladder_dialog_prefill(lane_id);
+        assert_eq!(GelType::from_index(type_idx as usize), GelType::Protein);
     }
 }
