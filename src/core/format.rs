@@ -19,9 +19,21 @@ use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 
 use crate::core::model::{
-    Analysis, Attributes, Channel, GelImage, GelProject, GelType, HdrRecord, FORMAT_VERSION,
+    Analysis, Attributes, CaptureMeta, Channel, ChannelColor, GelImage, GelProject, GelType,
+    HdrRecord, FORMAT_VERSION,
 };
 use crate::core::GrayF32;
+
+/// One channel's worth of a fresh acquisition, on its way into a document.
+pub struct CapturedChannel {
+    /// What the channel is called in the document — the light source it was
+    /// taken under.
+    pub name: String,
+    /// Display colour, so a multi-channel gel can be told apart at a glance.
+    pub color: ChannelColor,
+    /// The frames: one for a single capture, a bracket for HDR.
+    pub frames: Vec<(DynamicImage, CaptureMeta)>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -167,6 +179,59 @@ impl GelDocument {
                 },
             });
             frames.push(channel.image.clone());
+        }
+
+        GelDocument {
+            project,
+            frames,
+            merged: None,
+        }
+    }
+
+    /// Build a document from a multi-channel acquisition: one entry per channel,
+    /// each holding that channel's frames (one for a single capture, several for
+    /// an HDR bracket).
+    ///
+    /// Frames stay grouped by channel and are never mixed: a bracket *within* a
+    /// channel HDR-merges, but two channels are separate acquisitions of the
+    /// same gel, and merging them would average away the differences they were
+    /// taken to record.
+    pub fn from_channels(gel_type: GelType, channels: Vec<CapturedChannel>) -> Self {
+        let mut project = GelProject::new(gel_type);
+        project.channels.clear();
+        let mut frames = Vec::new();
+
+        for (channel_id, channel) in channels.into_iter().enumerate() {
+            let channel_id = channel_id as u32;
+            project
+                .channels
+                .push(Channel::new(channel_id, &channel.name, channel.color));
+            for (frame, meta) in channel.frames {
+                let sixteen_bit = matches!(
+                    frame,
+                    DynamicImage::ImageLuma16(_)
+                        | DynamicImage::ImageRgb16(_)
+                        | DynamicImage::ImageLumaA16(_)
+                        | DynamicImage::ImageRgba16(_)
+                );
+                let id = frames.len() as u32;
+                project.images.push(GelImage {
+                    id,
+                    filename: format!("images/img_{id:02}.png"),
+                    width: frame.width(),
+                    height: frame.height(),
+                    sixteen_bit,
+                    channel: channel_id,
+                    meta: CaptureMeta { ..meta },
+                });
+                frames.push(frame);
+            }
+        }
+
+        // A capture that produced nothing would leave a channel-less project,
+        // which no view can render; keep the default single channel instead.
+        if project.channels.is_empty() {
+            project.channels.push(Channel::new(0, "Channel 1", ChannelColor::Gray));
         }
 
         GelDocument {

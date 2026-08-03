@@ -20,7 +20,7 @@ pub mod quant;
 pub mod scn;
 pub mod warp;
 
-pub use format::GelDocument;
+pub use format::{CapturedChannel, GelDocument};
 pub use imagef32::GrayF32;
 pub use model::{
     Analysis, Attribute, Attributes, Band, Blob, Calibration, CaptureMeta, Channel, ChannelColor,

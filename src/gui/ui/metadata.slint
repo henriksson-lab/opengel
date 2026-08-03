@@ -1,0 +1,59 @@
+import { MetaRow } from "common.slint";
+import { Button, ComboBox, CheckBox, Slider, GroupBox, ScrollView, LineEdit, HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
+
+export component MetadataTab inherits VerticalBox {
+    in property <bool> has-open-file: false;
+    in property <[MetaRow]> metadata-rows;
+
+      if root.metadata-rows.length == 0: Text {
+        text: root.has-open-file
+            ? "This file records no acquisition metadata."
+            : "Open a gel to see how it was acquired.";
+        color: #666;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        vertical-stretch: 1;
+      }
+      if root.metadata-rows.length > 0: Rectangle {
+        vertical-stretch: 1;
+        background: white;
+        border-width: 1px;
+        border-color: #d0d0d4;
+        border-radius: 4px;
+        ScrollView {
+          VerticalLayout {
+            alignment: start;
+            padding: 10px;
+            for row[i] in root.metadata-rows: VerticalLayout {
+              spacing: 0px;
+              if row.first-in-section: Text {
+                text: row.section;
+                font-weight: 700;
+                color: #24406e;
+                // Space above every heading but the first, so sections
+                // separate without a rule between them.
+                height: i == 0 ? 22px : 34px;
+                vertical-alignment: bottom;
+              }
+              HorizontalLayout {
+                height: 22px;
+                spacing: 8px;
+                Text {
+                  text: row.name;
+                  color: #555;
+                  width: 210px;
+                  overflow: elide;
+                  vertical-alignment: center;
+                }
+                Text {
+                  text: row.value;
+                  horizontal-stretch: 1;
+                  overflow: elide;
+                  vertical-alignment: center;
+                }
+              }
+            }
+          }
+        }
+      }
+    }

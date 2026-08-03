@@ -30,7 +30,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use opengel::instrument::geldoc_ez::{
-    self, GelDocEz, PRODUCT_ID_CRITERION_STAIN_FREE, PRODUCT_ID_GEL_DOC_EZ, VENDOR_ID,
+    self, GelDocEz,
 };
 use opengel::instrument::sim::SimulatedEnclosure;
 use opengel::instrument::{Faults, Instrument, InstrumentInfo, Sense, TrayType};
@@ -41,6 +41,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Generous enough for a long exposure plus overhead, short enough that a dead
 /// UI does not leave the lamps burning.
 const RUN_WATCHDOG: Duration = Duration::from_secs(120);
+/// How long the lamps may burn for framing before they are switched off. Lamp
+/// life is finite, and a preview left running overnight would spend it.
+const PREVIEW_LAMP_LIMIT: Duration = Duration::from_secs(600);
 /// How often the activation countdown reports progress.
 const ACTIVATION_TICK: Duration = Duration::from_millis(250);
 
@@ -60,6 +63,10 @@ pub enum InstCommand {
     EndRun,
     /// Abandon a run in progress — lamps off now.
     Abort,
+    /// Switch the illumination on or off outside a run, so the live preview
+    /// shows the gel under the light source that is actually in. Which lamps
+    /// fire is decided by the inserted tray, as always.
+    Illuminate(bool),
     /// Whether a rising undecoded sense bit should be treated as the front Run
     /// button (see [`InstEvent::ButtonPressed`]).
     WatchRunButton(bool),
@@ -102,6 +109,8 @@ pub enum InstEvent {
     },
     /// Lamps are lit and stable — expose now.
     LightsReady,
+    /// The illumination was switched on or off outside a run.
+    Lamps(bool),
     /// The run never started; the reason is for the user.
     RunRefused(String),
     /// The run is over. `door_violation` means the door was opened mid-exposure
@@ -140,6 +149,9 @@ impl InstrumentHandle {
     }
     pub fn abort(&self) {
         let _ = self.tx.send(InstCommand::Abort);
+    }
+    pub fn illuminate(&self, on: bool) {
+        let _ = self.tx.send(InstCommand::Illuminate(on));
     }
     pub fn watch_run_button(&self, watch: bool) {
         let _ = self.tx.send(InstCommand::WatchRunButton(watch));
@@ -333,8 +345,9 @@ fn worker_main(rx: Receiver<InstCommand>, tx: Sender<InstEvent>) {
             if poller.run_deadline.is_some_and(|d| Instant::now() >= d) {
                 poller.run_deadline = None;
                 let _ = dev.instrument().stop_acquire();
+                let _ = tx.send(InstEvent::Lamps(false));
                 let _ = tx.send(InstEvent::Error(
-                    "The run timed out and the lamps were switched off.".into(),
+                    "The lamps were switched off after their time limit.".into(),
                 ));
             }
             poll_once(dev, &mut poller, &tx);
@@ -421,6 +434,9 @@ fn handle(
                 let _ = dev.instrument().stop_acquire();
             }
             *connected = None;
+            // Nothing is driving the simulated bench any more.
+            opengel::simbench::clear();
+            let _ = tx.send(InstEvent::Lamps(false));
             let _ = tx.send(InstEvent::Disconnected);
         }
         InstCommand::ClearFaults => {
@@ -457,6 +473,41 @@ fn handle(
             let Some(dev) = connected.as_mut() else { return };
             poller.run_deadline = None;
             let _ = dev.instrument().stop_acquire();
+            let _ = tx.send(InstEvent::Lamps(false));
+        }
+        InstCommand::Illuminate(on) => {
+            let Some(dev) = connected.as_mut() else {
+                let _ = tx.send(InstEvent::Error("No instrument connected.".into()));
+                return;
+            };
+            if on {
+                // The door interlock is the instrument's own: a start with the
+                // door open lights nothing and is refused, and the refusal is
+                // the honest thing to show.
+                match dev.instrument().start_acquire(false) {
+                    Ok(()) => {
+                        // Lamps lit for framing rather than for a run still get
+                        // a deadline: 302 nm lamps have a finite life and a
+                        // preview left running overnight would spend it.
+                        poller.run_deadline = Some(Instant::now() + PREVIEW_LAMP_LIMIT);
+                        let _ = tx.send(InstEvent::Lamps(true));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(InstEvent::Error(format!(
+                            "The lamps could not be switched on: {e}"
+                        )));
+                        let _ = tx.send(InstEvent::Lamps(false));
+                    }
+                }
+            } else {
+                poller.run_deadline = None;
+                if let Err(e) = dev.instrument().stop_acquire() {
+                    let _ = tx.send(InstEvent::Error(format!(
+                        "Switching the lamps off failed: {e}"
+                    )));
+                }
+                let _ = tx.send(InstEvent::Lamps(false));
+            }
         }
         InstCommand::SimSetTray(tray) => {
             if let Some(sim) = connected.as_mut().and_then(Connected::sim) {

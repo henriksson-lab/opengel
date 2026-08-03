@@ -11,9 +11,8 @@
 //! * [`transport`] — the byte pipe an enclosure talks over; [`hidraw`] is the
 //!   Linux one, [`sim`] is a simulated enclosure that answers the same wire
 //!   protocol so the whole stack is exercisable with no hardware.
-//! * [`application`] — sample type × detection reagent, and the tray each
-//!   implies.
-//! * [`protocol`] — saved, re-runnable acquisition recipes.
+//! * [`acquisition`] — what to shoot: one image per selected channel, where a
+//!   channel is a light source (i.e. a tray).
 //!
 //! Why the driver lives here rather than in nu-manager (which supplies our
 //! cameras): the enclosure is not one of nu-manager's device kinds, and its
@@ -21,18 +20,16 @@
 //! camera analogue. The camera in a Gel Doc EZ still arrives through nu-manager
 //! like any other.
 
-pub mod application;
+pub mod acquisition;
 pub mod geldoc_ez;
-pub mod protocol;
 pub mod sim;
 pub mod transport;
 
 #[cfg(target_os = "linux")]
 pub mod hidraw;
 
-pub use application::Application;
+pub use acquisition::{AcquisitionPlan, CaptureMode, ChannelPlan};
 pub use geldoc_ez::GelDocEz;
-pub use protocol::{ExposureMode, ExposureSetting, Protocol, ProtocolStep};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstrumentError {

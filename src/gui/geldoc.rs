@@ -1,27 +1,46 @@
-//! State for the Gel Doc EZ tab: the connected enclosure, the protocol library,
+//! State for the Gel Doc EZ tab: the connected enclosure, the acquisition plan,
 //! and the run state machine that sequences enclosure and camera.
 //!
 //! The Live tab drives a bare camera. This tab drives an *instrument*: the tray
 //! decides the light source, the door gates the lamps, faults latch, and a run
 //! is a scripted sequence rather than a button that grabs a frame. That is why
 //! it is a separate tab rather than more controls on the existing one.
+//!
+//! A run walks the plan's selected channels in tray order. Because only one tray
+//! is inserted at a time, a multi-channel run parks in
+//! [`RunPhase::WaitingForTray`] between channels until the user has swapped the
+//! tray and shut the door — the instrument cannot do it, so the run waits rather
+//! than pretending.
 
 use image::DynamicImage;
-use opengel::core::model::CaptureMeta;
-use opengel::instrument::application::{self, Application};
-use opengel::instrument::protocol::{
-    ExposureMode, Protocol, ProtocolLibrary, ProtocolStep, EXPOSURE_MAX_S, EXPOSURE_MIN_S,
+use opengel::core::model::{CaptureMeta, ChannelColor};
+use opengel::core::CapturedChannel;
+use opengel::instrument::acquisition::{
+    AcquisitionPlan, CaptureMode, ChannelPlan, EXPOSURE_MAX_S, EXPOSURE_MIN_S,
 };
 use opengel::instrument::{Faults, InstrumentInfo, Sense, TrayType};
 
 use crate::camera_worker::AutoExposureMode;
 use crate::instrument_worker::InstrumentHandle;
 
+/// What a run is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunGoal {
+    /// Take the pictures and make a document out of them.
+    Acquire,
+    /// Meter each selected channel and write the exposure it settles on back
+    /// into the plan. No document is produced — this is the "Auto" button.
+    AutoExpose,
+}
+
 /// Where a run has got to. The UI reads this to decide what to show and what to
 /// allow; the transitions are driven by events from both workers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunPhase {
     Idle,
+    /// The next channel needs a different tray than the one inserted. The run
+    /// resumes by itself once the sense line agrees.
+    WaitingForTray { tray: TrayType },
     /// Stain-free UV activation is running.
     Activating { elapsed_s: f64, total_s: f64 },
     /// Waiting for the lamps to light and stabilise.
@@ -38,9 +57,21 @@ impl RunPhase {
         !matches!(self, RunPhase::Idle)
     }
 
+    /// Whether the lamps are lit in this phase. Activation is a UV pre-exposure,
+    /// so it counts — that is exactly when the user should not open the door.
+    pub fn lamps_on(&self) -> bool {
+        matches!(
+            self,
+            RunPhase::Activating { .. } | RunPhase::LightingUp | RunPhase::Exposing
+        )
+    }
+
     pub fn label(&self) -> String {
         match self {
             RunPhase::Idle => "Ready.".into(),
+            RunPhase::WaitingForTray { tray } => {
+                format!("Insert the {} tray and close the door…", tray.label())
+            }
             RunPhase::Activating { elapsed_s, total_s } => {
                 format!("Activating gel — {elapsed_s:.0} of {total_s:.0} s")
             }
@@ -49,6 +80,23 @@ impl RunPhase {
             RunPhase::Verifying => "Checking the run…".into(),
         }
     }
+}
+
+/// The run in progress: which channels, how far along, and what has been shot.
+#[derive(Debug, Default)]
+struct Run {
+    goal: Option<RunGoal>,
+    /// The channels to visit, in tray order.
+    queue: Vec<TrayType>,
+    /// Index into `queue` of the channel being shot.
+    at: usize,
+    /// Frames captured so far, one entry per finished channel. Held until the
+    /// whole run is over, because a multi-channel acquisition is one document.
+    captured: Vec<(TrayType, Vec<(DynamicImage, CaptureMeta)>)>,
+    /// The current channel's frames, held until the instrument confirms the door
+    /// stayed shut. An exposure interrupted by an opened door is not data, so it
+    /// is never adopted on optimism.
+    pending: Vec<(DynamicImage, CaptureMeta)>,
 }
 
 /// Everything the Gel Doc EZ tab needs.
@@ -64,32 +112,33 @@ pub struct GelDocState {
 
     /// Last reading from the instrument.
     pub sense: Option<Sense>,
+    /// The tray as of the previous reading, so a *change* can be told from a
+    /// repeat: swapping the tray selects the channel it lights, but only when it
+    /// actually moves — otherwise every poll would drag the selection back and
+    /// the user could never look at another channel's settings.
+    last_tray: Option<Option<TrayType>>,
     pub faults: Faults,
     /// Sense bits with no known meaning, as a mask.
     pub undecoded: u16,
-    /// Whether a rising undecoded bit runs the default protocol.
-    pub watch_run_button: bool,
+    /// The lamps are lit for framing (outside a run), as last reported by the
+    /// worker. Tracked rather than assumed: the instrument can refuse to light
+    /// them, and a lamp indicator that shows what we asked for rather than what
+    /// happened is worse than none.
+    pub lamps_on: bool,
 
-    pub library: ProtocolLibrary,
-    /// Index into `library.protocols` of the protocol being edited.
-    pub selected_protocol: usize,
-    /// Which step's options are shown.
-    pub selected_step: ProtocolStep,
+    /// What to shoot: one image per selected channel.
+    pub plan: AcquisitionPlan,
+    /// The channel whose settings are being edited, and which the live view is
+    /// framing. Not necessarily one that is selected for the run.
+    pub current_channel: TrayType,
 
     pub phase: RunPhase,
-    /// Frames captured by the current run, held until the instrument confirms
-    /// the door stayed shut. An exposure interrupted by an opened door is not
-    /// data, so it is never adopted on optimism.
-    pending_frames: Vec<(DynamicImage, CaptureMeta)>,
-    /// The exposure the last run actually used — the reference the manual calls
-    /// for when switching from auto to manual.
+    run: Run,
+    /// The exposure the last capture actually used — the reference for judging
+    /// whether the plan's times are in the right region.
     pub last_exposure_s: Option<f64>,
     /// One-line message for the tab's own status area.
     pub message: String,
-    /// Which protocol the name field currently shows. The tab refreshes on every
-    /// instrument poll, so the field is only rewritten when the *selection*
-    /// changes — otherwise a refresh mid-keystroke would fight the typing.
-    pub name_field_for: std::cell::Cell<usize>,
 }
 
 impl Default for GelDocState {
@@ -108,139 +157,67 @@ impl GelDocState {
             simulated: false,
             info: InstrumentInfo::default(),
             sense: None,
+            last_tray: None,
             faults: Faults::NONE,
             undecoded: 0,
-            watch_run_button: true,
-            library: ProtocolLibrary::starter(),
-            selected_protocol: 0,
-            selected_step: ProtocolStep::Application,
+            lamps_on: false,
+            plan: AcquisitionPlan::new(),
+            current_channel: TrayType::Uv,
             phase: RunPhase::Idle,
-            pending_frames: Vec::new(),
+            run: Run::default(),
             last_exposure_s: None,
             message: "Not connected.".into(),
-            name_field_for: std::cell::Cell::new(usize::MAX),
         }
     }
 
-    // ---- protocol editing ----
+    // ---- plan editing ----
 
-    pub fn protocol(&self) -> Option<&Protocol> {
-        self.library.protocols.get(self.selected_protocol)
+    /// The channel whose settings the tab is showing.
+    pub fn channel(&self) -> &ChannelPlan {
+        self.plan.get(self.current_channel)
     }
 
-    pub fn protocol_mut(&mut self) -> Option<&mut Protocol> {
-        self.library.protocols.get_mut(self.selected_protocol)
+    pub fn channel_mut(&mut self) -> &mut ChannelPlan {
+        let tray = self.current_channel;
+        self.plan.get_mut(tray)
     }
 
-    pub fn select_protocol(&mut self, index: usize) {
-        if index < self.library.protocols.len() {
-            self.selected_protocol = index;
-        }
+    pub fn select_channel(&mut self, index: usize) {
+        self.current_channel = AcquisitionPlan::tray_at(index);
     }
 
-    /// The application the selected protocol uses.
-    pub fn application(&self) -> Option<&'static Application> {
-        self.protocol().and_then(|p| p.application())
+    pub fn current_channel_index(&self) -> usize {
+        AcquisitionPlan::index_of(self.current_channel)
     }
 
-    /// Add a protocol for the inserted tray (or the selected one's tray), select
-    /// it, and return its name.
-    pub fn new_protocol(&mut self) -> String {
-        let tray = self
-            .inserted_tray()
-            .or_else(|| self.protocol().and_then(|p| p.tray()))
-            .unwrap_or(TrayType::StainFree);
-        let mut protocol = Protocol::default_for_tray(tray);
-        protocol.name = self.library.unique_name(&format!("{} protocol", tray.label()));
-        let name = protocol.name.clone();
-        self.selected_protocol = self.library.save(protocol);
-        name
+    pub fn set_channel_selected(&mut self, index: usize, selected: bool) {
+        let tray = AcquisitionPlan::tray_at(index);
+        self.plan.get_mut(tray).selected = selected;
     }
 
-    pub fn delete_selected_protocol(&mut self) {
-        let Some(name) = self.protocol().map(|p| p.name.clone()) else {
-            return;
-        };
-        self.library.remove(&name);
-        self.selected_protocol = self
-            .selected_protocol
-            .min(self.library.protocols.len().saturating_sub(1));
+    pub fn set_capture_mode(&mut self, mode: CaptureMode) {
+        self.channel_mut().mode = mode;
     }
 
-    /// Make the selected protocol the default for its tray — the one the green
-    /// Run button executes when that tray is in.
-    pub fn make_selected_default(&mut self) -> bool {
-        let Some(name) = self.protocol().map(|p| p.name.clone()) else {
-            return false;
-        };
-        self.library.set_default(&name)
+    pub fn set_exposure_s(&mut self, seconds: f64) {
+        self.channel_mut().exposure_s = seconds.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
     }
 
-    pub fn rename_selected_protocol(&mut self, name: &str) {
-        let name = name.trim();
-        if name.is_empty() {
-            return;
-        }
-        let Some(old) = self.protocol().map(|p| p.name.clone()) else {
-            return;
-        };
-        if old == name || self.library.get(name).is_some() {
-            return;
-        }
-        let was_default = self.library.is_default(&old);
-        if let Some(p) = self.protocol_mut() {
-            p.name = name.to_string();
-        }
-        // Move the default binding with the name, or renaming a default would
-        // silently unbind the green button.
-        if was_default {
-            self.library.default_by_tray.retain(|_, n| n != &old);
-            self.library.set_default(name);
-        }
+    /// Adopt the current exposure as this channel's lower / upper HDR bound.
+    pub fn set_hdr_min_s(&mut self, seconds: f64) {
+        let c = self.channel_mut();
+        c.hdr_min_s = seconds.clamp(EXPOSURE_MIN_S, c.hdr_max_s);
     }
-
-    pub fn set_application(&mut self, id: &str) {
-        if application::by_id(id).is_none() {
-            return;
-        }
-        if let Some(p) = self.protocol_mut() {
-            p.application = id.to_string();
-        }
+    pub fn set_hdr_max_s(&mut self, seconds: f64) {
+        let c = self.channel_mut();
+        c.hdr_max_s = seconds.clamp(c.hdr_min_s, EXPOSURE_MAX_S);
     }
-
-    pub fn set_exposure_mode(&mut self, mode: ExposureMode) {
-        if let Some(p) = self.protocol_mut() {
-            p.exposure.mode = mode;
-        }
-    }
-
-    pub fn set_manual_exposure_s(&mut self, seconds: f64) {
-        if let Some(p) = self.protocol_mut() {
-            p.exposure.manual_s = seconds.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
-        }
+    pub fn set_hdr_steps(&mut self, steps: usize) {
+        self.channel_mut().hdr_steps = steps.max(2);
     }
 
     pub fn set_activation_s(&mut self, seconds: f64) {
-        if let Some(p) = self.protocol_mut() {
-            p.activation_s = seconds.max(0.0);
-        }
-    }
-
-    pub fn set_step_enabled(&mut self, step: ProtocolStep, enabled: bool) {
-        if let Some(p) = self.protocol_mut() {
-            p.set_step_enabled(step, enabled);
-        }
-    }
-
-    /// Map the exposure slider (log scale over the instrument's own 0.001–10 s
-    /// range) to a time, and back.
-    pub fn exposure_from_slider(f: f32) -> f64 {
-        let f = f.clamp(0.0, 1.0) as f64;
-        EXPOSURE_MIN_S * (EXPOSURE_MAX_S / EXPOSURE_MIN_S).powf(f)
-    }
-    pub fn slider_from_exposure(t: f64) -> f32 {
-        let t = t.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
-        ((t / EXPOSURE_MIN_S).ln() / (EXPOSURE_MAX_S / EXPOSURE_MIN_S).ln()) as f32
+        self.channel_mut().activation_s = seconds.max(0.0);
     }
 
     // ---- instrument state ----
@@ -253,13 +230,35 @@ impl GelDocState {
         self.sense.is_some_and(|s| s.door_closed)
     }
 
-    /// The tray the selected protocol needs but which is not the one inserted.
-    /// This is the commonest setup mistake — the right dye on the wrong tray
-    /// images as a blank gel — so it is surfaced before the run, not after.
-    pub fn tray_mismatch(&self) -> Option<(TrayType, Option<TrayType>)> {
-        let wanted = self.application()?.tray;
-        let inserted = self.inserted_tray();
-        (inserted != Some(wanted)).then_some((wanted, inserted))
+    /// Whether the inserted tray is the channel being edited. Imaging on the
+    /// wrong light source gives a blank gel with nothing obviously wrong, so the
+    /// tab says which tray the current channel wants.
+    pub fn current_channel_ready(&self) -> bool {
+        self.inserted_tray() == Some(self.current_channel)
+    }
+
+    /// Whether the gel is lit right now, for framing or by a run.
+    pub fn lamps_lit(&self) -> bool {
+        self.lamps_on || self.phase.lamps_on()
+    }
+
+    /// Why the lamps cannot be switched on for framing, if they cannot. The
+    /// instrument enforces the door interlock itself; this is so the button can
+    /// explain itself before being pressed.
+    pub fn lamp_blocker(&self) -> Option<String> {
+        if !self.connected {
+            return Some("No instrument connected.".into());
+        }
+        if self.phase.is_running() {
+            return Some("A run is in progress.".into());
+        }
+        if self.inserted_tray().is_none() {
+            return Some("No sample tray is inserted — the tray is the light source.".into());
+        }
+        if !self.door_closed() {
+            return Some("The door is open.".into());
+        }
+        None
     }
 
     /// Why a run cannot start, if it cannot. Checked here as well as in the
@@ -271,11 +270,8 @@ impl GelDocState {
         if self.phase.is_running() {
             return Some("A run is already in progress.".into());
         }
-        if self.protocol().is_none() {
-            return Some("No protocol selected.".into());
-        }
-        if self.application().is_none() {
-            return Some("This protocol's application is not available.".into());
+        if self.plan.selected().is_empty() {
+            return Some("No channels selected.".into());
         }
         if self.inserted_tray().is_none() {
             return Some("No sample tray is inserted.".into());
@@ -286,62 +282,74 @@ impl GelDocState {
         if self.faults.no_light_tray() {
             return Some("The lamp assembly is not seated.".into());
         }
-        if let Some((wanted, _)) = self.tray_mismatch() {
-            return Some(format!(
-                "This application needs the {} tray.",
-                wanted.label()
-            ));
-        }
         None
     }
 
-    /// The activation time this run should use: only stain-free applications
-    /// activate, and only when the step is enabled.
-    pub fn effective_activation_s(&self) -> f64 {
-        let Some(protocol) = self.protocol() else {
-            return 0.0;
-        };
-        if protocol.step_enabled(ProtocolStep::Activation) {
-            protocol.activation_s_clamped()
-        } else {
-            0.0
+    /// The channel a run is currently on, if one is running.
+    pub fn running_channel(&self) -> Option<TrayType> {
+        self.run.queue.get(self.run.at).copied()
+    }
+
+    /// "Channel 2 of 3 — Blue light", for the run status line.
+    pub fn run_progress_label(&self) -> String {
+        match self.running_channel() {
+            Some(tray) if self.run.queue.len() > 1 => format!(
+                "Channel {} of {} — {}",
+                self.run.at + 1,
+                self.run.queue.len(),
+                tray.label()
+            ),
+            Some(tray) => tray.label().to_string(),
+            None => String::new(),
         }
-    }
-
-    /// How the capture should be taken, once the lamps are lit.
-    pub fn capture_plan(&self) -> Option<CapturePlan> {
-        let protocol = self.protocol()?;
-        // With the exposure step switched off, the protocol's own time is not
-        // applied — the camera keeps whatever it is already set to.
-        if !protocol.step_enabled(ProtocolStep::Exposure) {
-            return Some(CapturePlan::AsIs);
-        }
-        Some(match protocol.exposure.mode {
-            ExposureMode::AutoIntense => CapturePlan::Auto(AutoExposureMode::IntenseBands),
-            ExposureMode::AutoFaint => CapturePlan::Auto(AutoExposureMode::FaintBands),
-            ExposureMode::Manual => CapturePlan::Manual(protocol.exposure.clamped_manual()),
-        })
-    }
-
-    // ---- run state machine ----
-
-    pub fn take_pending_frames(&mut self) -> Vec<(DynamicImage, CaptureMeta)> {
-        std::mem::take(&mut self.pending_frames)
-    }
-
-    pub fn hold_frames(&mut self, frames: Vec<(DynamicImage, CaptureMeta)>) {
-        self.last_exposure_s = frames.first().map(|(_, meta)| meta.exposure_seconds);
-        self.pending_frames = frames;
-        self.phase = RunPhase::Verifying;
     }
 
     pub fn abort_run(&mut self, message: impl Into<String>) {
-        self.pending_frames.clear();
+        self.run = Run::default();
         self.phase = RunPhase::Idle;
+        self.lamps_on = false;
         self.message = message.into();
         if let Some(inst) = &self.inst {
             inst.abort();
         }
+    }
+}
+
+impl crate::state::AppState {
+    /// Light the selected channel, or put the lamps out if it cannot be lit.
+    ///
+    /// Selecting a channel *is* the light switch: there is nothing else the
+    /// selection could mean on an instrument whose light source is the tray, and
+    /// a separate lamp button would only be a second place to say the same
+    /// thing. Called on every selection and on every tray/door change, so what
+    /// is burning always matches what is selected.
+    pub fn geldoc_sync_lamps(&mut self) {
+        // Never touch the lamps mid-run: the run owns them, and switching them
+        // under an exposure would spoil it.
+        if self.geldoc.phase.is_running() {
+            return;
+        }
+        let want = self.geldoc.lamp_blocker().is_none() && self.geldoc.current_channel_ready();
+        if want == self.geldoc.lamps_on {
+            return;
+        }
+        if let Some(inst) = &self.geldoc.inst {
+            inst.illuminate(want);
+        }
+    }
+}
+
+/// The document channel colour for a light source.
+///
+/// Grey for a single-channel gel is what everyone expects, so the tray that is
+/// almost always used alone (UV) stays grey; the others get distinct colours so
+/// a multi-channel document can be told apart at a glance.
+fn channel_color(tray: TrayType) -> ChannelColor {
+    match tray {
+        TrayType::Uv => ChannelColor::Gray,
+        TrayType::White => ChannelColor::Yellow,
+        TrayType::Blue => ChannelColor::Cyan,
+        TrayType::StainFree => ChannelColor::Magenta,
     }
 }
 
@@ -350,13 +358,65 @@ impl GelDocState {
 /// These live on [`AppState`] because a run needs both devices: the enclosure
 /// handle for the light and the interlocks, the camera handle for the exposure.
 impl crate::state::AppState {
-    /// Start a run of the selected protocol. Returns the line to show.
+    /// Start a run over the plan's selected channels. Returns the line to show.
     pub fn geldoc_run(&mut self) -> String {
+        self.geldoc_start(RunGoal::Acquire)
+    }
+
+    /// Meter every selected channel and write the result into the plan.
+    pub fn geldoc_auto(&mut self) -> String {
+        self.geldoc_start(RunGoal::AutoExpose)
+    }
+
+    fn geldoc_start(&mut self, goal: RunGoal) -> String {
         if let Some(blocker) = self.geldoc.run_blocker() {
             self.geldoc.message = blocker.clone();
             return format!("Cannot run: {blocker}");
         }
-        let activation_s = self.geldoc.effective_activation_s();
+        let queue = self.geldoc.plan.selected();
+        // Start on whichever selected channel is already under the inserted
+        // tray, so the common single-tray case never asks for a swap it does not
+        // need.
+        let inserted = self.geldoc.inserted_tray();
+        let mut queue = queue;
+        if let Some(pos) = queue.iter().position(|t| Some(*t) == inserted) {
+            queue.rotate_left(pos);
+        }
+        let count = queue.len();
+        self.geldoc.run = Run {
+            goal: Some(goal),
+            queue,
+            at: 0,
+            captured: Vec::new(),
+            pending: Vec::new(),
+        };
+        let what = match goal {
+            RunGoal::Acquire => "Running",
+            RunGoal::AutoExpose => "Metering",
+        };
+        self.geldoc_begin_channel();
+        format!(
+            "{what} {count} channel{}…",
+            if count == 1 { "" } else { "s" }
+        )
+    }
+
+    /// Start (or park before) the channel at the head of the queue.
+    fn geldoc_begin_channel(&mut self) {
+        let Some(tray) = self.geldoc.running_channel() else {
+            self.geldoc_finish_run();
+            return;
+        };
+        // Follow the run with the live view and the settings panel, so what is
+        // on screen is what is being shot.
+        self.geldoc.current_channel = tray;
+
+        if self.geldoc.inserted_tray() != Some(tray) || !self.geldoc.door_closed() {
+            self.geldoc.phase = RunPhase::WaitingForTray { tray };
+            self.geldoc.message = self.geldoc.phase.label();
+            return;
+        }
+        let activation_s = self.geldoc.plan.get(tray).effective_activation_s();
         self.geldoc.phase = if activation_s > 0.0 {
             RunPhase::Activating {
                 elapsed_s: 0.0,
@@ -365,273 +425,177 @@ impl crate::state::AppState {
         } else {
             RunPhase::LightingUp
         };
-        let name = self
-            .geldoc
-            .protocol()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
         self.geldoc.message = self.geldoc.phase.label();
         if let Some(inst) = &self.geldoc.inst {
             inst.begin_run(activation_s);
         }
-        format!("Running protocol “{name}”…")
     }
 
-    /// The hardware Run button: run the default protocol for the tray that is
-    /// actually inserted, which is what the button means on the instrument.
+    /// A fresh sense reading arrived. If a run is parked waiting for a tray
+    /// swap, this is what releases it; otherwise a tray change selects the
+    /// channel that tray lights.
+    pub fn geldoc_sense_changed(&mut self) {
+        if let RunPhase::WaitingForTray { tray } = self.geldoc.phase {
+            if self.geldoc.inserted_tray() == Some(tray) && self.geldoc.door_closed() {
+                self.geldoc_begin_channel();
+            }
+            return;
+        }
+        let tray = self.geldoc.inserted_tray();
+        if self.geldoc.last_tray != Some(tray) {
+            self.geldoc.last_tray = Some(tray);
+            // Swapping the tray *is* choosing the channel — it is the light
+            // source, and the user has just picked it up and put it in.
+            if let Some(tray) = tray {
+                if !self.geldoc.phase.is_running() {
+                    self.geldoc.current_channel = tray;
+                    self.apply_live_exposure();
+                }
+            }
+        }
+    }
+
+    /// The physical Run button: run the plan, exactly as the on-screen button
+    /// does. There is nothing else it could sensibly mean now that a run is the
+    /// plan rather than one of several saved recipes.
     pub fn geldoc_button_run(&mut self) -> String {
-        let Some(tray) = self.geldoc.inserted_tray() else {
-            return "Run button pressed, but no sample tray is inserted.".into();
-        };
-        let Some(name) = self
-            .geldoc
-            .library
-            .default_for(tray)
-            .map(|p| p.name.clone())
-        else {
-            return format!(
-                "Run button pressed, but no default protocol is set for the {} tray.",
-                tray.label()
-            );
-        };
-        if let Some(index) = self
-            .geldoc
-            .library
-            .protocols
-            .iter()
-            .position(|p| p.name == name)
-        {
-            self.geldoc.selected_protocol = index;
+        if self.geldoc.phase.is_running() {
+            return "Run button pressed while a run is in progress — ignored.".into();
         }
         self.geldoc_run()
     }
 
     /// The lamps are lit and stable: take the picture.
     pub fn geldoc_lights_ready(&mut self) {
+        let Some(tray) = self.geldoc.running_channel() else {
+            self.geldoc.abort_run("No channel to expose.");
+            return;
+        };
+        let channel = *self.geldoc.plan.get(tray);
         self.geldoc.phase = RunPhase::Exposing;
-        self.geldoc.message = "Exposing…".into();
-        let plan = self.geldoc.capture_plan();
+        self.geldoc.message = format!("Exposing {}…", tray.label());
         self.capturing = true;
         self.cancel_requested = false;
-        self.capture_status = "Exposing…".into();
+        self.capture_status = self.geldoc.message.clone();
+        let goal = self.geldoc.run.goal;
+        let group = self.next_bracket_group();
         let Some(cam) = &self.cam else {
             self.geldoc.abort_run("No camera available for the exposure.");
             self.capturing = false;
             return;
         };
-        match plan {
-            Some(CapturePlan::Auto(mode)) => cam.capture_auto(mode, EXPOSURE_MIN_S, EXPOSURE_MAX_S),
-            Some(CapturePlan::Manual(seconds)) => cam.capture_single(seconds),
-            Some(CapturePlan::AsIs) => cam.capture_single(self.live_exposure_s.max(EXPOSURE_MIN_S)),
+        match goal {
+            // Metering steers the brightest pixels to just below saturation, so
+            // what it settles on is the exposure at which nothing clips.
+            Some(RunGoal::AutoExpose) => {
+                cam.capture_auto(AutoExposureMode::IntenseBands, EXPOSURE_MIN_S, EXPOSURE_MAX_S)
+            }
+            Some(RunGoal::Acquire) => cam.capture_hdr(channel.exposures(), group),
             None => {
                 self.capturing = false;
-                self.geldoc.abort_run("No protocol to run.");
+                self.geldoc.abort_run("No run in progress.");
             }
         }
     }
 
-    /// The camera is done. Hold the frames and ask the instrument whether the
-    /// run was clean before they become a document.
+    /// The camera is done with this channel. Hold the frames and ask the
+    /// instrument whether the exposure was clean before they are used.
     pub fn geldoc_capture_done(&mut self, frames: Vec<(DynamicImage, CaptureMeta)>) {
-        self.geldoc.hold_frames(frames);
+        self.geldoc.last_exposure_s = frames.first().map(|(_, meta)| meta.exposure_seconds);
+        self.geldoc.run.pending = frames;
+        self.geldoc.phase = RunPhase::Verifying;
         self.geldoc.message = "Checking the run…".into();
         if let Some(inst) = &self.geldoc.inst {
             inst.end_run();
         }
     }
 
-    /// The instrument has reported on the finished run. Adopt the image, or
-    /// discard it if the door was opened mid-exposure.
+    /// The instrument has reported on the finished channel. Keep it, or discard
+    /// the whole run if the door was opened mid-exposure.
     pub fn geldoc_run_finished(&mut self, faults: Faults, door_violation: bool) -> String {
         self.geldoc.faults = faults;
         self.capturing = false;
-        let frames = self.geldoc.take_pending_frames();
-        self.geldoc.phase = RunPhase::Idle;
+        let frames = std::mem::take(&mut self.geldoc.run.pending);
+        let tray = self.geldoc.running_channel();
 
         if door_violation {
-            self.geldoc.message =
-                "Discarded: the door was opened during the exposure.".to_string();
+            self.geldoc.abort_run("Discarded: the door was opened during the exposure.");
             return "Run discarded — the door was opened during the exposure.".into();
         }
+        let (Some(tray), Some(goal)) = (tray, self.geldoc.run.goal) else {
+            self.geldoc.phase = RunPhase::Idle;
+            return "Run finished.".into();
+        };
         if frames.is_empty() {
-            self.geldoc.message = "Ready.".into();
-            return "Run finished with no image.".into();
+            self.geldoc.abort_run(format!("{} produced no image.", tray.label()));
+            return format!("Run stopped — {} produced no image.", tray.label());
         }
 
-        // The application says what is on the gel, so the new document starts
-        // as the right kind — base pairs or daltons — without the user setting
-        // it again.
-        if let Some(app) = self.geldoc.application() {
-            self.gel_type = app.gel_type();
+        match goal {
+            RunGoal::Acquire => self.geldoc.run.captured.push((tray, frames)),
+            RunGoal::AutoExpose => {
+                // The frame that came back was taken at the exposure the
+                // metering settled on; that is the number the plan wants.
+                let metered = frames[0].1.exposure_seconds;
+                self.geldoc.plan.get_mut(tray).apply_metered(metered);
+            }
         }
-        let application = self
-            .geldoc
-            .application()
-            .map(|a| a.label())
-            .unwrap_or_else(|| "unknown application".into());
-        let exposure = self.geldoc.last_exposure_s.unwrap_or(0.0);
-        let highlight = self
-            .geldoc
-            .protocol()
-            .is_some_and(|p| p.highlight_saturated);
-        let (imgs, metas): (Vec<_>, Vec<_>) = frames.into_iter().unzip();
-        self.adopt_capture(imgs, metas);
-        // The protocol's display option, applied to the document it produced:
-        // saturated pixels carry no intensity, so anything measured from them is
-        // wrong and the user should be able to see them at a glance.
-        self.set_show_overexposed(highlight);
-        self.geldoc.message = format!("Captured at {exposure:.3} s.");
-        format!("{application} — captured at {exposure:.3} s.")
-    }
-}
 
-/// How the camera should take this run's image.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CapturePlan {
-    Auto(AutoExposureMode),
-    Manual(f64),
-    /// Exposure step disabled — shoot at whatever the camera is set to.
-    AsIs,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn state_with(tray: Option<TrayType>, door_closed: bool) -> GelDocState {
-        let mut st = GelDocState::new();
-        st.connected = true;
-        st.sense = Some(Sense {
-            tray,
-            door_closed,
-            busy: false,
-            raw: 0,
-        });
-        // Select the stain-free protocol, whose tray matches the default sense.
-        st.selected_protocol = st
-            .library
-            .protocols
-            .iter()
-            .position(|p| p.tray() == Some(TrayType::StainFree))
-            .expect("a stain-free protocol");
-        st
-    }
-
-    #[test]
-    fn an_open_door_blocks_the_run() {
-        let st = state_with(Some(TrayType::StainFree), false);
-        assert_eq!(st.run_blocker().as_deref(), Some("The door is open."));
-    }
-
-    #[test]
-    fn a_missing_tray_blocks_the_run() {
-        let st = state_with(None, true);
-        assert!(st.run_blocker().is_some_and(|b| b.contains("tray")));
-    }
-
-    #[test]
-    fn the_wrong_tray_blocks_the_run_and_names_the_right_one() {
-        // The failure this catches: the right dye on the wrong tray, which
-        // images as a blank gel with nothing obviously wrong.
-        let st = state_with(Some(TrayType::White), true);
-        let blocker = st.run_blocker().expect("blocked");
-        assert!(blocker.contains("Stain-free"), "{blocker}");
-        assert_eq!(
-            st.tray_mismatch(),
-            Some((TrayType::StainFree, Some(TrayType::White)))
-        );
-    }
-
-    #[test]
-    fn a_matching_setup_is_not_blocked() {
-        let st = state_with(Some(TrayType::StainFree), true);
-        assert_eq!(st.run_blocker(), None);
-        assert_eq!(st.tray_mismatch(), None);
-    }
-
-    #[test]
-    fn only_stain_free_protocols_activate() {
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        assert!(st.effective_activation_s() > 0.0);
-
-        // Switch to a Coomassie protocol: no activation, whatever the stored time.
-        st.set_application("white-coomassie-blue");
-        st.set_activation_s(60.0);
-        assert_eq!(st.effective_activation_s(), 0.0);
-    }
-
-    #[test]
-    fn disabling_the_activation_step_skips_it() {
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        st.set_step_enabled(ProtocolStep::Activation, false);
-        assert_eq!(st.effective_activation_s(), 0.0);
-    }
-
-    #[test]
-    fn the_capture_plan_follows_the_exposure_mode() {
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        st.set_exposure_mode(ExposureMode::AutoFaint);
-        assert_eq!(
-            st.capture_plan(),
-            Some(CapturePlan::Auto(AutoExposureMode::FaintBands))
-        );
-        st.set_exposure_mode(ExposureMode::Manual);
-        st.set_manual_exposure_s(0.25);
-        assert_eq!(st.capture_plan(), Some(CapturePlan::Manual(0.25)));
-        st.set_step_enabled(ProtocolStep::Exposure, false);
-        assert_eq!(st.capture_plan(), Some(CapturePlan::AsIs));
-    }
-
-    #[test]
-    fn manual_exposure_is_held_to_the_instrument_range() {
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        st.set_manual_exposure_s(500.0);
-        assert_eq!(st.protocol().expect("protocol").exposure.manual_s, EXPOSURE_MAX_S);
-        st.set_manual_exposure_s(0.0);
-        assert_eq!(st.protocol().expect("protocol").exposure.manual_s, EXPOSURE_MIN_S);
-    }
-
-    #[test]
-    fn the_exposure_slider_round_trips() {
-        for t in [0.001, 0.01, 0.1, 1.0, 10.0] {
-            let back = GelDocState::exposure_from_slider(GelDocState::slider_from_exposure(t));
-            assert!((back - t).abs() < t * 1e-6, "{t} -> {back}");
+        self.geldoc.run.at += 1;
+        if self.geldoc.run.at < self.geldoc.run.queue.len() {
+            self.geldoc_begin_channel();
+            return format!("{} done — {}", tray.label(), self.geldoc.phase.label());
         }
+        self.geldoc_finish_run()
     }
 
-    #[test]
-    fn renaming_a_default_protocol_keeps_it_bound_to_the_button() {
-        // Otherwise a rename silently unbinds the green button, and the user
-        // finds out by pressing it and getting nothing.
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        st.make_selected_default();
-        st.rename_selected_protocol("My stain-free run");
-        assert!(st.library.is_default("My stain-free run"));
-        assert_eq!(
-            st.library
-                .default_for(TrayType::StainFree)
-                .map(|p| p.name.as_str()),
-            Some("My stain-free run")
-        );
-    }
+    /// Every channel is done: build the document (or report what Auto found).
+    fn geldoc_finish_run(&mut self) -> String {
+        let goal = self.geldoc.run.goal;
+        let captured = std::mem::take(&mut self.geldoc.run.captured);
+        self.geldoc.run = Run::default();
+        self.geldoc.phase = RunPhase::Idle;
 
-    #[test]
-    fn frames_are_held_not_adopted_until_the_run_is_verified() {
-        let mut st = state_with(Some(TrayType::StainFree), true);
-        let frame = (
-            DynamicImage::new_luma8(2, 2),
-            CaptureMeta {
-                exposure_seconds: 0.3,
-                ..Default::default()
-            },
-        );
-        st.hold_frames(vec![frame]);
-        assert_eq!(st.phase, RunPhase::Verifying);
-        assert_eq!(st.last_exposure_s, Some(0.3));
-
-        // A door violation discards them rather than handing back a bad image.
-        st.abort_run("The door was opened during imaging.");
-        assert!(st.take_pending_frames().is_empty());
-        assert_eq!(st.phase, RunPhase::Idle);
+        match goal {
+            Some(RunGoal::AutoExpose) => {
+                let summary = self
+                    .geldoc
+                    .plan
+                    .selected()
+                    .iter()
+                    .map(|&t| format!("{}: {}", t.label(), self.geldoc.plan.get(t).summary()))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                self.geldoc.message = format!("Auto set {summary}");
+                format!("Auto exposure — {summary}")
+            }
+            Some(RunGoal::Acquire) => {
+                if captured.is_empty() {
+                    self.geldoc.message = "Ready.".into();
+                    return "Run finished with no image.".into();
+                }
+                let names: Vec<String> =
+                    captured.iter().map(|(t, _)| t.label().to_string()).collect();
+                let channels: Vec<CapturedChannel> = captured
+                    .into_iter()
+                    .map(|(tray, frames)| CapturedChannel {
+                        name: tray.label().to_string(),
+                        color: channel_color(tray),
+                        frames,
+                    })
+                    .collect();
+                self.adopt_capture_channels(channels);
+                // Saturated pixels carry no intensity, so anything measured from
+                // them is wrong and the user should see them at a glance.
+                let highlight = self.geldoc.plan.highlight_saturated;
+                self.set_show_overexposed(highlight);
+                self.geldoc.message = format!("Captured {}.", names.join(" + "));
+                format!("Captured {}.", names.join(" + "))
+            }
+            None => {
+                self.geldoc.message = "Ready.".into();
+                "Run finished.".into()
+            }
+        }
     }
 }

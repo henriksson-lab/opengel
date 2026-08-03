@@ -1,87 +1,19 @@
 import { Button, ComboBox, VerticalBox, HorizontalBox, GroupBox, Slider, LineEdit, ScrollView, TabWidget, CheckBox } from "std-widgets.slint";
+import { LaneItem, TracePath, TreeRow, AxisTick, WarpKnot, FaultItem, ChannelItem, MetaRow, StatusChip, TabButton } from "common.slint";
+import { GelTab } from "gel.slint";
+import { TraceTab } from "trace.slint";
+import { MetadataTab } from "metadata.slint";
+import { CaptureTab } from "capture.slint";
 
-// A lane in the Trace tab's checklist.
-export struct LaneItem {
-    id: int,
-    label: string,
-    ladder: bool,
-    selected: bool,
-}
 
-// One polyline in the Trace plot (SVG path in a 0..1000 viewbox).
-export struct TracePath {
-    commands: string,
-    color: color,
-    label: string,
-    ladder: bool,
-}
 
-// One row in the combined lane/band tree. `kind`: 0 = lane, 1 = band.
-export struct TreeRow {
-    kind: int,
-    lane-id: int,
-    band-id: int,
-    expanded: bool,
-    is-ladder: bool,
-    name: string,
-    rf: string,
-    size: string,
-    density: string,
-    ng: string,
-    nmol: string,
-}
 
-// A positioned axis tick: `pos` is the fraction (0..1) across the plot width,
-// `label` the text. Used for the trace plot's ladder-based bp scale.
-export struct AxisTick {
-    pos: float,
-    label: string,
-}
 
-// A warp control-point handle, in normalized image coords (0..1). `active` = the
-// knot currently being dragged. Drawn as a separate overlay (not baked into the
-// gel image) so edge knots aren't clipped.
-export struct WarpKnot {
-    nx: float,
-    ny: float,
-    active: bool,
-}
 
-// One active instrument fault, in the user's language. `remedy` is what to do
-// about it — a fault the user can't act on is just an error message.
-export struct FaultItem {
-    headline: string,
-    remedy: string,
-}
 
-// A saved protocol in the Gel Doc EZ tab's left pane. Defaults are colour-coded
-// apart from the rest, because the default is what the hardware Run button
-// executes for its tray.
-export struct ProtocolItem {
-    name: string,
-    tray: string,
-    is-default: bool,
-}
 
-// One step of a protocol. `applicable` is false for a step this protocol can
-// never run (gel activation outside stain-free), which is shown greyed rather
-// than hidden so the sequence stays recognisable between protocols.
-export struct StepItem {
-    number: int,
-    label: string,
-    enabled: bool,
-    mandatory: bool,
-    applicable: bool,
-}
 
-// One row of the Metadata tab. `section` is a heading like "Channel 2 —
-// DyLight 549"; consecutive rows sharing one are drawn under a single header.
-export struct MetaRow {
-    section: string,
-    name: string,
-    value: string,
-    first-in-section: bool,
-}
+
 
 export component AppWindow inherits Window {
     title: "OpenGel";
@@ -189,14 +121,14 @@ export component AppWindow inherits Window {
     in property <image> live-preview-image;
     in property <image> live-histogram-image;
     in-out property <bool> live-running: false;
-    in property <string> live-status: "Idle.";
-    in property <string> camera-name: "—";
     in-out property <float> live-exposure-slider: 0.5;    // log-mapped exposure
     in property <string> live-exposure-label: "0.10 s";
     in property <string> hdr-min-label: "0.010 s";
     in property <string> hdr-max-label: "1.00 s";
     in property <string> hdr-range-label: "6.6 EV";
-    in-out property <int> hdr-steps-idx: 2;               // index into [1,2,3,5,7]
+    // Exposure controls. Each ComboBox owns its property: two combo boxes
+    // two-way bound to one property fight over it and emit `selected` with each
+    // other's index, which reads as a user edit.
     in property <[string]> camera-names;
     in-out property <int> camera-index: 0;
     in property <bool> capture-active: false;             // capture in progress
@@ -218,35 +150,37 @@ export component AppWindow inherits Window {
     in property <bool> gd-tray-present: false;
     in property <bool> gd-door-closed: false;
     in property <bool> gd-busy: false;
+    // The lamps are lit (including during a stain-free activation) — the state
+    // in which the door must stay shut.
+    in property <bool> gd-lamps-on: false;
     in property <[FaultItem]> gd-faults;
     in property <string> gd-undecoded-label: "";
-    in-out property <bool> gd-watch-button: true;
-    // Protocols.
-    in property <[ProtocolItem]> gd-protocol-items;
-    in-out property <int> gd-protocol-index: 0;
-    in-out property <string> gd-protocol-name: "";
-    in property <bool> gd-protocol-is-default: false;
-    // Steps.
-    in property <[StepItem]> gd-step-items;
-    in-out property <int> gd-step-index: 0;
-    // Step options.
-    in property <[string]> gd-application-names;
-    in-out property <int> gd-application-index: 0;
-    in property <string> gd-application-tray: "—";
-    in property <bool> gd-tray-mismatch: false;
-    in property <string> gd-tray-mismatch-text: "";
-    in-out property <int> gd-exposure-mode-index: 0;
-    in-out property <float> gd-exposure-slider: 0.5;
-    in property <string> gd-exposure-label: "0.100 s";
-    in property <string> gd-last-exposure-label: "";
+    // Channels: one per light source. The list is the whole acquisition — for
+    // each ticked channel, one image.
+    in property <[ChannelItem]> gd-channel-items;
+    in property <[string]> gd-channel-names;      // the same channels, for a dropdown
+    in property <int> gd-channel-index: 0;        // the channel being edited/framed
+    // Exposure controls for the channel being edited (see the note above).
+    in-out property <int> gd-capture-mode-index: 0;
+    in-out property <int> gd-hdr-steps-idx: 1;
+    in-out property <int> gd-gel-type-index: 0;
+    in property <string> gd-channel-label: "UV";
+    // Whether the channel being edited is the tray that is inserted. Imaging on
+    // the wrong light source gives a blank gel with nothing obviously wrong.
+    in property <bool> gd-channel-ready: false;
+    in property <string> gd-channel-hint: "";
+    // The tray the simulated bench currently holds, for its own control.
+    in-out property <int> gd-sim-tray-index: 0;
     in-out property <string> gd-activation-s: "45";
     in property <bool> gd-activation-applicable: false;
     in-out property <bool> gd-highlight-saturated: true;
+    in property <string> gd-last-exposure-label: "";
     // Run.
     in property <bool> gd-can-run: false;
     in property <string> gd-run-blocker: "";
     in property <bool> gd-running: false;
     in property <string> gd-phase-label: "Ready.";
+    in property <string> gd-run-progress: "";
     in property <float> gd-activation-progress: 0;
     in property <string> gd-message: "";
 
@@ -327,13 +261,14 @@ export component AppWindow inherits Window {
     // Live tab.
     callback live-start();
     callback live-stop();
-    callback live-capture();               // HDR "Capture"
-    callback capture-single();             // non-HDR single capture
+    callback live-capture();               // take this channel's image
+    callback live-auto();                  // meter, and set this channel from it
     callback cancel-capture();             // cancel an in-progress capture
     callback live-exposure-changed(float); // exposure slider moved
     callback set-hdr-lower();              // adopt current exposure as HDR min
     callback set-hdr-upper();              // adopt current exposure as HDR max
     callback hdr-steps-changed(int);
+    callback capture-mode-changed(int);    // single / HDR, for this channel
     callback camera-selected(int);         // pick a camera from the dropdown
     callback rescan-cameras();             // re-enumerate cameras
     // Gel Doc EZ tab.
@@ -342,19 +277,11 @@ export component AppWindow inherits Window {
     callback gd-connect();
     callback gd-disconnect();
     callback gd-clear-faults();
-    callback gd-watch-button-changed(bool);
-    callback gd-protocol-selected(int);
-    callback gd-protocol-new();
-    callback gd-protocol-delete();
-    callback gd-protocol-make-default();
-    callback gd-protocol-renamed(string);
-    callback gd-step-selected(int);
-    callback gd-step-toggled(int, bool);
-    callback gd-application-selected(int);
-    callback gd-exposure-mode-changed(int);
-    callback gd-exposure-changed(float);
+    callback gd-channel-selected(int);       // edit / frame this channel
+    callback gd-channel-toggled(int, bool);  // include it in the run
     callback gd-activation-changed(string);
     callback gd-highlight-saturated-changed(bool);
+    callback gd-auto();                      // meter every selected channel
     callback gd-run();
     callback gd-abort();
     // Simulated-enclosure bench controls.
@@ -374,24 +301,6 @@ export component AppWindow inherits Window {
     callback trace-pan(float);            // drag: pointer dx as a fraction of width
     callback trace-reset-view();
     callback trace-hover(float);          // hover x-fraction 0..1 over plot area
-
-    // Reset view (fit).
-    function fit-view() {
-        root.zoom = 1.0;
-        root.pan-x = 0px;
-        root.pan-y = 0px;
-    }
-
-    // Move one edge of the contrast window (which: 1 = black/low, 2 = white/high)
-    // to fraction `f`, keeping a minimum gap so the image never collapses.
-    function apply-window(which: int, f: float) {
-        if (which == 1) {
-            root.disp-lo = Math.max(0, Math.min(f, root.disp-hi - 0.02));
-        } else {
-            root.disp-hi = Math.min(1, Math.max(f, root.disp-lo + 0.02));
-        }
-        root.display-changed();
-    }
 
     MenuBar {
         Menu {
@@ -422,7 +331,7 @@ export component AppWindow inherits Window {
             enabled: root.has-open-file;
             selected(v) => { root.file-changed(self.current-index); }
         }
-        Text { text: "Gel:"; vertical-alignment: center; }
+        Text { text: "Gel type:"; vertical-alignment: center; }
         ComboBox {
             model: root.gel-type-names;
             current-index <=> root.gel-type-index;
@@ -441,1334 +350,210 @@ export component AppWindow inherits Window {
             }
         }
     }
-    TabWidget {
-      vertical-stretch: 1;
-      // Bound so the tab can be selected from the command line (`--tab N`),
-      // which is what makes scripted screenshots of a specific tab possible.
-      current-index <=> root.active-tab;
-      Tab {
-        title: "Gel";
-        HorizontalBox {
-        // ---- left: image + controls ----
-        VerticalBox {
-            // View controls: frame, zoom, rotate. Kept compact (no vertical
-            // padding) so the toolbar doesn't steal height from the gel view.
-            HorizontalLayout {
-                spacing: 6px;
-                padding: 0px;
-                // Channel first: it selects which acquisition you are looking
-                // at, and the frame selector below picks an exposure within it.
-                if root.is-multichannel: Text { text: "Channel:"; vertical-alignment: center; }
-                if root.is-multichannel: ComboBox {
-                    model: root.channel-names;
-                    current-index <=> root.channel-index;
-                    width: 175px;
-                    vertical-stretch: 0;
-                    enabled: root.has-open-file;
-                    selected(v) => { root.channel-changed(self.current-index); }
-                }
-                Text { text: "Image:"; vertical-alignment: center; }
-                ComboBox {
-                    model: root.frame-names;
-                    current-index <=> root.frame-index;
-                    width: 145px;
-                    vertical-stretch: 0;
-                    enabled: root.has-open-file;
-                    selected(v) => { root.frame-changed(self.current-index); }
-                }
-                Button {
-                    text: "Recompute HDR…";
-                    enabled: root.has-open-file;
-                    vertical-stretch: 0;
-                    clicked => { root.open-hdr-dialog(); }
-                }
-                Text { text: "Z:"; vertical-alignment: center; }
-                Slider {
-                    minimum: 0.2; maximum: 8.0; value <=> root.zoom;
-                    horizontal-stretch: 1;
-                    vertical-stretch: 0;
-                    enabled: root.has-open-file;
-                }
-                Text { text: "R:"; vertical-alignment: center; }
-                Slider {
-                    minimum: -180; maximum: 180; value <=> root.rotation;
-                    horizontal-stretch: 1;
-                    vertical-stretch: 0;
-                    enabled: root.has-open-file;
-                    changed(v) => { root.rotate(v); }
-                }
-                Button { icon: @image-url("icon_fit.svg"); colorize-icon: true; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.fit-view(); } }
-                Button { icon: @image-url("icon_auto.svg"); colorize-icon: true; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.auto-straighten(); } }
-            }
-
-            // Zoom / pan / rotate viewport.
-            vp := Rectangle {
-                background: root.invert ? #ffffff : #1c1c1c;
-                border-width: 1px;
-                border-color: #444;
-                vertical-stretch: 1;
-                clip: true;
-
-                // Zoom + pan container; the gel image (with overlays composited
-                // in) rotates live via the Image's rotation-angle.
-                // "Show unwarped" renders the rectified (straightened) gel, which
-                // must be shown flat — ignoring zoom, pan and rotation.
-                Rectangle {
-                    width: root.show-unwarped ? parent.width : parent.width * root.zoom;
-                    height: root.show-unwarped ? parent.height : parent.height * root.zoom;
-                    x: (parent.width - self.width) / 2 + (root.show-unwarped ? 0px : root.pan-x);
-                    y: (parent.height - self.height) / 2 + (root.show-unwarped ? 0px : root.pan-y);
-
-                    Image {
-                        source: root.gel-image;
-                        image-fit: contain;
-                        width: 100%;
-                        height: 100%;
-                        transform-rotation: root.show-unwarped ? 0deg : root.rotation * 1deg;
-                    }
-                }
-
-                // Pointer layer (topmost) for pan / zoom / click / hover.
-                ta := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    enabled: root.has-open-file;
-                    property <length> start-pan-x;
-                    property <length> start-pan-y;
-                    property <bool> drag-mode;   // dragging an annotation (vs panning)
-                    // --- map viewport pointer coords to image-normalized [0,1],
-                    // accounting for the zoom container + contain letterboxing + pan.
-                    property <length> cw: vp.width * root.zoom;   // container size
-                    property <length> ch: vp.height * root.zoom;
-                    property <float> ia: root.gel-image.width * 1.0 / max(1, root.gel-image.height); // image aspect
-                    property <float> ca: vp.width / vp.height;    // container aspect (zoom cancels)
-                    property <length> dw: self.ia > self.ca ? self.cw : self.ch * self.ia; // displayed img size
-                    property <length> dh: self.ia > self.ca ? self.cw / self.ia : self.ch;
-                    property <length> ix0: (vp.width - self.cw) / 2 + root.pan-x + (self.cw - self.dw) / 2;
-                    property <length> iy0: (vp.height - self.ch) / 2 + root.pan-y + (self.ch - self.dh) / 2;
-                    property <float> nx: (self.mouse-x - self.ix0) / max(1px, self.dw);
-                    property <float> ny: (self.mouse-y - self.iy0) / max(1px, self.dh);
-                    pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down) {
-                            self.start-pan-x = root.pan-x;
-                            self.start-pan-y = root.pan-y;
-                            // Try to grab an annotation; if none, this becomes a pan.
-                            self.drag-mode = root.press-at(self.nx, self.ny);
-                        }
-                        if (e.kind == PointerEventKind.up) {
-                            if (self.drag-mode) { root.release-annotation(); }
-                            self.drag-mode = false;
-                        }
-                    }
-                    moved => {
-                        if (self.drag-mode) {
-                            root.drag-to(self.nx, self.ny);
-                        } else {
-                            root.pan-x = self.start-pan-x + (self.mouse-x - self.pressed-x);
-                            root.pan-y = self.start-pan-y + (self.mouse-y - self.pressed-y);
-                        }
-                    }
-                    // Continuous hover → alignment line following the warp.
-                    changed nx => { root.hover-moved(self.nx, self.ny); }
-                    changed ny => { root.hover-moved(self.nx, self.ny); }
-                    scroll-event(e) => {
-                        root.zoom = max(0.2, min(8.0, root.zoom * (1.0 + (e.delta-y / 1px) / 400)));
-                        return EventResult.accept;
-                    }
-                    clicked => {
-                        root.click-x = self.nx;
-                        root.click-y = self.ny;
-                    }
-                }
-
-                // Warp control-point handles, drawn as a separate overlay (not
-                // baked into the gel image) so knots at/beyond the image edge stay
-                // visible. Positioned in the displayed-image frame via `ta`'s
-                // letterbox mapping. These have no TouchArea, so pointer events
-                // fall through to `ta`, which hit-tests knots in image coords.
-                if root.show-warp: Rectangle {
-                    // Rotate each knot about the displayed-image center by the same
-                    // angle as the gel image, so the knots track it under rotation
-                    // (they already track zoom/pan via ta's letterbox mapping).
-                    property <angle> ang: root.rotation * 1deg;
-                    for knot in root.warp-knots: Rectangle {
-                        property <length> dx: (knot.nx - 0.5) * ta.dw;
-                        property <length> dy: (knot.ny - 0.5) * ta.dh;
-                        width: knot.active ? 13px : 11px;
-                        height: self.width;
-                        x: ta.ix0 + ta.dw / 2 + (Math.cos(parent.ang) * self.dx - Math.sin(parent.ang) * self.dy) - self.width / 2;
-                        y: ta.iy0 + ta.dh / 2 + (Math.sin(parent.ang) * self.dx + Math.cos(parent.ang) * self.dy) - self.height / 2;
-                        background: knot.active ? #ff9600 : #00d2ff;
-                        border-width: 1px;
-                        border-color: #141414;
-                    }
-                }
-            }
-
-            // Contrast / brightness: drag the black & white edges directly on
-            // the histogram.
-            HorizontalBox {
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    spacing: 3px;
-                    hist := Rectangle {
-                        vertical-stretch: 1;
-                        min-height: 66px;
-                        border-width: 1px;
-                        border-color: #cccccc;
-                        clip: true;  // keep edges/knobs from poking outside the box
-                        Image {
-                            source: root.histogram-image;
-                            width: 100%;
-                            height: 100%;
-                            image-fit: fill;
-                        }
-                        // Black (low) edge line + knob (knob clamped fully inside).
-                        Rectangle { x: root.disp-lo * parent.width - 1px; width: 2px; height: 100%; background: #2277ff; }
-                        Rectangle {
-                            x: Math.max(0px, Math.min(parent.width - 12px, root.disp-lo * parent.width - 6px));
-                            y: parent.height - 10px;
-                            width: 12px; height: 10px; background: #2277ff; border-radius: 2px;
-                        }
-                        // White (high) edge line + knob.
-                        Rectangle { x: root.disp-hi * parent.width - 1px; width: 2px; height: 100%; background: #114499; }
-                        Rectangle {
-                            x: Math.max(0px, Math.min(parent.width - 12px, root.disp-hi * parent.width - 6px));
-                            y: 0px;
-                            width: 12px; height: 10px; background: #114499; border-radius: 2px;
-                        }
-                        hist-ta := TouchArea {
-                            enabled: root.has-open-file;
-                            property <int> active: 1;
-                            property <float> frac: Math.max(0, Math.min(1, self.mouse-x / self.width));
-                            pointer-event(e) => {
-                                if (e.kind == PointerEventKind.down) {
-                                    self.active = (Math.abs(self.frac - root.disp-lo)
-                                                   <= Math.abs(self.frac - root.disp-hi)) ? 1 : 2;
-                                    root.apply-window(self.active, self.frac);
-                                }
-                            }
-                            moved => { root.apply-window(self.active, self.frac); }
-                        }
-                    }
-                    Text {
-                        text: "Contrast — drag the black / white edges on the histogram";
-                        color: #999;
-                        font-size: 11px;
-                    }
-                }
-                VerticalLayout {
-                    spacing: 4px;
-                    CheckBox {
-                        text: "Invert colors";
-                        checked <=> root.invert;
-                        enabled: root.has-open-file;
-                        toggled => { root.display-changed(); }
-                    }
-                    CheckBox {
-                        text: "Show unwarped";
-                        checked <=> root.show-unwarped;
-                        enabled: root.has-open-file;
-                        toggled => { root.display-changed(); }
-                    }
-                    CheckBox {
-                        text: "Show warp model";
-                        checked <=> root.show-warp;
-                        enabled: root.has-open-file;
-                        toggled => { root.display-changed(); }
-                    }
-                    CheckBox {
-                        text: "Normalize inner knots";
-                        checked <=> root.normalize-inner-knots;
-                        enabled: root.has-open-file;
-                        toggled => { root.display-changed(); }
-                    }
-                    CheckBox {
-                        text: "Show overexposed (red)";
-                        checked <=> root.show-overexposed;
-                        enabled: root.has-open-file;
-                        toggled => { root.display-changed(); }
-                    }
-                    HorizontalLayout {
-                        spacing: 4px;
-                        Text { text: "Annotations:"; vertical-alignment: center; font-size: 11px; }
-                        Slider {
-                            minimum: 0.0; maximum: 1.0; value <=> root.annotation-alpha;
-                            horizontal-stretch: 1;
-                            enabled: root.has-open-file;
-                            changed(v) => { root.display-changed(); }
-                        }
-                    }
-                }
-            }
+    // Tabs, hand-built rather than a TabWidget: a tab with nothing behind it is
+    // greyed out, and Slint's TabWidget cannot disable a tab. Indices are fixed
+    // (0 Gel, 1 Trace, 2 Metadata, 3 Capture), so `--tab N` means one thing.
+    Rectangle {
+      height: 30px;
+      background: #f4f4f6;
+      Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: #d0d0d4; }
+      HorizontalLayout {
+        alignment: start;
+        // Gel, Trace and Metadata are views *of a document*: with nothing open
+        // there is nothing to look at, so they are greyed until there is.
+        TabButton {
+          label: "Gel"; active: root.active-tab == 0; enabled: root.has-open-file;
+          clicked => { root.active-tab = 0; }
         }
-
-        // ---- right: controls + tree (tree expands to fill) ----
-        VerticalLayout {
-            width: 380px;
-            padding: 8px;
-            spacing: 8px;
-                // Column header.
-                Rectangle {
-                    height: 20px;
-                    HorizontalLayout {
-                        padding-left: 4px;
-                        spacing: 4px;
-                        Text { text: "Name"; horizontal-stretch: 1; color: #888; font-size: 11px; vertical-alignment: center; }
-                        Text { text: "Size"; width: 48px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                        Text { text: "ng"; width: 36px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                        Text { text: "nmol"; width: 44px; color: #888; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
-                    }
-                }
-                ScrollView {
-                    vertical-stretch: 1;
-                    VerticalLayout {
-                        alignment: start;
-                        for row in root.tree-rows: Rectangle {
-                            height: 28px;
-                            background: (row.kind == 0 && row.lane-id == root.selected-lane-id)
-                                     || (row.kind == 1 && row.band-id == root.selected-band-id)
-                                ? #dbeafe : (row.kind == 0 ? #f4f4f6 : transparent);
-                            // Row-click selects it (so the buttons below act on it).
-                            // Sits under the content; the expander's TouchArea wins locally.
-                            TouchArea {
-                                clicked => { root.select-tree(row.kind, row.kind == 0 ? row.lane-id : row.band-id); }
-                            }
-                            HorizontalLayout {
-                                padding-left: 4px;
-                                padding-right: 4px;
-                                spacing: 4px;
-                                HorizontalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 2px;
-                                    if row.kind == 0: Rectangle {
-                                        width: 18px;
-                                        TouchArea {
-                                            clicked => { root.lane-toggle(row.lane-id); }
-                                            Text {
-                                                text: row.expanded ? "▾" : "▸";
-                                                color: #666;
-                                                vertical-alignment: center;
-                                                horizontal-alignment: center;
-                                            }
-                                        }
-                                    }
-                                    if row.kind == 1: Rectangle { width: 26px; }
-                                    if row.kind == 0 && row.lane-id == root.renaming-lane: LineEdit {
-                                        text: row.name;
-                                        horizontal-stretch: 1;
-                                        accepted(t) => { root.lane-renamed(row.lane-id, t); root.renaming-lane = -1; }
-                                    }
-                                    if !(row.kind == 0 && row.lane-id == root.renaming-lane): Text {
-                                        text: row.name;
-                                        color: row.kind == 0 ? (row.is-ladder ? #9a6b00 : #222) : #444;
-                                        font-size: row.kind == 0 ? 13px : 12px;
-                                        font-weight: row.kind == 0 ? 600 : 400;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
-                                }
-                                Text { text: row.size; width: 48px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
-                                Text { text: row.ng; width: 36px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
-                                Text { text: row.nmol; width: 44px; horizontal-alignment: right; vertical-alignment: center; font-size: 12px; overflow: elide; }
-                            }
-                        }
-                    }
-                }
-                // Actions on the selected row (click a lane/band above or on the
-                // gel), in two right-aligned rows.
-                HorizontalLayout {
-                    spacing: 6px;
-                    Button { text: "Add lane"; horizontal-stretch: 1; enabled: root.has-open-file; clicked => { root.open-add-lane-dialog(); } }
-                    Button { text: "Add band"; horizontal-stretch: 1; enabled: root.has-open-file; clicked => { root.add-band(); } }
-                    Button {
-                        text: "Delete";
-                        horizontal-stretch: 1;
-                        enabled: root.selected-lane-id >= 0 || root.selected-band-id >= 0;
-                        clicked => { root.delete-selected(); }
-                    }
-                    Button {
-                        text: "Rename";
-                        horizontal-stretch: 1;
-                        enabled: root.selected-lane-id >= 0;
-                        clicked => { root.open-rename-dialog(); }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    Button {
-                        text: "Set weight…";
-                        horizontal-stretch: 1;
-                        enabled: root.selected-band-id >= 0 && root.selected-lane-is-ladder;
-                        clicked => { root.open-weight-dialog(); }
-                    }
-                    Button {
-                        text: root.selected-lane-is-ladder ? "Edit ladder…" : "Use as ladder…";
-                        horizontal-stretch: 1;
-                        enabled: root.selected-lane-id >= 0;
-                        clicked => { root.open-ladder-dialog(root.selected-lane-id); }
-                    }
-                    Button {
-                        text: "Unmark ladder";
-                        horizontal-stretch: 1;
-                        enabled: root.selected-lane-is-ladder;
-                        clicked => { root.lane-menu(root.selected-lane-id, "unmark"); }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    // Detect: red, bottom-right. Confirms before overwriting.
-                    Rectangle {
-                        horizontal-stretch: 1;
-                        height: 30px;
-                        border-radius: 5px;
-                        background: dt.has-hover ? #c0392b : #e74c3c;
-                        dt := TouchArea {
-                        clicked => {
-                            if (root.has-open-file) {
-                                if (root.has-annotations) { root.confirm-detect-open = true; }
-                                else { root.open-fit-dialog(); }
-                            }
-                        }
-                        }
-                        Text { text: "Detect bands"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    }
-                }
-                // Density ratio: pick two bands with Set A / Set B.
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: root.ratio-label; color: #333333; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                    Button { text: "Set A"; enabled: root.selected-band-id >= 0; clicked => { root.set-ratio-a(); } }
-                    Button { text: "Set B"; enabled: root.selected-band-id >= 0; clicked => { root.set-ratio-b(); } }
-                }
+        TabButton {
+          label: "Trace"; active: root.active-tab == 1; enabled: root.has-open-file;
+          clicked => { root.active-tab = 1; }
         }
+        TabButton {
+          label: "Metadata"; active: root.active-tab == 2; enabled: root.has-open-file;
+          clicked => { root.active-tab = 2; }
+        }
+        TabButton {
+          label: "Capture"; active: root.active-tab == 3;
+          clicked => { root.active-tab = 3; }
+        }
+      }
     }
+    VerticalLayout {
+      vertical-stretch: 1;
+      if root.active-tab == 0: GelTab {
+        press-at(a0, a1) => { return root.press-at(a0, a1); }
+        annotation-alpha <=> root.annotation-alpha;
+        channel-index <=> root.channel-index;
+        channel-names : root.channel-names;
+        click-x <=> root.click-x;
+        click-y <=> root.click-y;
+        confirm-detect-open <=> root.confirm-detect-open;
+        disp-hi <=> root.disp-hi;
+        disp-lo <=> root.disp-lo;
+        frame-index <=> root.frame-index;
+        frame-names : root.frame-names;
+        gel-image : root.gel-image;
+        has-annotations <=> root.has-annotations;
+        has-open-file : root.has-open-file;
+        histogram-image : root.histogram-image;
+        invert <=> root.invert;
+        is-multichannel : root.is-multichannel;
+        normalize-inner-knots <=> root.normalize-inner-knots;
+        pan-x <=> root.pan-x;
+        pan-y <=> root.pan-y;
+        ratio-label : root.ratio-label;
+        renaming-lane <=> root.renaming-lane;
+        rotation <=> root.rotation;
+        selected-band-id : root.selected-band-id;
+        selected-lane-id : root.selected-lane-id;
+        selected-lane-is-ladder : root.selected-lane-is-ladder;
+        show-overexposed <=> root.show-overexposed;
+        show-unwarped <=> root.show-unwarped;
+        show-warp <=> root.show-warp;
+        tree-rows : root.tree-rows;
+        warp-knots : root.warp-knots;
+        zoom <=> root.zoom;
+        add-band => { root.add-band(); }
+        auto-straighten => { root.auto-straighten(); }
+        channel-changed(a0) => { root.channel-changed(a0); }
+        delete-selected => { root.delete-selected(); }
+        display-changed => { root.display-changed(); }
+        drag-to(a0, a1) => { root.drag-to(a0, a1); }
+        frame-changed(a0) => { root.frame-changed(a0); }
+        hover-moved(a0, a1) => { root.hover-moved(a0, a1); }
+        lane-menu(a0, a1) => { root.lane-menu(a0, a1); }
+        lane-renamed(a0, a1) => { root.lane-renamed(a0, a1); }
+        lane-toggle(a0) => { root.lane-toggle(a0); }
+        open-add-lane-dialog => { root.open-add-lane-dialog(); }
+        open-fit-dialog => { root.open-fit-dialog(); }
+        open-hdr-dialog => { root.open-hdr-dialog(); }
+        open-ladder-dialog(a0) => { root.open-ladder-dialog(a0); }
+        open-rename-dialog => { root.open-rename-dialog(); }
+        open-weight-dialog => { root.open-weight-dialog(); }
+        release-annotation => { root.release-annotation(); }
+        rotate(a0) => { root.rotate(a0); }
+        select-tree(a0, a1) => { root.select-tree(a0, a1); }
+        set-ratio-a => { root.set-ratio-a(); }
+        set-ratio-b => { root.set-ratio-b(); }
       }
 
-      Tab {
-        title: "Trace";
-        VerticalBox {
-          HorizontalBox {
-            Text { text: "Amount:"; vertical-alignment: center; }
-            ComboBox {
-              model: ["Intensity", "ng", "Molarity"];
-              current-index <=> root.trace-mode-idx;
-              vertical-stretch: 0;
-              enabled: root.has-open-file;
-              selected(v) => { root.trace-mode-changed(self.current-index); }
-            }
-            Text { text: "Zoom:"; vertical-alignment: center; }
-            Slider {
-              minimum: 1.0; maximum: 40.0; value <=> root.trace-zoom;
-              horizontal-stretch: 1;
-              vertical-stretch: 0;
-              enabled: root.has-open-file;
-              changed(v) => { root.trace-set-zoom(v); }
-            }
-            Button { text: "Fit"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.trace-reset-view(); } }
-          }
-
-          plot := Rectangle {
-            background: white;
-            border-width: 1px;
-            border-color: #cccccc;
-            height: 380px;
-            property <length> ml: 62px;
-            property <length> mr: 140px;
-            property <length> mt: 54px;   // room for the top (ladder size) axis
-            property <length> mb: 42px;
-            property <length> pw: max(1px, self.width - self.ml - self.mr);
-            property <length> ph: max(1px, self.height - self.mt - self.mb);
-
-            // Horizontal gridlines.
-            for i in [0, 1, 2, 3, 4]: Rectangle {
-              x: plot.ml;
-              y: plot.mt + plot.ph * (i / 4.0);
-              width: plot.pw;
-              height: 1px;
-              background: #eeeeee;
-            }
-            // Y-axis tick labels (index 0 = top = max).
-            for lbl[i] in root.trace-yticks: Text {
-              x: 4px;
-              y: plot.mt + plot.ph * (i / 4.0) - 7px;
-              width: plot.ml - 10px;
-              horizontal-alignment: right;
-              color: #444444;
-              font-size: 11px;
-              text: lbl;
-            }
-            // X-axis tick labels (index 0 = left = 0).
-            for lbl[i] in root.trace-xticks: Text {
-              x: plot.ml + plot.pw * (i / 4.0) - 22px;
-              y: plot.mt + plot.ph + 6px;
-              width: 44px;
-              horizontal-alignment: center;
-              color: #444444;
-              font-size: 11px;
-              text: lbl;
-            }
-            // Top x-axis: ladder-based bp scale (only when a ladder is fit). Ticks
-            // are positioned by the ladder, so they sit at their true migration.
-            if root.trace-xtoplabel != "": Rectangle {
-                x: plot.ml; y: plot.mt; width: plot.pw; height: 1.5px; background: #333333;
-            }
-            for tk in root.trace-xticks-top: Rectangle {
-                x: plot.ml + plot.pw * tk.pos - 0.5px;
-                y: plot.mt - 4px;
-                width: 1px;
-                height: 4px;
-                background: #333333;
-            }
-            for tk in root.trace-xticks-top: Text {
-                x: plot.ml + plot.pw * tk.pos - 22px;
-                y: plot.mt - 18px;
-                width: 44px;
-                horizontal-alignment: center;
-                color: #444444;
-                font-size: 11px;
-                text: tk.label;
-            }
-            if root.trace-xtoplabel != "": Text {
-                text: root.trace-xtoplabel;
-                x: plot.ml + plot.pw / 2 - 60px;
-                y: plot.mt - 34px;
-                width: 120px;
-                horizontal-alignment: center;
-                color: #222222;
-                font-size: 12px;
-            }
-
-            // Axes.
-            Rectangle { x: plot.ml; y: plot.mt; width: 1.5px; height: plot.ph; background: #333333; }
-            Rectangle { x: plot.ml; y: plot.mt + plot.ph; width: plot.pw; height: 1.5px; background: #333333; }
-
-            // Trace polylines, clipped to the plot area.
-            Rectangle {
-              x: plot.ml;
-              y: plot.mt;
-              width: plot.pw;
-              height: plot.ph;
-              clip: true;
-              for t in root.trace-plots: Path {
-                width: 100%;
-                height: 100%;
-                viewbox-x: 0;
-                viewbox-y: 0;
-                viewbox-width: 1000;
-                viewbox-height: 1000;
-                commands: t.commands;
-                stroke: t.color;
-                stroke-width: 1.5px;
-              }
-            }
-
-            // Interaction layer over the plot area: drag to pan, scroll to zoom,
-            // hover to read the size (bp) under the cursor.
-            TouchArea {
-              x: plot.ml;
-              y: plot.mt;
-              width: plot.pw;
-              height: plot.ph;
-              enabled: root.has-open-file;
-              property <length> last-x;
-              property <bool> dragging;
-              mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.grab;
-              pointer-event(e) => {
-                if (e.kind == PointerEventKind.down) { self.last-x = self.mouse-x; self.dragging = true; }
-                if (e.kind == PointerEventKind.up) { self.dragging = false; }
-              }
-              moved => {
-                if (self.dragging) {
-                  root.trace-pan((self.mouse-x - self.last-x) / max(1px, self.width));
-                  self.last-x = self.mouse-x;
-                }
-              }
-              changed mouse-x => { root.trace-hover(self.mouse-x / max(1px, self.width)); }
-              scroll-event(e) => {
-                root.trace-zoom-at(e.delta-y > 0 ? 1.15 : (e.delta-y < 0 ? 0.87 : 1.0),
-                                   self.mouse-x / max(1px, self.width));
-                return EventResult.accept;
-              }
-            }
-
-            // Axis titles.
-            Text {
-              text: root.trace-xlabel;
-              x: plot.ml + plot.pw / 2 - 60px;
-              y: plot.height - 18px;
-              width: 120px;
-              horizontal-alignment: center;
-              color: #222222;
-              font-size: 12px;
-            }
-            // Y-axis title, drawn horizontally at the top-left — on the SAME row
-            // as the "Size (bp)" top-axis title so it doesn't collide with the bp
-            // tick numbers just below it. Rotated Slint text renders blurry/bold
-            // on HiDPI (a known layout issue), so it is kept upright here.
-            Text {
-              text: root.trace-ylabel;
-              x: 6px;
-              y: plot.mt - 34px;
-              width: plot.ml + 30px;
-              horizontal-alignment: left;
-              color: #222222;
-              font-size: 11px;
-            }
-
-            // Legend.
-            VerticalLayout {
-              x: plot.width - plot.mr + 12px;
-              y: plot.mt;
-              width: plot.mr - 20px;
-              spacing: 5px;
-              for t in root.trace-plots: HorizontalLayout {
-                spacing: 6px;
-                Rectangle {
-                  width: 18px;
-                  height: 16px;
-                  Rectangle { width: 18px; height: 3px; background: t.color; y: 7px; }
-                }
-                Text { text: t.label; color: #222222; font-size: 11px; overflow: elide; }
-              }
-            }
-          }
-
-          Text { text: "Lanes (check to plot):"; }
-          ScrollView {
-            vertical-stretch: 1;
-            VerticalLayout {
-              alignment: start;
-              for it[i] in root.lane-items: Rectangle {
-                height: 26px;
-                background: it.selected ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
-                HorizontalLayout {
-                  padding-left: 6px;
-                  padding-right: 6px;
-                  spacing: 8px;
-                  CheckBox {
-                    checked: it.selected;
-                    toggled => { root.toggle-lane(it.id); }
-                  }
-                  Text {
-                    text: it.ladder ? (it.label + "  (ladder)") : it.label;
-                    vertical-alignment: center;
-                    color: it.ladder ? #9a6b00 : #222222;
-                    horizontal-stretch: 1;
-                  }
-                }
-              }
-            }
-          }
-          HorizontalBox {
-            padding-top: 4px;
-            alignment: start;
-            spacing: 6px;
-            Button { text: "Select all"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-all-lanes(); } }
-            Button { text: "Select none"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-none-lanes(); } }
-            Button { text: "Export as PDF"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.export-trace-pdf(); } }
-          }
-        }
+      if root.active-tab == 1: TraceTab {
+        has-open-file : root.has-open-file;
+        lane-items : root.lane-items;
+        trace-mode-idx <=> root.trace-mode-idx;
+        trace-plots : root.trace-plots;
+        trace-xlabel : root.trace-xlabel;
+        trace-xticks : root.trace-xticks;
+        trace-xticks-top : root.trace-xticks-top;
+        trace-xtoplabel : root.trace-xtoplabel;
+        trace-ylabel : root.trace-ylabel;
+        trace-yticks : root.trace-yticks;
+        trace-zoom <=> root.trace-zoom;
+        export-trace-pdf => { root.export-trace-pdf(); }
+        select-all-lanes => { root.select-all-lanes(); }
+        select-none-lanes => { root.select-none-lanes(); }
+        toggle-lane(a0) => { root.toggle-lane(a0); }
+        trace-hover(a0) => { root.trace-hover(a0); }
+        trace-mode-changed(a0) => { root.trace-mode-changed(a0); }
+        trace-pan(a0) => { root.trace-pan(a0); }
+        trace-reset-view => { root.trace-reset-view(); }
+        trace-set-zoom(a0) => { root.trace-set-zoom(a0); }
+        trace-zoom-at(a0, a1) => { root.trace-zoom-at(a0, a1); }
       }
 
-      Tab {
-        title: "Live";
-        HorizontalBox {
-            // Left: live preview + exposure aids (histogram, slider, HDR bounds).
-            VerticalLayout {
-                horizontal-stretch: 1;
-                spacing: 6px;
-                Rectangle {
-                    background: #1c1c1c;
-                    border-width: 1px;
-                    border-color: #444;
-                    vertical-stretch: 1;
-                    clip: true;
-                    Image {
-                        source: root.live-preview-image;
-                        image-fit: contain;
-                        width: 100%;
-                        height: 100%;
-                    }
-                    if !root.live-running: Text {
-                        text: "Preview stopped. Press “Start preview”.";
-                        color: #888;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-                // Live histogram of the preview frame (exposure aid).
-                Rectangle {
-                    height: 60px;
-                    border-width: 1px;
-                    border-color: #cccccc;
-                    background: white;
-                    clip: true;
-                    Image {
-                        source: root.live-histogram-image;
-                        width: 100%;
-                        height: 100%;
-                        image-fit: fill;
-                    }
-                }
-                // Exposure-time slider (log scale) + live readout. Disabled when
-                // the camera can't do manual exposure (then HDR is impossible).
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: "Exposure:"; vertical-alignment: center; }
-                    Slider {
-                        minimum: 0.0; maximum: 1.0;
-                        value <=> root.live-exposure-slider;
-                        horizontal-stretch: 1;
-                        enabled: root.exposure-supported;
-                        changed(v) => { root.live-exposure-changed(v); }
-                    }
-                    Text {
-                        text: root.exposure-supported ? root.live-exposure-label : "auto";
-                        vertical-alignment: center;
-                        width: 64px;
-                        horizontal-alignment: right;
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    Button { text: "Set lower HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-lower(); } }
-                    Button { text: "Set upper HDR time"; enabled: root.exposure-supported; clicked => { root.set-hdr-upper(); } }
-                }
-            }
-            // Right: camera + capture controls.
-            VerticalLayout {
-                width: 300px;
-                alignment: start;
-                padding: 8px;
-                spacing: 8px;
-                GroupBox {
-                    title: "Camera";
-                    VerticalLayout {
-                        spacing: 6px;
-                        HorizontalLayout {
-                            spacing: 6px;
-                            ComboBox {
-                                model: root.camera-names;
-                                current-index <=> root.camera-index;
-                                horizontal-stretch: 1;
-                                selected(v) => { root.camera-selected(self.current-index); }
-                            }
-                            Button { text: "Rescan"; clicked => { root.rescan-cameras(); } }
-                        }
-                        Text { text: root.live-status; color: #888; wrap: word-wrap; }
-                        Button {
-                            text: root.live-running ? "Stop preview" : "Start preview";
-                            clicked => {
-                                if (root.live-running) { root.live-stop(); }
-                                else { root.live-start(); }
-                            }
-                        }
-                    }
-                }
-                GroupBox {
-                    title: "HDR capture";
-                    VerticalLayout {
-                        spacing: 6px;
-                        if !root.exposure-supported: Text {
-                            text: "This camera has no manual exposure — HDR is unavailable. Use “Capture single”.";
-                            color: #b26b00;
-                            font-size: 11px;
-                            wrap: word-wrap;
-                        }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Text { text: "Min:"; vertical-alignment: center; }
-                            Text { text: root.hdr-min-label; vertical-alignment: center; horizontal-stretch: 1; }
-                            Text { text: "Max:"; vertical-alignment: center; }
-                            Text { text: root.hdr-max-label; vertical-alignment: center; horizontal-stretch: 1; }
-                        }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Text { text: "Steps:"; vertical-alignment: center; }
-                            ComboBox {
-                                model: ["1 (auto)", "2", "3", "5", "7"];
-                                current-index <=> root.hdr-steps-idx;
-                                horizontal-stretch: 1;
-                                enabled: root.exposure-supported;
-                                selected(v) => { root.hdr-steps-changed(self.current-index); }
-                            }
-                            Text { text: root.hdr-range-label; color: #888; vertical-alignment: center; }
-                        }
-                        Text {
-                            text: "EV (exposure value) = stops of dynamic range the bracket spans between the lower and upper time: each +1 EV doubles the exposure, so more EV captures both faint and bright bands without clipping.";
-                            color: #888; font-size: 11px; wrap: word-wrap;
-                        }
-                        Button { text: "Capture HDR"; enabled: root.exposure-supported; clicked => { root.live-capture(); } }
-                        Text {
-                            text: "Shoots a log-spaced bracket between the lower and upper HDR times and HDR-merges it into the current gel.";
-                            color: #888; font-size: 11px; wrap: word-wrap;
-                        }
-                    }
-                }
-                GroupBox {
-                    title: "Single capture";
-                    VerticalLayout {
-                        spacing: 6px;
-                        Button { text: "Capture single"; clicked => { root.capture-single(); } }
-                        Text {
-                            text: "One frame at the current exposure (no HDR merge).";
-                            color: #888; font-size: 11px; wrap: word-wrap;
-                        }
-                    }
-                }
-            }
-        }
-      }
-
-      Tab {
-        title: "Gel Doc EZ";
-        VerticalLayout {
-          padding: 6px;
-          spacing: 6px;
-
-          // ---- instrument status strip -------------------------------------
-          // Always visible: the manual makes "is the imager connected?" a
-          // precondition of every workflow, so it is a fixed part of the tab
-          // rather than something to go looking for.
-          Rectangle {
-            height: 34px;
-            background: #f4f4f6;
-            border-width: 1px;
-            border-color: #d8d8dc;
-            border-radius: 4px;
-            HorizontalLayout {
-              padding-left: 10px;
-              padding-right: 10px;
-              spacing: 14px;
-              // Connection lamp.
-              Rectangle {
-                width: 12px;
-                Rectangle {
-                  width: 10px; height: 10px; border-radius: 5px;
-                  y: (parent.height - 10px) / 2;
-                  background: root.gd-connected ? #2e9e46 : #b0b0b6;
-                }
-              }
-              Text {
-                text: root.gd-connected ? root.gd-model : "Not connected";
-                font-weight: 700;
-                vertical-alignment: center;
-              }
-              Text { text: root.gd-versions; color: #666; vertical-alignment: center; }
-              Text { text: root.gd-serial; color: #666; vertical-alignment: center; }
-              Rectangle { horizontal-stretch: 1; }
-              // Live tray + door. These change under the user's hands, so they
-              // sit next to each other and update on every poll.
-              Text {
-                text: "Tray: " + root.gd-tray-label;
-                color: !root.gd-connected ? #888 : (root.gd-tray-present ? #222 : #b26b00);
-                vertical-alignment: center;
-              }
-              Text {
-                text: !root.gd-connected ? "Door —" : (root.gd-door-closed ? "Door closed" : "Door OPEN");
-                color: !root.gd-connected ? #888 : (root.gd-door-closed ? #2e9e46 : #c0392b);
-                font-weight: (root.gd-connected && !root.gd-door-closed) ? 700 : 400;
-                vertical-alignment: center;
-              }
-              if root.gd-busy: Text { text: "busy"; color: #b26b00; vertical-alignment: center; }
-              if root.gd-simulated: Text {
-                text: "SIMULATED";
-                color: #7a4fb5;
-                font-weight: 700;
-                vertical-alignment: center;
-              }
-            }
-          }
-
-          // ---- fault banner ------------------------------------------------
-          // Faults latch, so this stays up until the user clears it. Each one
-          // carries its remedy: "lamp failure in bank 1" is only actionable if
-          // it also says the lamps are replaced as a set.
-          if root.gd-faults.length > 0: Rectangle {
-            background: #fdf0ee;
-            border-width: 1px;
-            border-color: #e2b3ab;
-            border-radius: 4px;
-            VerticalLayout {
-              padding: 8px;
-              spacing: 6px;
-              for f in root.gd-faults: VerticalLayout {
-                spacing: 2px;
-                Text { text: "⚠  " + f.headline; color: #a03024; font-weight: 700; wrap: word-wrap; }
-                Text { text: f.remedy; color: #6b4a45; font-size: 11px; wrap: word-wrap; }
-              }
-              HorizontalLayout {
-                alignment: start;
-                Button { text: "Clear faults"; clicked => { root.gd-clear-faults(); } }
-              }
-            }
-          }
-
-          HorizontalBox {
-            padding: 0px;
-
-            // ---- left: protocols and their steps ---------------------------
-            VerticalLayout {
-              width: 250px;
-              spacing: 6px;
-
-              Text { text: "Protocols"; font-weight: 700; }
-              Rectangle {
-                vertical-stretch: 1;
-                background: white;
-                border-width: 1px;
-                border-color: #d0d0d4;
-                ScrollView {
-                  VerticalLayout {
-                    alignment: start;
-                    for p[i] in root.gd-protocol-items: Rectangle {
-                      height: 30px;
-                      background: i == root.gd-protocol-index ? #eaf4ec : #ffffff;
-                      TouchArea { clicked => { root.gd-protocol-selected(i); } }
-                      HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        spacing: 6px;
-                        // The manual's colour code: the default protocol for a
-                        // tray is green, every other protocol blue.
-                        Rectangle {
-                          width: 4px;
-                          background: p.is-default ? #2e9e46 : #3b6fb5;
-                        }
-                        Text {
-                          text: p.name;
-                          color: p.is-default ? #1d6b30 : #24406e;
-                          vertical-alignment: center;
-                          horizontal-stretch: 1;
-                          overflow: elide;
-                        }
-                        Text {
-                          text: p.tray;
-                          color: #888;
-                          font-size: 10px;
-                          vertical-alignment: center;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-              HorizontalLayout {
-                spacing: 4px;
-                Button { text: "New"; clicked => { root.gd-protocol-new(); } }
-                Button { text: "Delete"; clicked => { root.gd-protocol-delete(); } }
-              }
-              Button {
-                text: "Set as default for this tray";
-                enabled: !root.gd-protocol-is-default;
-                clicked => { root.gd-protocol-make-default(); }
-              }
-              Text {
-                text: "The default protocol for the inserted tray is what the instrument's green Run button executes.";
-                color: #888; font-size: 11px; wrap: word-wrap;
-              }
-
-              Text { text: "Steps"; font-weight: 700; }
-              VerticalLayout {
-                spacing: 0px;
-                for s[i] in root.gd-step-items: Rectangle {
-                  height: 28px;
-                  background: i == root.gd-step-index ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
-                  TouchArea { clicked => { root.gd-step-selected(i); } }
-                  HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 6px;
-                    CheckBox {
-                      checked: s.enabled;
-                      // Mandatory steps have nothing to toggle: without an
-                      // application there is no tray to check, and without a
-                      // capture there is no image.
-                      enabled: !s.mandatory && s.applicable;
-                      toggled => { root.gd-step-toggled(i, self.checked); }
-                    }
-                    Text {
-                      text: s.number + ". " + s.label;
-                      vertical-alignment: center;
-                      horizontal-stretch: 1;
-                      color: s.applicable ? (s.enabled ? #222 : #999) : #bbb;
-                    }
-                  }
-                }
-              }
-            }
-
-            // ---- centre: the camera inside the enclosure -------------------
-            VerticalLayout {
-              horizontal-stretch: 1;
-              spacing: 6px;
-              HorizontalLayout {
-                spacing: 6px;
-                Text { text: "Camera:"; vertical-alignment: center; }
-                ComboBox {
-                  model: root.camera-names;
-                  current-index <=> root.camera-index;
-                  horizontal-stretch: 1;
-                  selected(v) => { root.camera-selected(self.current-index); }
-                }
-                Button {
-                  text: root.live-running ? "Stop preview" : "Start preview";
-                  clicked => {
-                    if (root.live-running) { root.live-stop(); } else { root.live-start(); }
-                  }
-                }
-              }
-              Rectangle {
-                background: #1c1c1c;
-                border-width: 1px;
-                border-color: #444;
-                vertical-stretch: 1;
-                clip: true;
-                Image {
-                  source: root.live-preview-image;
-                  image-fit: contain;
-                  width: 100%;
-                  height: 100%;
-                }
-                if !root.live-running: Text {
-                  text: "Preview stopped. The gel image appears here after a run.";
-                  color: #888;
-                  horizontal-alignment: center;
-                  vertical-alignment: center;
-                }
-              }
-              Rectangle {
-                height: 56px;
-                border-width: 1px;
-                border-color: #cccccc;
-                background: white;
-                clip: true;
-                Image {
-                  source: root.live-histogram-image;
-                  width: 100%;
-                  height: 100%;
-                  image-fit: fill;
-                }
-              }
-              // Run status: the phase, plus the activation countdown when one
-              // is running (45 seconds of nothing visible otherwise).
-              Rectangle {
-                height: 46px;
-                background: #f4f4f6;
-                border-width: 1px;
-                border-color: #d8d8dc;
-                border-radius: 4px;
-                VerticalLayout {
-                  padding: 6px;
-                  spacing: 4px;
-                  Text { text: root.gd-phase-label; vertical-alignment: center; }
-                  if root.gd-activation-progress > 0: Rectangle {
-                    height: 6px;
-                    background: #dcdce0;
-                    border-radius: 3px;
-                    Rectangle {
-                      x: 0;
-                      width: parent.width * root.gd-activation-progress;
-                      height: 6px;
-                      border-radius: 3px;
-                      background: #7a4fb5;
-                    }
-                  }
-                }
-              }
-            }
-
-            // ---- right: options for the selected step, and Run -------------
-            VerticalLayout {
-              width: 330px;
-              spacing: 8px;
-              alignment: start;
-
-              GroupBox {
-                title: "Instrument";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  HorizontalLayout {
-                    spacing: 6px;
-                    ComboBox {
-                      model: root.gd-instrument-names;
-                      current-index <=> root.gd-instrument-index;
-                      horizontal-stretch: 1;
-                      selected(v) => { root.gd-instrument-selected(self.current-index); }
-                    }
-                    Button { text: "Rescan"; clicked => { root.gd-rescan(); } }
-                  }
-                  Button {
-                    text: root.gd-connected ? "Disconnect" : "Connect";
-                    clicked => {
-                      if (root.gd-connected) { root.gd-disconnect(); } else { root.gd-connect(); }
-                    }
-                  }
-                  CheckBox {
-                    text: "Hardware Run button starts the default protocol";
-                    checked <=> root.gd-watch-button;
-                    toggled => { root.gd-watch-button-changed(self.checked); }
-                  }
-                  // Honest about what this is: the vendor software has a front
-                  // button, but which sense bit reports it was never
-                  // established, so we watch for any undecoded bit going high
-                  // and say so rather than pretending to decode it.
-                  if root.gd-undecoded-label != "": Text {
-                    text: root.gd-undecoded-label;
-                    color: #888; font-size: 11px; wrap: word-wrap;
-                  }
-                }
-              }
-
-              // --- step 1: Application ---
-              if root.gd-step-index == 0: GroupBox {
-                title: "1. Application";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  ComboBox {
-                    model: root.gd-application-names;
-                    current-index <=> root.gd-application-index;
-                    selected(v) => { root.gd-application-selected(self.current-index); }
-                  }
-                  Text { text: "Needs the " + root.gd-application-tray + " tray."; color: #666; wrap: word-wrap; }
-                  // The commonest setup mistake: the right dye on the wrong
-                  // tray, which images as a blank gel with nothing obviously
-                  // wrong. Caught before the run, not after.
-                  if root.gd-tray-mismatch: Text {
-                    text: root.gd-tray-mismatch-text;
-                    color: #c0392b;
-                    wrap: word-wrap;
-                  }
-                }
-              }
-
-              // --- step 2: Image exposure ---
-              if root.gd-step-index == 1: GroupBox {
-                title: "2. Image exposure";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  ComboBox {
-                    model: ["Auto — intense bands", "Auto — faint bands", "Manual"];
-                    current-index <=> root.gd-exposure-mode-index;
-                    selected(v) => { root.gd-exposure-mode-changed(self.current-index); }
-                  }
-                  Text {
-                    text: root.gd-exposure-mode-index == 0
-                      ? "Exposes so nothing clips — every band stays quantifiable."
-                      : (root.gd-exposure-mode-index == 1
-                         ? "Exposes longer so faint bands lift clear of the background. The brightest bands may saturate, and saturated pixels cannot be quantified."
-                         : "A fixed exposure time between 0.001 and 10 s.");
-                    color: #888; font-size: 11px; wrap: word-wrap;
-                  }
-                  if root.gd-exposure-mode-index == 2: HorizontalLayout {
-                    spacing: 6px;
-                    Slider {
-                      minimum: 0.0; maximum: 1.0;
-                      value <=> root.gd-exposure-slider;
-                      horizontal-stretch: 1;
-                      changed(v) => { root.gd-exposure-changed(v); }
-                    }
-                    Text {
-                      text: root.gd-exposure-label;
-                      vertical-alignment: center;
-                      width: 70px;
-                      horizontal-alignment: right;
-                    }
-                  }
-                  // After an auto run, what it settled on — the starting point
-                  // the manual asks for when switching to manual.
-                  if root.gd-last-exposure-label != "": Text {
-                    text: root.gd-last-exposure-label;
-                    color: #666; font-size: 11px;
-                  }
-                }
-              }
-
-              // --- step 3: Gel activation (stain-free only) ---
-              if root.gd-step-index == 2: GroupBox {
-                title: "3. Gel activation";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  if !root.gd-activation-applicable: Text {
-                    text: "Only stain-free applications are activated. This step is skipped for the selected application.";
-                    color: #888; font-size: 11px; wrap: word-wrap;
-                  }
-                  if root.gd-activation-applicable: HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: "Activation time:"; vertical-alignment: center; }
-                    LineEdit {
-                      text <=> root.gd-activation-s;
-                      horizontal-stretch: 1;
-                      edited(t) => { root.gd-activation-changed(t); }
-                    }
-                    Text { text: "s"; vertical-alignment: center; }
-                  }
-                  if root.gd-activation-applicable: Text {
-                    text: "A UV pre-exposure that drives the stain-free chemistry, run before the image exposure.";
-                    color: #888; font-size: 11px; wrap: word-wrap;
-                  }
-                }
-              }
-
-              // --- step 4: Capture ---
-              if root.gd-step-index == 3: GroupBox {
-                title: "4. Capture";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  CheckBox {
-                    text: "Highlight saturated pixels";
-                    checked <=> root.gd-highlight-saturated;
-                    toggled => { root.gd-highlight-saturated-changed(self.checked); }
-                  }
-                  Text {
-                    text: "Saturated pixels are rendered red in the captured image. They carry no intensity information, so anything measured from them is wrong.";
-                    color: #888; font-size: 11px; wrap: word-wrap;
-                  }
-                }
-              }
-
-              GroupBox {
-                title: "Protocol name";
-                vertical-stretch: 0;
-                LineEdit {
-                  text <=> root.gd-protocol-name;
-                  accepted(t) => { root.gd-protocol-renamed(t); }
-                  edited(t) => { root.gd-protocol-renamed(t); }
-                }
-              }
-
-              Button {
-                text: root.gd-running ? "Abort run" : "Run";
-                primary: true;
-                enabled: root.gd-running || root.gd-can-run;
-                clicked => {
-                  if (root.gd-running) { root.gd-abort(); } else { root.gd-run(); }
-                }
-              }
-              if !root.gd-running && root.gd-run-blocker != "": Text {
-                text: root.gd-run-blocker;
-                color: #b26b00;
-                font-size: 11px;
-                wrap: word-wrap;
-              }
-              if root.gd-message != "": Text {
-                text: root.gd-message;
-                color: #666;
-                font-size: 11px;
-                wrap: word-wrap;
-              }
-
-              // --- simulated enclosure bench controls ---
-              // Only for the simulator: these are the things you would do to the
-              // real box with your hands, and they make the interlocks and the
-              // fault paths testable with no hardware.
-              if root.gd-simulated && root.gd-connected: GroupBox {
-                title: "Simulated instrument";
-                vertical-stretch: 0;
-                VerticalLayout {
-                  alignment: start;
-                  spacing: 6px;
-                  HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: "Tray:"; vertical-alignment: center; }
-                    ComboBox {
-                      model: ["none", "UV", "White light", "Blue light", "Stain-free"];
-                      horizontal-stretch: 1;
-                      selected(v) => { root.gd-sim-tray(self.current-index); }
-                    }
-                  }
-                  CheckBox {
-                    text: "Door closed";
-                    checked: root.gd-door-closed;
-                    toggled => { root.gd-sim-door(self.checked); }
-                  }
-                  Button { text: "Press Run button"; clicked => { root.gd-sim-press-button(); } }
-                  Text { text: "Inject faults:"; color: #666; font-size: 11px; }
-                  CheckBox { text: "No sample tray"; toggled => { root.gd-sim-fault(0, self.checked); } }
-                  CheckBox { text: "Lamp assembly unseated"; toggled => { root.gd-sim-fault(1, self.checked); } }
-                  CheckBox { text: "Lamp bank 1 failed"; toggled => { root.gd-sim-fault(3, self.checked); } }
-                  CheckBox { text: "Lamp bank 2 failed"; toggled => { root.gd-sim-fault(4, self.checked); } }
-                }
-              }
-              // Absorbs the leftover height so the groups above keep their
-              // natural size instead of being stretched apart.
-              Rectangle { vertical-stretch: 1; }
-            }
-          }
-        }
-      }
+      // ---- Live ------------------------------------------------------------
+      // A bare camera, framing one channel. The channel is a light source, so
+      // the exposure settings shown here are that channel's — the same ones the
+      // Gel Doc EZ tab runs.
       // ---- Metadata --------------------------------------------------------
       // What the instrument recorded about how the image was taken, shown as
       // plain name/value rows. Nothing here is interpreted: instruments
       // disagree about what they report, and the honest thing is to display
       // whatever the file carried rather than the fields we anticipated.
-      Tab {
-        title: "Metadata";
-        VerticalBox {
-          if root.metadata-rows.length == 0: Text {
-            text: root.has-open-file
-                ? "This file records no acquisition metadata."
-                : "Open a gel to see how it was acquired.";
-            color: #666;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            vertical-stretch: 1;
-          }
-          if root.metadata-rows.length > 0: Rectangle {
-            vertical-stretch: 1;
-            background: white;
-            border-width: 1px;
-            border-color: #d0d0d4;
-            border-radius: 4px;
-            ScrollView {
-              VerticalLayout {
-                alignment: start;
-                padding: 10px;
-                for row[i] in root.metadata-rows: VerticalLayout {
-                  spacing: 0px;
-                  if row.first-in-section: Text {
-                    text: row.section;
-                    font-weight: 700;
-                    color: #24406e;
-                    // Space above every heading but the first, so sections
-                    // separate without a rule between them.
-                    height: i == 0 ? 22px : 34px;
-                    vertical-alignment: bottom;
-                  }
-                  HorizontalLayout {
-                    height: 22px;
-                    spacing: 8px;
-                    Text {
-                      text: row.name;
-                      color: #555;
-                      width: 210px;
-                      overflow: elide;
-                      vertical-alignment: center;
-                    }
-                    Text {
-                      text: row.value;
-                      horizontal-stretch: 1;
-                      overflow: elide;
-                      vertical-alignment: center;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+      if root.active-tab == 2: MetadataTab {
+        has-open-file : root.has-open-file;
+        metadata-rows : root.metadata-rows;
+      }
+      // ---- Capture ---------------------------------------------------------
+      // One tab for taking pictures, whatever is attached. With a plain camera
+      // it is a viewfinder and a Capture button: one channel, no lights to
+      // manage. With an imaging enclosure the same tab grows the things only an
+      // enclosure has — a channel per light source, the door and tray
+      // interlocks, latched faults, and a run that walks the channels. The
+      // hardware decides which; there is nothing to switch between by hand.
+      if root.active-tab == 3: CaptureTab {
+        camera-index <=> root.camera-index;
+        camera-names : root.camera-names;
+        capture-active : root.capture-active;
+        exposure-supported : root.exposure-supported;
+        gd-activation-applicable : root.gd-activation-applicable;
+        gd-activation-progress : root.gd-activation-progress;
+        gd-activation-s <=> root.gd-activation-s;
+        gd-busy : root.gd-busy;
+        gd-can-run : root.gd-can-run;
+        gd-capture-mode-index <=> root.gd-capture-mode-index;
+        gd-channel-hint : root.gd-channel-hint;
+        gd-channel-index : root.gd-channel-index;
+        gd-channel-items : root.gd-channel-items;
+        gd-channel-ready : root.gd-channel-ready;
+        gd-connected : root.gd-connected;
+        gd-door-closed : root.gd-door-closed;
+        gd-faults : root.gd-faults;
+        gd-gel-type-index <=> root.gd-gel-type-index;
+        gd-hdr-steps-idx <=> root.gd-hdr-steps-idx;
+        gd-highlight-saturated <=> root.gd-highlight-saturated;
+        gd-instrument-index <=> root.gd-instrument-index;
+        gd-instrument-names : root.gd-instrument-names;
+        gd-lamps-on : root.gd-lamps-on;
+        gd-message : root.gd-message;
+        gd-model : root.gd-model;
+        gd-phase-label : root.gd-phase-label;
+        gd-run-blocker : root.gd-run-blocker;
+        gd-run-progress : root.gd-run-progress;
+        gd-running : root.gd-running;
+        gd-serial : root.gd-serial;
+        gd-sim-tray-index <=> root.gd-sim-tray-index;
+        gd-simulated : root.gd-simulated;
+        gd-tray-label : root.gd-tray-label;
+        gd-tray-present : root.gd-tray-present;
+        gd-versions : root.gd-versions;
+        gel-type-names : root.gel-type-names;
+        hdr-max-label : root.hdr-max-label;
+        hdr-min-label : root.hdr-min-label;
+        hdr-range-label : root.hdr-range-label;
+        live-exposure-label : root.live-exposure-label;
+        live-exposure-slider <=> root.live-exposure-slider;
+        live-histogram-image : root.live-histogram-image;
+        live-preview-image : root.live-preview-image;
+        live-running <=> root.live-running;
+        camera-selected(a0) => { root.camera-selected(a0); }
+        capture-mode-changed(a0) => { root.capture-mode-changed(a0); }
+        gd-abort => { root.gd-abort(); }
+        gd-activation-changed(a0) => { root.gd-activation-changed(a0); }
+        gd-auto => { root.gd-auto(); }
+        gd-channel-selected(a0) => { root.gd-channel-selected(a0); }
+        gd-channel-toggled(a0, a1) => { root.gd-channel-toggled(a0, a1); }
+        gd-clear-faults => { root.gd-clear-faults(); }
+        gd-connect => { root.gd-connect(); }
+        gd-disconnect => { root.gd-disconnect(); }
+        gd-highlight-saturated-changed(a0) => { root.gd-highlight-saturated-changed(a0); }
+        gd-instrument-selected(a0) => { root.gd-instrument-selected(a0); }
+        gd-run => { root.gd-run(); }
+        gd-sim-door(a0) => { root.gd-sim-door(a0); }
+        gd-sim-fault(a0, a1) => { root.gd-sim-fault(a0, a1); }
+        gd-sim-press-button => { root.gd-sim-press-button(); }
+        gd-sim-tray(a0) => { root.gd-sim-tray(a0); }
+        gel-type-changed(a0) => { root.gel-type-changed(a0); }
+        hdr-steps-changed(a0) => { root.hdr-steps-changed(a0); }
+        live-auto => { root.live-auto(); }
+        live-capture => { root.live-capture(); }
+        live-exposure-changed(a0) => { root.live-exposure-changed(a0); }
+        live-start => { root.live-start(); }
+        live-stop => { root.live-stop(); }
+        rescan-cameras => { root.rescan-cameras(); }
+        set-hdr-lower => { root.set-hdr-lower(); }
+        set-hdr-upper => { root.set-hdr-upper(); }
       }
     }
 

@@ -1,0 +1,247 @@
+import { LaneItem, TracePath, AxisTick } from "common.slint";
+import { Button, ComboBox, CheckBox, Slider, GroupBox, ScrollView, LineEdit, HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
+
+export component TraceTab inherits VerticalBox {
+    in property <bool> has-open-file: false;
+    in property <[LaneItem]> lane-items;
+    in-out property <int> trace-mode-idx: 0;
+    in property <[TracePath]> trace-plots;
+    in property <string> trace-xlabel: "Migration (px)";
+    in property <[string]> trace-xticks;
+    in property <[AxisTick]> trace-xticks-top;
+    in property <string> trace-xtoplabel;
+    in property <string> trace-ylabel: "Intensity (a.u.)";
+    in property <[string]> trace-yticks;
+    in-out property <float> trace-zoom: 1.0;
+    callback export-trace-pdf();
+    callback select-all-lanes();
+    callback select-none-lanes();
+    callback toggle-lane(int);
+    callback trace-hover(float);
+    callback trace-mode-changed(int);
+    callback trace-pan(float);
+    callback trace-reset-view();
+    callback trace-set-zoom(float);
+    callback trace-zoom-at(float, float);
+
+      HorizontalBox {
+        Text { text: "Amount:"; vertical-alignment: center; }
+        ComboBox {
+          model: ["Intensity", "ng", "Molarity"];
+          current-index <=> root.trace-mode-idx;
+          vertical-stretch: 0;
+          enabled: root.has-open-file;
+          selected(v) => { root.trace-mode-changed(self.current-index); }
+        }
+        Text { text: "Zoom:"; vertical-alignment: center; }
+        Slider {
+          minimum: 1.0; maximum: 40.0; value <=> root.trace-zoom;
+          horizontal-stretch: 1;
+          vertical-stretch: 0;
+          enabled: root.has-open-file;
+          changed(v) => { root.trace-set-zoom(v); }
+        }
+        Button { text: "Fit"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.trace-reset-view(); } }
+      }
+
+      plot := Rectangle {
+        background: white;
+        border-width: 1px;
+        border-color: #cccccc;
+        height: 380px;
+        property <length> ml: 62px;
+        property <length> mr: 140px;
+        property <length> mt: 54px;   // room for the top (ladder size) axis
+        property <length> mb: 42px;
+        property <length> pw: max(1px, self.width - self.ml - self.mr);
+        property <length> ph: max(1px, self.height - self.mt - self.mb);
+
+        // Horizontal gridlines.
+        for i in [0, 1, 2, 3, 4]: Rectangle {
+          x: plot.ml;
+          y: plot.mt + plot.ph * (i / 4.0);
+          width: plot.pw;
+          height: 1px;
+          background: #eeeeee;
+        }
+        // Y-axis tick labels (index 0 = top = max).
+        for lbl[i] in root.trace-yticks: Text {
+          x: 4px;
+          y: plot.mt + plot.ph * (i / 4.0) - 7px;
+          width: plot.ml - 10px;
+          horizontal-alignment: right;
+          color: #444444;
+          font-size: 11px;
+          text: lbl;
+        }
+        // X-axis tick labels (index 0 = left = 0).
+        for lbl[i] in root.trace-xticks: Text {
+          x: plot.ml + plot.pw * (i / 4.0) - 22px;
+          y: plot.mt + plot.ph + 6px;
+          width: 44px;
+          horizontal-alignment: center;
+          color: #444444;
+          font-size: 11px;
+          text: lbl;
+        }
+        // Top x-axis: ladder-based bp scale (only when a ladder is fit). Ticks
+        // are positioned by the ladder, so they sit at their true migration.
+        if root.trace-xtoplabel != "": Rectangle {
+            x: plot.ml; y: plot.mt; width: plot.pw; height: 1.5px; background: #333333;
+        }
+        for tk in root.trace-xticks-top: Rectangle {
+            x: plot.ml + plot.pw * tk.pos - 0.5px;
+            y: plot.mt - 4px;
+            width: 1px;
+            height: 4px;
+            background: #333333;
+        }
+        for tk in root.trace-xticks-top: Text {
+            x: plot.ml + plot.pw * tk.pos - 22px;
+            y: plot.mt - 18px;
+            width: 44px;
+            horizontal-alignment: center;
+            color: #444444;
+            font-size: 11px;
+            text: tk.label;
+        }
+        if root.trace-xtoplabel != "": Text {
+            text: root.trace-xtoplabel;
+            x: plot.ml + plot.pw / 2 - 60px;
+            y: plot.mt - 34px;
+            width: 120px;
+            horizontal-alignment: center;
+            color: #222222;
+            font-size: 12px;
+        }
+
+        // Axes.
+        Rectangle { x: plot.ml; y: plot.mt; width: 1.5px; height: plot.ph; background: #333333; }
+        Rectangle { x: plot.ml; y: plot.mt + plot.ph; width: plot.pw; height: 1.5px; background: #333333; }
+
+        // Trace polylines, clipped to the plot area.
+        Rectangle {
+          x: plot.ml;
+          y: plot.mt;
+          width: plot.pw;
+          height: plot.ph;
+          clip: true;
+          for t in root.trace-plots: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 1000;
+            viewbox-height: 1000;
+            commands: t.commands;
+            stroke: t.color;
+            stroke-width: 1.5px;
+          }
+        }
+
+        // Interaction layer over the plot area: drag to pan, scroll to zoom,
+        // hover to read the size (bp) under the cursor.
+        TouchArea {
+          x: plot.ml;
+          y: plot.mt;
+          width: plot.pw;
+          height: plot.ph;
+          enabled: root.has-open-file;
+          property <length> last-x;
+          property <bool> dragging;
+          mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+          pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { self.last-x = self.mouse-x; self.dragging = true; }
+            if (e.kind == PointerEventKind.up) { self.dragging = false; }
+          }
+          moved => {
+            if (self.dragging) {
+              root.trace-pan((self.mouse-x - self.last-x) / max(1px, self.width));
+              self.last-x = self.mouse-x;
+            }
+          }
+          changed mouse-x => { root.trace-hover(self.mouse-x / max(1px, self.width)); }
+          scroll-event(e) => {
+            root.trace-zoom-at(e.delta-y > 0 ? 1.15 : (e.delta-y < 0 ? 0.87 : 1.0),
+                               self.mouse-x / max(1px, self.width));
+            return EventResult.accept;
+          }
+        }
+
+        // Axis titles.
+        Text {
+          text: root.trace-xlabel;
+          x: plot.ml + plot.pw / 2 - 60px;
+          y: plot.height - 18px;
+          width: 120px;
+          horizontal-alignment: center;
+          color: #222222;
+          font-size: 12px;
+        }
+        // Y-axis title, drawn horizontally at the top-left — on the SAME row
+        // as the "Size (bp)" top-axis title so it doesn't collide with the bp
+        // tick numbers just below it. Rotated Slint text renders blurry/bold
+        // on HiDPI (a known layout issue), so it is kept upright here.
+        Text {
+          text: root.trace-ylabel;
+          x: 6px;
+          y: plot.mt - 34px;
+          width: plot.ml + 30px;
+          horizontal-alignment: left;
+          color: #222222;
+          font-size: 11px;
+        }
+
+        // Legend.
+        VerticalLayout {
+          x: plot.width - plot.mr + 12px;
+          y: plot.mt;
+          width: plot.mr - 20px;
+          spacing: 5px;
+          for t in root.trace-plots: HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+              width: 18px;
+              height: 16px;
+              Rectangle { width: 18px; height: 3px; background: t.color; y: 7px; }
+            }
+            Text { text: t.label; color: #222222; font-size: 11px; overflow: elide; }
+          }
+        }
+      }
+
+      Text { text: "Lanes (check to plot):"; }
+      ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+          alignment: start;
+          for it[i] in root.lane-items: Rectangle {
+            height: 26px;
+            background: it.selected ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
+            HorizontalLayout {
+              padding-left: 6px;
+              padding-right: 6px;
+              spacing: 8px;
+              CheckBox {
+                checked: it.selected;
+                toggled => { root.toggle-lane(it.id); }
+              }
+              Text {
+                text: it.ladder ? (it.label + "  (ladder)") : it.label;
+                vertical-alignment: center;
+                color: it.ladder ? #9a6b00 : #222222;
+                horizontal-stretch: 1;
+              }
+            }
+          }
+        }
+      }
+      HorizontalBox {
+        padding-top: 4px;
+        alignment: start;
+        spacing: 6px;
+        Button { text: "Select all"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-all-lanes(); } }
+        Button { text: "Select none"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.select-none-lanes(); } }
+        Button { text: "Export as PDF"; vertical-stretch: 0; enabled: root.has-open-file; clicked => { root.export-trace-pdf(); } }
+      }
+    }

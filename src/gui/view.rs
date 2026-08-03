@@ -5,15 +5,14 @@
 //! only produces the path geometry and colors.
 
 use opengel::core::GrayF32;
-use opengel::instrument::application::APPLICATIONS;
-use opengel::instrument::protocol::{ExposureMode, ProtocolStep};
+use opengel::instrument::acquisition::fmt_seconds;
+use opengel::instrument::TrayType;
 use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 
-use crate::geldoc::{GelDocState, RunPhase};
+use crate::geldoc::RunPhase;
 use crate::state::{AppState, LaneTrace, TraceMode};
 use crate::{
-    AppWindow, AxisTick, FaultItem, LaneItem, MetaRow, ProtocolItem, StepItem, TracePath, TreeRow,
-    WarpKnot,
+    AppWindow, AxisTick, ChannelItem, FaultItem, LaneItem, MetaRow, TracePath, TreeRow, WarpKnot,
 };
 
 /// Rebuild the Metadata tab's rows.
@@ -38,6 +37,10 @@ pub fn refresh_metadata(ui: &AppWindow, state: &AppState) {
         .collect();
     ui.set_metadata_rows(ModelRc::new(VecModel::from(rows)));
 }
+
+/// Tab indices, fixed whatever is greyed out (see the tab bar in `app.slint`).
+pub const TAB_GEL: i32 = 0;
+pub const TAB_CAPTURE: i32 = 3;
 
 /// Distinct colors for sample-lane traces (ladders use a fixed gold).
 const PALETTE: [(u8, u8, u8); 6] = [
@@ -73,6 +76,11 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
     ui.set_file_names(ModelRc::new(VecModel::from(files)));
     ui.set_file_index(state.active_document_index());
     ui.set_has_open_file(state.has_open_file());
+    // Gel, Trace and Metadata are greyed out with nothing open, so the tab that
+    // is *showing* must not be one of them.
+    if !state.has_open_file() && ui.get_active_tab() != TAB_CAPTURE {
+        ui.set_active_tab(TAB_CAPTURE);
+    }
     ui.set_active_file_dirty(state.active_document_dirty());
     let gel_types: Vec<SharedString> = AppState::gel_type_names()
         .into_iter()
@@ -644,7 +652,9 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
     ui.set_gd_tray_present(tray.is_some());
     ui.set_gd_door_closed(gd.door_closed());
     ui.set_gd_busy(gd.sense.is_some_and(|s| s.busy));
-    ui.set_gd_watch_button(gd.watch_run_button);
+    // Lit lamps are a state the user must not open the door on, and the
+    // instrument does not report them: it is the run phase that knows.
+    ui.set_gd_lamps_on(gd.lamps_lit());
     // The sense bits nobody has decoded. Shown, not hidden: the front Run
     // button is believed to be in there, and seeing the mask move when the
     // button is pressed is how it gets identified on real hardware.
@@ -669,124 +679,85 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
         .collect();
     ui.set_gd_faults(ModelRc::new(VecModel::from(faults)));
 
-    // --- protocol list ---
-    let protocols: Vec<ProtocolItem> = gd
-        .library
-        .protocols
-        .iter()
-        .map(|p| ProtocolItem {
-            name: p.name.clone().into(),
-            tray: p
-                .tray()
-                .map(|t| t.label().to_string())
-                .unwrap_or_else(|| "?".into())
-                .into(),
-            is_default: gd.library.is_default(&p.name),
-        })
-        .collect();
-    ui.set_gd_protocol_items(ModelRc::new(VecModel::from(protocols)));
-    ui.set_gd_protocol_index(gd.selected_protocol as i32);
-    ui.set_gd_protocol_is_default(
-        gd.protocol()
-            .is_some_and(|p| gd.library.is_default(&p.name)),
-    );
-    // Only rewrite the name field when the selection changed, so a refresh
-    // triggered by an instrument poll cannot overwrite an in-progress edit.
-    if gd.name_field_for.get() != gd.selected_protocol {
-        gd.name_field_for.set(gd.selected_protocol);
-        ui.set_gd_protocol_name(
-            gd.protocol()
-                .map(|p| p.name.clone())
-                .unwrap_or_default()
-                .into(),
-        );
-    }
-
-    // --- steps ---
-    let steps: Vec<StepItem> = ProtocolStep::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, &step)| {
-            let applicable = step != ProtocolStep::Activation
-                || gd.application().is_some_and(|a| a.needs_activation);
-            StepItem {
-                number: i as i32 + 1,
-                label: step.label().into(),
-                enabled: gd.protocol().is_some_and(|p| p.step_enabled(step)),
-                mandatory: step.is_mandatory(),
-                applicable,
-            }
-        })
-        .collect();
-    ui.set_gd_step_items(ModelRc::new(VecModel::from(steps)));
-    ui.set_gd_step_index(
-        ProtocolStep::ALL
+    // --- the channels to acquire ---
+    //
+    // An instrument that cannot change its light has one channel. With a plain
+    // camera that is the whole list: a checklist of light sources you cannot
+    // select between would be a lie about what the hardware can do.
+    let channels: Vec<ChannelItem> = if gd.connected {
+        gd.plan
+            .channels
             .iter()
-            .position(|&s| s == gd.selected_step)
-            .unwrap_or(0) as i32,
-    );
-
-    // --- step options ---
-    let apps: Vec<SharedString> = APPLICATIONS
+            .map(|c| ChannelItem {
+                name: c.label().into(),
+                selected: c.selected,
+                summary: c.summary().into(),
+                inserted: tray == Some(c.tray),
+            })
+            .collect()
+    } else {
+        vec![ChannelItem {
+            name: "Camera".into(),
+            selected: true,
+            summary: gd.channel().summary().into(),
+            inserted: false,
+        }]
+    };
+    ui.set_gd_channel_items(ModelRc::new(VecModel::from(channels)));
+    let names: Vec<SharedString> = gd
+        .plan
+        .channels
         .iter()
-        .map(|a| SharedString::from(format!("{}  ({})", a.label(), a.tray.label())))
+        .map(|c| SharedString::from(c.label()))
         .collect();
-    ui.set_gd_application_names(ModelRc::new(VecModel::from(apps)));
-    ui.set_gd_application_index(
-        gd.protocol()
-            .and_then(|p| APPLICATIONS.iter().position(|a| a.id == p.application))
-            .unwrap_or(0) as i32,
-    );
-    ui.set_gd_application_tray(
-        gd.application()
-            .map(|a| a.tray.label().to_string())
-            .unwrap_or_else(|| "—".into())
-            .into(),
-    );
-    match gd.tray_mismatch() {
-        Some((wanted, inserted)) => {
-            ui.set_gd_tray_mismatch(true);
-            ui.set_gd_tray_mismatch_text(
-                match inserted {
-                    Some(inserted) => format!(
-                        "The {} tray is inserted. This application needs the {} tray — imaging it \
-                         on the wrong tray gives a blank gel.",
-                        inserted.label(),
-                        wanted.label()
-                    ),
-                    None => format!("Insert the {} tray.", wanted.label()),
-                }
-                .into(),
-            );
-        }
-        None => {
-            ui.set_gd_tray_mismatch(false);
-            ui.set_gd_tray_mismatch_text(SharedString::new());
-        }
-    }
-
-    let exposure = gd.protocol().map(|p| p.exposure).unwrap_or_default();
-    ui.set_gd_exposure_mode_index(match exposure.mode {
-        ExposureMode::AutoIntense => 0,
-        ExposureMode::AutoFaint => 1,
-        ExposureMode::Manual => 2,
+    ui.set_gd_channel_names(ModelRc::new(VecModel::from(names)));
+    ui.set_gd_channel_index(if gd.connected {
+        gd.current_channel_index() as i32
+    } else {
+        0
     });
-    ui.set_gd_exposure_slider(GelDocState::slider_from_exposure(exposure.manual_s));
-    ui.set_gd_exposure_label(fmt_seconds(exposure.clamped_manual()).into());
+    ui.set_gd_channel_label(gd.channel().label().into());
+    ui.set_gd_gel_type_index(state.gel_type.index() as i32);
+    // The bench control mirrors the tray that is actually in, so it cannot sit
+    // there claiming "none" over an inserted tray.
+    ui.set_gd_sim_tray_index(match tray {
+        None => 0,
+        Some(TrayType::Uv) => 1,
+        Some(TrayType::White) => 2,
+        Some(TrayType::Blue) => 3,
+        Some(TrayType::StainFree) => 4,
+    });
+
+    // --- settings of the channel being edited ---
+    let channel = gd.channel();
+    ui.set_gd_capture_mode_index(channel.mode.index() as i32);
+    ui.set_gd_hdr_steps_idx(state.hdr_steps_idx() as i32);
+    ui.set_gd_channel_ready(gd.current_channel_ready());
+    // The commonest setup mistake is the right gel under the wrong light, which
+    // images as a blank gel with nothing obviously wrong. Say which tray this
+    // channel needs whenever it is not the one that is in.
+    ui.set_gd_channel_hint(
+        match (gd.connected, gd.inserted_tray(), gd.current_channel_ready()) {
+            (false, _, _) => String::new(),
+            (true, _, true) => format!("Lit: the {} tray is inserted.", channel.label()),
+            (true, Some(inserted), false) => format!(
+                "Not lit — the {} tray is inserted, this channel needs the {} tray.",
+                inserted.label(),
+                channel.label()
+            ),
+            (true, None, false) => format!("Not lit — insert the {} tray.", channel.label()),
+        }
+        .into(),
+    );
+    ui.set_gd_activation_applicable(channel.tray == TrayType::StainFree);
+    ui.set_gd_activation_s(format!("{:.0}", channel.activation_s).into());
+    ui.set_gd_highlight_saturated(gd.plan.highlight_saturated);
     ui.set_gd_last_exposure_label(
         gd.last_exposure_s
-            .map(|t| format!("Last run exposed for {}.", fmt_seconds(t)))
+            .map(|t| format!("Last exposure: {}.", fmt_seconds(t)))
             .unwrap_or_default()
             .into(),
     );
-    ui.set_gd_activation_applicable(gd.application().is_some_and(|a| a.needs_activation));
-    ui.set_gd_activation_s(
-        gd.protocol()
-            .map(|p| format!("{:.0}", p.activation_s))
-            .unwrap_or_default()
-            .into(),
-    );
-    ui.set_gd_highlight_saturated(gd.protocol().is_some_and(|p| p.highlight_saturated));
 
     // --- run state ---
     let blocker = gd.run_blocker();
@@ -794,6 +765,21 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
     ui.set_gd_run_blocker(blocker.unwrap_or_default().into());
     ui.set_gd_running(gd.phase.is_running());
     ui.set_gd_phase_label(gd.phase.label().into());
+    ui.set_gd_run_progress(gd.run_progress_label().into());
+    // A run's progress goes to the window's status bar rather than into a panel
+    // of its own: it is one line, it changes every few seconds, and the status
+    // bar is where the app already says what it is doing.
+    if gd.phase.is_running() {
+        let progress = gd.run_progress_label();
+        ui.set_status(
+            if progress.is_empty() {
+                gd.phase.label()
+            } else {
+                format!("{}  —  {}", gd.phase.label(), progress)
+            }
+            .into(),
+        );
+    }
     ui.set_gd_activation_progress(match &gd.phase {
         RunPhase::Activating { elapsed_s, total_s } if *total_s > 0.0 => {
             (elapsed_s / total_s).clamp(0.0, 1.0) as f32
@@ -805,16 +791,7 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
 
 /// Refresh the Live tab: camera name, running state, status, preview image.
 pub fn refresh_live(ui: &AppWindow, state: &AppState) {
-    ui.set_camera_name(state.camera_name.clone().into());
     ui.set_live_running(state.live_running);
-    ui.set_live_status(
-        if state.live_running {
-            "Previewing…"
-        } else {
-            "Idle."
-        }
-        .into(),
-    );
     if let Some(p) = state.preview_image() {
         // Always flag clipped-high (saturated) pixels in red — a live exposure
         // aid, so you can lower exposure before capturing blown-out bands.
@@ -825,13 +802,16 @@ pub fn refresh_live(ui: &AppWindow, state: &AppState) {
     let hist = state.preview_histogram(256);
     ui.set_live_histogram_image(render_histogram(&hist, 0.0, 1.0, 1024, 120));
 
-    // Exposure controls: current exposure, HDR bounds, step count, covered EV.
+    // Exposure controls. These belong to the channel being framed, so the Live
+    // tab and the Gel Doc EZ tab always show the same numbers for it.
+    let channel = state.live_channel();
     ui.set_live_exposure_slider(state.live_exposure_slider());
-    ui.set_live_exposure_label(fmt_seconds(state.live_exposure_s).into());
-    ui.set_hdr_min_label(fmt_seconds(state.hdr_min_s).into());
-    ui.set_hdr_max_label(fmt_seconds(state.hdr_max_s).into());
+    ui.set_live_exposure_label(fmt_seconds(channel.exposure_s).into());
+    ui.set_hdr_min_label(fmt_seconds(channel.hdr_min_s).into());
+    ui.set_hdr_max_label(fmt_seconds(channel.hdr_max_s).into());
     ui.set_hdr_range_label(format!("{:.1} EV", state.hdr_range_ev()).into());
-    ui.set_hdr_steps_idx(state.hdr_steps_idx() as i32);
+    ui.set_gd_hdr_steps_idx(state.hdr_steps_idx() as i32);
+    ui.set_gd_capture_mode_index(channel.mode.index() as i32);
 
     // Camera selection dropdown.
     let names: Vec<SharedString> = state.cameras.iter().map(SharedString::from).collect();
@@ -844,15 +824,6 @@ pub fn refresh_live(ui: &AppWindow, state: &AppState) {
 
     // Manual-exposure capability gates the exposure slider + HDR capture.
     ui.set_exposure_supported(state.exposure_supported);
-}
-
-/// Human-readable exposure time: milliseconds under 1 s, else seconds.
-fn fmt_seconds(t: f64) -> String {
-    if t < 1.0 {
-        format!("{:.0} ms", t * 1000.0)
-    } else {
-        format!("{t:.2} s")
-    }
 }
 
 /// Overlays for the dewarped view: in rectified space `(u, v)` map directly to

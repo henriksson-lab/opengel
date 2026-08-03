@@ -84,6 +84,7 @@ impl SimulatedEnclosure {
 
     pub fn set_tray(&mut self, tray: Option<TrayType>) {
         self.tray = tray;
+        self.publish_light();
     }
 
     pub fn tray(&self) -> Option<TrayType> {
@@ -98,6 +99,12 @@ impl SimulatedEnclosure {
             self.faults = Faults(self.faults.0 | 0x04);
         }
         self.door_closed = closed;
+    }
+
+    /// Tell the rest of the simulated bench what is lighting the gel, so the
+    /// mock camera photographs the light source that is actually on.
+    fn publish_light(&self) {
+        crate::simbench::set_light(self.tray, self.lamps_on);
     }
 
     pub fn door_closed(&self) -> bool {
@@ -217,12 +224,14 @@ impl SimulatedEnclosure {
                 }
                 self.lamps_on = true;
                 self.lit_at = Some(Instant::now());
+                self.publish_light();
                 let _wait_ready = params.first().copied().unwrap_or(0);
                 self.reply(DeviceStatus::OK, &[]);
             }
             x if x == Opcode::StopAcquire as u8 => {
                 self.lamps_on = false;
                 self.lit_at = None;
+                self.publish_light();
                 self.reply(DeviceStatus::OK, &[]);
             }
             x if x == Opcode::ClearFault as u8 => {

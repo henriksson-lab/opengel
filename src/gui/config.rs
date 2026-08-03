@@ -11,14 +11,14 @@ const MAX_RECENT_LADDERS: usize = 10;
 pub struct AppConfig {
     #[serde(default)]
     pub recent_ladders: Vec<String>,
-    /// Saved Gel Doc EZ protocols and the default bound to each tray.
+    /// The acquisition plan: which channels to shoot and how to expose each.
     ///
-    /// Protocols are the unit of reproducibility — a run you can repeat next
-    /// month — so they outlive the session and live in the user's settings
-    /// rather than in a document. `None` means this user has never opened the
-    /// tab, and gets the starter library.
+    /// Exposure settings are a property of the bench — this camera, in this box,
+    /// with these lamps — not of a document, so they outlive the session and
+    /// live in the user's settings. `None` means this user has never run the
+    /// instrument, and gets the defaults.
     #[serde(default)]
-    pub geldoc_protocols: Option<opengel::instrument::protocol::ProtocolLibrary>,
+    pub acquisition_plan: Option<opengel::instrument::AcquisitionPlan>,
 }
 
 pub fn load_config() -> AppConfig {

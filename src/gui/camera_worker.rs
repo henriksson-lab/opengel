@@ -17,16 +17,17 @@ use opengel::camera::{Camera, Exposure};
 use opengel::core::model::CaptureMeta;
 use opengel::core::GrayF32;
 
-/// Which way an auto exposure resolves the trade-off between seeing faint bands
-/// and not clipping bright ones.
+/// How an auto exposure resolves the trade-off between seeing faint bands and
+/// not clipping bright ones.
+///
+/// One mode, deliberately: metering to "nothing clips" is the only setting that
+/// leaves every band quantifiable, and the faint end is reached by bracketing up
+/// from it (an HDR channel) rather than by over-exposing a single frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoExposureMode {
     /// Expose so that nothing clips: the brightest pixels land just below
     /// saturation, and every band stays quantifiable.
     IntenseBands,
-    /// Expose longer so faint bands lift clear of the background, accepting
-    /// that the brightest few per cent may saturate.
-    FaintBands,
 }
 
 /// Commands sent from the UI thread to the camera worker.
@@ -37,7 +38,6 @@ pub enum CamCommand {
     StartPreview,
     StopPreview,
     CaptureHdr { exposures: Vec<f64>, group: u32 },
-    CaptureSingle { exposure: f64 },
     /// Meter the scene and capture at the exposure it settles on.
     CaptureAuto {
         mode: AutoExposureMode,
@@ -89,10 +89,6 @@ impl CameraHandle {
     pub fn capture_hdr(&self, exposures: Vec<f64>, group: u32) {
         self.cancel.store(false, Ordering::SeqCst);
         let _ = self.tx.send(CamCommand::CaptureHdr { exposures, group });
-    }
-    pub fn capture_single(&self, exposure: f64) {
-        self.cancel.store(false, Ordering::SeqCst);
-        let _ = self.tx.send(CamCommand::CaptureSingle { exposure });
     }
     pub fn capture_auto(&self, mode: AutoExposureMode, min_s: f64, max_s: f64) {
         self.cancel.store(false, Ordering::SeqCst);
@@ -189,14 +185,6 @@ fn worker_main(rx: Receiver<CamCommand>, tx: Sender<CamEvent>, cancel: Arc<Atomi
                         let _ = tx.send(CamEvent::CaptureFailed("no camera".into()));
                     }
                 }
-                CamCommand::CaptureSingle { exposure } => {
-                    ensure_open(&mut cam, &tx);
-                    if let Some(c) = cam.as_deref_mut() {
-                        do_capture(c, &[exposure], 0, &tx, &cancel);
-                    } else {
-                        let _ = tx.send(CamEvent::CaptureFailed("no camera".into()));
-                    }
-                }
                 CamCommand::CaptureAuto { mode, min_s, max_s } => {
                     ensure_open(&mut cam, &tx);
                     if let Some(c) = cam.as_deref_mut() {
@@ -247,15 +235,11 @@ const AUTO_TOLERANCE: f64 = 0.12;
 impl AutoExposureMode {
     /// The brightness quantile this mode steers, and where it should land.
     ///
-    /// *Intense bands* steers the very top of the distribution to just under
-    /// saturation, so nothing clips and every band stays quantifiable. *Faint
-    /// bands* steers a slightly lower quantile higher, which lifts the faint end
-    /// clear of the background and lets the brightest few per cent clip — that
-    /// is the trade the mode exists to make.
+    /// Steers the very top of the distribution to just under saturation, so
+    /// nothing clips and every band stays quantifiable.
     fn target(self) -> (f64, f64) {
         match self {
             AutoExposureMode::IntenseBands => (0.999, 0.85),
-            AutoExposureMode::FaintBands => (0.99, 0.95),
         }
     }
 }

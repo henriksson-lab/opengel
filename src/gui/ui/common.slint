@@ -1,0 +1,147 @@
+// Shared UI types and small components, used by the window and by every
+// tab component.
+
+// A lane in the Trace tab's checklist.
+export struct LaneItem {
+    id: int,
+    label: string,
+    ladder: bool,
+    selected: bool,
+}
+
+// One polyline in the Trace plot (SVG path in a 0..1000 viewbox).
+export struct TracePath {
+    commands: string,
+    color: color,
+    label: string,
+    ladder: bool,
+}
+
+// One row in the combined lane/band tree. `kind`: 0 = lane, 1 = band.
+export struct TreeRow {
+    kind: int,
+    lane-id: int,
+    band-id: int,
+    expanded: bool,
+    is-ladder: bool,
+    name: string,
+    rf: string,
+    size: string,
+    density: string,
+    ng: string,
+    nmol: string,
+}
+
+// A positioned axis tick: `pos` is the fraction (0..1) across the plot width,
+// `label` the text. Used for the trace plot's ladder-based bp scale.
+export struct AxisTick {
+    pos: float,
+    label: string,
+}
+
+// A warp control-point handle, in normalized image coords (0..1). `active` = the
+// knot currently being dragged. Drawn as a separate overlay (not baked into the
+// gel image) so edge knots aren't clipped.
+export struct WarpKnot {
+    nx: float,
+    ny: float,
+    active: bool,
+}
+
+// One active instrument fault, in the user's language. `remedy` is what to do
+// about it — a fault the user can't act on is just an error message.
+export struct FaultItem {
+    headline: string,
+    remedy: string,
+}
+
+// One acquisition channel — a light source, which on this instrument means a
+// tray. `selected` is "take this one in the run"; `inserted` is "this is the
+// tray physically in the machine right now", which is the difference between a
+// channel that can be shot immediately and one that needs a tray swap.
+export struct ChannelItem {
+    name: string,
+    selected: bool,
+    summary: string,
+    inserted: bool,
+}
+
+// One row of the Metadata tab. `section` is a heading like "Channel 2 —
+// DyLight 549"; consecutive rows sharing one are drawn under a single header.
+export struct MetaRow {
+    section: string,
+    name: string,
+    value: string,
+    first-in-section: bool,
+}
+
+// One instrument status indicator: a coloured dot and a label. The Gel Doc EZ
+// tab is a strip of these, because "is the door shut, is a tray in, are the
+// lamps burning" are the preconditions of every workflow and change under the
+// user's hands rather than under the software's.
+export component StatusChip inherits Rectangle {
+    in property <string> label;
+    in property <color> tint: #b0b0b6;
+    /// Draw the label bold — for a state the user has to act on.
+    in property <bool> alert: false;
+    height: 26px;
+    horizontal-stretch: 0;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color: root.tint;
+    background: root.tint.with-alpha(0.14);
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 11px;
+        spacing: 6px;
+        Rectangle {
+            width: 9px;
+            Rectangle {
+                width: 9px;
+                height: 9px;
+                border-radius: 4.5px;
+                y: (parent.height - 9px) / 2;
+                background: root.tint;
+            }
+        }
+        Text {
+            text: root.label;
+            color: #222;
+            font-weight: root.alert ? 700 : 400;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// One tab in the hand-built tab bar. Looks like the platform's flat tabs: a
+// label, bold when current, over a coloured underline.
+export component TabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    /// A tab with nothing behind it is greyed and inert rather than hidden, so
+    /// the set of tabs never moves under the user.
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 150px;
+    height: 30px;
+    background: root.active ? #ffffff : transparent;
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.label;
+        color: !root.enabled ? #aaa : (root.active ? #111 : #555);
+        font-weight: root.active ? 700 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        width: 100%;
+        background: root.active ? #3b6fb5 : transparent;
+    }
+}

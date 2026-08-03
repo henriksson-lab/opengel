@@ -150,6 +150,13 @@ fn main() -> anyhow::Result<()> {
             state.borrow_mut().set_show_unwarped(true);
             ui.set_show_unwarped(true);
         }
+        // `--sim` brings up the whole bench with no hardware: connect the
+        // simulated enclosure, light its tray and start the preview. The mock
+        // camera photographs whichever light source is on, so the channel
+        // workflow can actually be seen and driven on a laptop.
+        if has("--sim") {
+            state.borrow_mut().autostart_sim = true;
+        }
     }
     view::refresh(&ui, &state.borrow());
     view::refresh_live(&ui, &state.borrow());
@@ -162,6 +169,10 @@ fn main() -> anyhow::Result<()> {
     cam_handle.list_cameras();
     state.borrow_mut().cam = Some(cam_handle);
 
+    // Let a simulated enclosure drive what the mock camera sees, so the channel
+    // workflow can be run end to end with no hardware.
+    opengel::simbench::enable();
+
     // ---- Instrument worker thread ----
     // Same pattern as the camera: the enclosure is polled off the UI thread, and
     // a run is sequenced across both workers by the pump below.
@@ -169,11 +180,12 @@ fn main() -> anyhow::Result<()> {
     inst_handle.list();
     {
         let mut st = state.borrow_mut();
-        st.geldoc.library = app_config
+        st.geldoc.plan = app_config
             .borrow()
-            .geldoc_protocols
+            .acquisition_plan
             .clone()
-            .unwrap_or_else(opengel::instrument::protocol::ProtocolLibrary::starter);
+            .map(|plan| plan.normalized())
+            .unwrap_or_default();
         st.geldoc.inst = Some(inst_handle);
     }
     view::refresh_geldoc(&ui, &state.borrow());
@@ -198,6 +210,18 @@ fn main() -> anyhow::Result<()> {
                     let mut st = state.borrow_mut();
                     geldoc_dirty = true;
                     match evt {
+                        InstEvent::Instruments(names) if st.autostart_sim => {
+                            let index = names
+                                .iter()
+                                .position(|n| n.to_lowercase().contains("simulat"))
+                                .unwrap_or(0);
+                            st.geldoc.selected_instrument = index;
+                            st.geldoc.instruments = names;
+                            if let Some(inst) = &st.geldoc.inst {
+                                inst.connect(index);
+                            }
+                            geldoc_dirty = true;
+                        }
                         InstEvent::Instruments(names) => {
                             if st.geldoc.selected_instrument >= names.len() {
                                 st.geldoc.selected_instrument = 0;
@@ -209,10 +233,21 @@ fn main() -> anyhow::Result<()> {
                             st.geldoc.simulated = simulated;
                             st.geldoc.message = format!("Connected to {}.", info.model);
                             st.geldoc.info = info;
-                            let watch = st.geldoc.watch_run_button;
-                            if let Some(inst) = &st.geldoc.inst {
-                                inst.watch_run_button(watch);
+                            if st.autostart_sim {
+                                st.autostart_sim = false;
+                                // The tray that is in selects the channel (see
+                                // `geldoc_sense_changed`), which lights it; all
+                                // this has to do is start framing.
+                                st.live_start();
+                                live_dirty = true;
                             }
+                            // The instrument's own Run button always runs: it is
+                            // the button on the box, and nothing else it could
+                            // do would be less surprising.
+                            if let Some(inst) = &st.geldoc.inst {
+                                inst.watch_run_button(true);
+                            }
+                            st.geldoc_sync_lamps();
                         }
                         InstEvent::ConnectFailed(e) => {
                             st.geldoc.connected = false;
@@ -234,13 +269,19 @@ fn main() -> anyhow::Result<()> {
                             st.geldoc.sense = Some(sense);
                             st.geldoc.faults = faults;
                             st.geldoc.undecoded = undecoded;
+                            // A run parked between channels is waiting for
+                            // exactly this: the tray swapped and the door shut.
+                            st.geldoc_sense_changed();
+                            // A tray swap changes what the selected channel can
+                            // be lit with; the lamps follow it.
+                            st.geldoc_sync_lamps();
+                            geldoc_dirty = true;
                         }
                         InstEvent::ButtonPressed { mask } => {
                             // The hardware Run button (most likely — see the
-                            // worker). It runs the default protocol for whatever
-                            // tray is actually in, which is what the button
-                            // means on the instrument.
-                            if st.geldoc.watch_run_button && !st.geldoc.phase.is_running() {
+                            // worker). It runs the acquisition plan, exactly as
+                            // the on-screen Run button does.
+                            if !st.geldoc.phase.is_running() {
                                 let msg = st.geldoc_button_run();
                                 drop(st);
                                 ui.set_status(msg.into());
@@ -251,6 +292,16 @@ fn main() -> anyhow::Result<()> {
                         InstEvent::Activating { elapsed_s, total_s } => {
                             st.geldoc.phase = geldoc::RunPhase::Activating { elapsed_s, total_s };
                             st.geldoc.message = st.geldoc.phase.label();
+                        }
+                        InstEvent::Lamps(on) => {
+                            st.geldoc.lamps_on = on;
+                            st.geldoc.message = if on {
+                                "Lamps on.".into()
+                            } else {
+                                "Lamps off.".into()
+                            };
+                            geldoc_dirty = true;
+                            live_dirty = true;
                         }
                         InstEvent::LightsReady => {
                             st.geldoc_lights_ready();
@@ -268,8 +319,14 @@ fn main() -> anyhow::Result<()> {
                             door_violation,
                         } => {
                             let msg = st.geldoc_run_finished(faults, door_violation);
+                            let finished = !st.geldoc.phase.is_running();
                             drop(st);
                             ui.set_status(msg.into());
+                            // Only when the whole run is over — a multi-channel
+                            // run still has channels to shoot.
+                            if finished {
+                                ui.set_active_tab(view::TAB_GEL);
+                            }
                             doc_dirty = true;
                             live_dirty = true;
                         }
@@ -330,6 +387,19 @@ fn main() -> anyhow::Result<()> {
                                 st.cancel_requested = false;
                                 drop(st);
                                 live_dirty = true;
+                            } else if st.auto_metering {
+                                // The "Auto" button: this frame was taken to
+                                // measure the scene, not to keep. It configures
+                                // the channel and is then thrown away.
+                                let metered = frames
+                                    .first()
+                                    .map(|(_, meta)| meta.exposure_seconds)
+                                    .unwrap_or_default();
+                                let msg = st.apply_auto_exposure(metered);
+                                drop(st);
+                                ui.set_status(msg.into());
+                                live_dirty = true;
+                                geldoc_dirty = true;
                             } else if st.geldoc.phase == geldoc::RunPhase::Exposing {
                                 // A Gel Doc EZ run: hold the frames rather than
                                 // adopting them, until the instrument confirms
@@ -352,11 +422,16 @@ fn main() -> anyhow::Result<()> {
                                     }
                                     .into(),
                                 );
+                                // The picture is the point of pressing Capture:
+                                // show it rather than leaving the user on the
+                                // controls that took it.
+                                ui.set_active_tab(view::TAB_GEL);
                                 doc_dirty = true;
                             }
                         }
                         CamEvent::CaptureFailed(e) => {
                             st.capturing = false;
+                            st.auto_metering = false;
                             let cancelled = st.cancel_requested;
                             st.cancel_requested = false;
                             // A failed exposure still leaves the lamps on, so
@@ -373,6 +448,7 @@ fn main() -> anyhow::Result<()> {
                         }
                         CamEvent::Cancelled => {
                             st.capturing = false;
+                            st.auto_metering = false;
                             st.cancel_requested = false;
                             if st.geldoc.phase.is_running() {
                                 st.geldoc.abort_run("Run cancelled.");
@@ -1359,6 +1435,21 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
+    // The plan is what makes a run repeatable next month, so every edit is
+    // persisted immediately — an exposure re-found by hand after a crash is not
+    // the same exposure. Shared by both tabs: they edit the same channels.
+    let persist = {
+        let state = state.clone();
+        let app_config = app_config.clone();
+        Rc::new(move || {
+            let mut cfg = app_config.borrow_mut();
+            cfg.acquisition_plan = Some(state.borrow().geldoc.plan.clone());
+            if let Err(e) = config::save_config(&cfg) {
+                eprintln!("saving the acquisition plan failed: {e}");
+            }
+        })
+    };
+
     // ---- Live tab (camera I/O runs on the worker thread; see the event pump) ----
     {
         let ui_weak = ui.as_weak();
@@ -1398,37 +1489,61 @@ fn main() -> anyhow::Result<()> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        let persist = persist.clone();
         ui.on_live_exposure_changed(move |f| {
             let ui = ui_weak.unwrap();
             state.borrow_mut().set_live_exposure_slider(f);
+            persist();
             view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
         });
     }
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        let persist = persist.clone();
         ui.on_set_hdr_lower(move || {
             let ui = ui_weak.unwrap();
             state.borrow_mut().set_hdr_lower_from_current();
+            persist();
             view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
         });
     }
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        let persist = persist.clone();
         ui.on_set_hdr_upper(move || {
             let ui = ui_weak.unwrap();
             state.borrow_mut().set_hdr_upper_from_current();
+            persist();
             view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
         });
     }
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        let persist = persist.clone();
         ui.on_hdr_steps_changed(move |idx| {
             let ui = ui_weak.unwrap();
             state.borrow_mut().set_hdr_steps_idx(idx as usize);
+            persist();
             view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let persist = persist.clone();
+        ui.on_capture_mode_changed(move |idx| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().set_capture_mode_idx(idx.max(0) as usize);
+            persist();
+            view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
         });
     }
     {
@@ -1443,9 +1558,10 @@ fn main() -> anyhow::Result<()> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.on_capture_single(move || {
+        ui.on_live_auto(move || {
             let ui = ui_weak.unwrap();
-            state.borrow_mut().capture_single();
+            state.borrow_mut().live_auto_expose();
+            ui.set_status("Metering…".into());
             view::refresh_live(&ui, &state.borrow());
         });
     }
@@ -1463,21 +1579,6 @@ fn main() -> anyhow::Result<()> {
     // Instrument I/O runs on the instrument worker (see the event pump); these
     // callbacks only mutate state and enqueue commands.
     {
-        // Protocols are the unit of reproducibility, so every edit is persisted
-        // immediately — losing a protocol to a crash would lose the ability to
-        // repeat an experiment.
-        let persist = {
-            let state = state.clone();
-            let app_config = app_config.clone();
-            Rc::new(move || {
-                let mut cfg = app_config.borrow_mut();
-                cfg.geldoc_protocols = Some(state.borrow().geldoc.library.clone());
-                if let Err(e) = config::save_config(&cfg) {
-                    eprintln!("saving protocols failed: {e}");
-                }
-            })
-        };
-
         {
             let ui_weak = ui.as_weak();
             let state = state.clone();
@@ -1534,48 +1635,27 @@ fn main() -> anyhow::Result<()> {
             });
         }
         {
+            let ui_weak = ui.as_weak();
             let state = state.clone();
-            ui.on_gd_watch_button_changed(move |watch| {
-                let mut st = state.borrow_mut();
-                st.geldoc.watch_run_button = watch;
-                if let Some(inst) = &st.geldoc.inst {
-                    inst.watch_run_button(watch);
-                }
+            ui.on_gd_channel_selected(move |idx| {
+                let ui = ui_weak.unwrap();
+                // Selecting a channel re-exposes the camera for it, so the live
+                // view shows what that channel would actually capture.
+                state.borrow_mut().set_live_channel(idx.max(0) as usize);
+                view::refresh_geldoc(&ui, &state.borrow());
+                view::refresh_live(&ui, &state.borrow());
             });
         }
         {
             let ui_weak = ui.as_weak();
             let state = state.clone();
-            ui.on_gd_protocol_selected(move |idx| {
+            let persist = persist.clone();
+            ui.on_gd_channel_toggled(move |idx, selected| {
                 let ui = ui_weak.unwrap();
                 state
                     .borrow_mut()
                     .geldoc
-                    .select_protocol(idx.max(0) as usize);
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_protocol_new(move || {
-                let ui = ui_weak.unwrap();
-                let name = state.borrow_mut().geldoc.new_protocol();
-                persist();
-                ui.set_status(format!("Created protocol “{name}”.").into());
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_protocol_delete(move || {
-                let ui = ui_weak.unwrap();
-                state.borrow_mut().geldoc.delete_selected_protocol();
-                // Force the name field to re-sync with the new selection.
-                state.borrow().geldoc.name_field_for.set(usize::MAX);
+                    .set_channel_selected(idx.max(0) as usize, selected);
                 persist();
                 view::refresh_geldoc(&ui, &state.borrow());
             });
@@ -1583,103 +1663,10 @@ fn main() -> anyhow::Result<()> {
         {
             let ui_weak = ui.as_weak();
             let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_protocol_make_default(move || {
+            ui.on_gd_auto(move || {
                 let ui = ui_weak.unwrap();
-                let ok = state.borrow_mut().geldoc.make_selected_default();
-                persist();
-                ui.set_status(
-                    if ok {
-                        "This protocol now runs when the instrument's Run button is pressed with \
-                         its tray inserted."
-                    } else {
-                        "This protocol has no tray, so it cannot be a default."
-                    }
-                    .into(),
-                );
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_protocol_renamed(move |name| {
-                state.borrow_mut().geldoc.rename_selected_protocol(&name);
-                // The field already shows what the user typed; keep the view
-                // from rewriting it underneath them.
-                state
-                    .borrow()
-                    .geldoc
-                    .name_field_for
-                    .set(state.borrow().geldoc.selected_protocol);
-                persist();
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            ui.on_gd_step_selected(move |idx| {
-                let ui = ui_weak.unwrap();
-                let step =
-                    opengel::instrument::protocol::ProtocolStep::ALL[(idx.max(0) as usize).min(3)];
-                state.borrow_mut().geldoc.selected_step = step;
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_step_toggled(move |idx, enabled| {
-                let ui = ui_weak.unwrap();
-                let step =
-                    opengel::instrument::protocol::ProtocolStep::ALL[(idx.max(0) as usize).min(3)];
-                state.borrow_mut().geldoc.set_step_enabled(step, enabled);
-                persist();
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_application_selected(move |idx| {
-                let ui = ui_weak.unwrap();
-                if let Some(app) =
-                    opengel::instrument::application::APPLICATIONS.get(idx.max(0) as usize)
-                {
-                    state.borrow_mut().geldoc.set_application(app.id);
-                }
-                persist();
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_exposure_mode_changed(move |idx| {
-                use opengel::instrument::protocol::ExposureMode;
-                let ui = ui_weak.unwrap();
-                let mode = match idx {
-                    1 => ExposureMode::AutoFaint,
-                    2 => ExposureMode::Manual,
-                    _ => ExposureMode::AutoIntense,
-                };
-                state.borrow_mut().geldoc.set_exposure_mode(mode);
-                persist();
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_exposure_changed(move |f| {
-                let ui = ui_weak.unwrap();
-                let seconds = geldoc::GelDocState::exposure_from_slider(f);
-                state.borrow_mut().geldoc.set_manual_exposure_s(seconds);
-                persist();
+                let msg = state.borrow_mut().geldoc_auto();
+                ui.set_status(msg.into());
                 view::refresh_geldoc(&ui, &state.borrow());
             });
         }
@@ -1699,9 +1686,7 @@ fn main() -> anyhow::Result<()> {
             let state = state.clone();
             let persist = persist.clone();
             ui.on_gd_highlight_saturated_changed(move |on| {
-                if let Some(p) = state.borrow_mut().geldoc.protocol_mut() {
-                    p.highlight_saturated = on;
-                }
+                state.borrow_mut().geldoc.plan.highlight_saturated = on;
                 persist();
             });
         }

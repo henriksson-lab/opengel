@@ -9,6 +9,8 @@
 //! * [`instrument`] — imaging enclosures (trays, door, illumination, faults),
 //!   which sit *around* a camera rather than being one.
 //! * [`sim`] — synthetic gel simulator with effects and ground truth.
+//! * [`simbench`] — the one thing the simulated enclosure and the mock camera
+//!   share: which light source is currently on the virtual gel.
 //!
 //! The `gel` and `opengel` binaries live under `src/cli` and `src/gui`.
 
@@ -17,3 +19,4 @@ pub mod core;
 pub mod detect;
 pub mod instrument;
 pub mod sim;
+pub mod simbench;

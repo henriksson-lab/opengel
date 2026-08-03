@@ -1,0 +1,568 @@
+import { FaultItem, ChannelItem } from "common.slint";
+import { StatusChip } from "common.slint";
+import { Button, ComboBox, CheckBox, Slider, GroupBox, ScrollView, LineEdit, HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
+
+export component CaptureTab inherits VerticalLayout {
+    in-out property <int> camera-index: 0;
+    in property <[string]> camera-names;
+    in property <bool> capture-active: false;
+    in property <bool> exposure-supported: true;
+    in property <bool> gd-activation-applicable: false;
+    in property <float> gd-activation-progress: 0;
+    in-out property <string> gd-activation-s: "45";
+    in property <bool> gd-busy: false;
+    in property <bool> gd-can-run: false;
+    in-out property <int> gd-capture-mode-index: 0;
+    in property <string> gd-channel-hint: "";
+    in property <int> gd-channel-index: 0;
+    in property <[ChannelItem]> gd-channel-items;
+    in property <bool> gd-channel-ready: false;
+    in property <bool> gd-connected: false;
+    in property <bool> gd-door-closed: false;
+    in property <[FaultItem]> gd-faults;
+    in-out property <int> gd-gel-type-index: 0;
+    in-out property <int> gd-hdr-steps-idx: 1;
+    in-out property <bool> gd-highlight-saturated: true;
+    in-out property <int> gd-instrument-index: 0;
+    in property <[string]> gd-instrument-names;
+    in property <bool> gd-lamps-on: false;
+    in property <string> gd-message: "";
+    in property <string> gd-model: "—";
+    in property <string> gd-phase-label: "Ready.";
+    in property <string> gd-run-blocker: "";
+    in property <string> gd-run-progress: "";
+    in property <bool> gd-running: false;
+    in property <string> gd-serial: "";
+    in-out property <int> gd-sim-tray-index: 0;
+    in property <bool> gd-simulated: false;
+    in property <string> gd-tray-label: "—";
+    in property <bool> gd-tray-present: false;
+    in property <string> gd-versions: "";
+    in property <[string]> gel-type-names;
+    in property <string> hdr-max-label: "1.00 s";
+    in property <string> hdr-min-label: "0.010 s";
+    in property <string> hdr-range-label: "6.6 EV";
+    in property <string> live-exposure-label: "0.10 s";
+    in-out property <float> live-exposure-slider: 0.5;
+    in property <image> live-histogram-image;
+    in property <image> live-preview-image;
+    in-out property <bool> live-running: false;
+    callback camera-selected(int);
+    callback capture-mode-changed(int);
+    callback gd-abort();
+    callback gd-activation-changed(string);
+    callback gd-auto();
+    callback gd-channel-selected(int);
+    callback gd-channel-toggled(int, bool);
+    callback gd-clear-faults();
+    callback gd-connect();
+    callback gd-disconnect();
+    callback gd-highlight-saturated-changed(bool);
+    callback gd-instrument-selected(int);
+    callback gd-run();
+    callback gd-sim-door(bool);
+    callback gd-sim-fault(int, bool);
+    callback gd-sim-press-button();
+    callback gd-sim-tray(int);
+    callback gel-type-changed(int);
+    callback hdr-steps-changed(int);
+    callback live-auto();
+    callback live-capture();
+    callback live-exposure-changed(float);
+    callback live-start();
+    callback live-stop();
+    callback rescan-cameras();
+    callback set-hdr-lower();
+    callback set-hdr-upper();
+
+      padding: 6px;
+      spacing: 6px;
+
+      // ---- instrument status strip -------------------------------------
+      // Only with an enclosure: these are its states, and they change under
+      // the user's hands rather than under the software's, so they are a
+      // fixed part of the tab rather than something to go looking for.
+      if root.gd-connected: Rectangle {
+        height: 40px;
+        background: #f4f4f6;
+        border-width: 1px;
+        border-color: #d8d8dc;
+        border-radius: 4px;
+        HorizontalLayout {
+          padding-left: 8px;
+          padding-right: 8px;
+          padding-top: 6px;
+          padding-bottom: 6px;
+          spacing: 8px;
+          StatusChip {
+            label: root.gd-model;
+            tint: #2e9e46;
+          }
+          StatusChip {
+            label: root.gd-door-closed ? "Door closed" : "Door OPEN";
+            tint: root.gd-door-closed ? #2e9e46 : #c0392b;
+            alert: !root.gd-door-closed;
+          }
+          StatusChip {
+            label: "Tray: " + root.gd-tray-label;
+            tint: root.gd-tray-present ? #3b6fb5 : #d08a1e;
+            alert: !root.gd-tray-present;
+          }
+          StatusChip {
+            label: root.gd-lamps-on ? "Lamps ON" : "Lamps off";
+            tint: root.gd-lamps-on ? #d08a1e : #b0b0b6;
+            alert: root.gd-lamps-on;
+          }
+          if root.gd-busy: StatusChip { label: "Busy"; tint: #d08a1e; }
+          if root.gd-faults.length > 0: StatusChip {
+            label: root.gd-faults.length + " fault" + (root.gd-faults.length == 1 ? "" : "s");
+            tint: #c0392b;
+            alert: true;
+          }
+          if root.gd-simulated: StatusChip { label: "SIMULATED"; tint: #7a4fb5; alert: true; }
+          Rectangle { horizontal-stretch: 1; }
+          Text { text: root.gd-versions; color: #666; vertical-alignment: center; }
+          Text { text: root.gd-serial; color: #666; vertical-alignment: center; }
+        }
+      }
+
+      // ---- fault banner ------------------------------------------------
+      // Faults latch, so this stays up until the user clears it. Each one
+      // carries its remedy: "lamp failure in bank 1" is only actionable if
+      // it also says the lamps are replaced as a set.
+      if root.gd-faults.length > 0: Rectangle {
+        background: #fdf0ee;
+        border-width: 1px;
+        border-color: #e2b3ab;
+        border-radius: 4px;
+        VerticalLayout {
+          padding: 8px;
+          spacing: 6px;
+          for f in root.gd-faults: VerticalLayout {
+            spacing: 2px;
+            Text { text: "⚠  " + f.headline; color: #a03024; font-weight: 700; wrap: word-wrap; }
+            Text { text: f.remedy; color: #6b4a45; font-size: 11px; wrap: word-wrap; }
+          }
+          HorizontalLayout {
+            alignment: start;
+            Button { text: "Clear faults"; clicked => { root.gd-clear-faults(); } }
+          }
+        }
+      }
+
+      HorizontalBox {
+        padding: 0px;
+
+        // ---- left: the viewfinder --------------------------------------
+        VerticalLayout {
+          horizontal-stretch: 1;
+          spacing: 6px;
+          HorizontalLayout {
+            spacing: 6px;
+            Text { text: "Camera:"; vertical-alignment: center; }
+            ComboBox {
+              model: root.camera-names;
+              current-index <=> root.camera-index;
+              horizontal-stretch: 1;
+              selected(v) => { root.camera-selected(self.current-index); }
+            }
+            // Re-enumerates cameras *and* enclosures: plugging the imager in
+            // is how this tab grows its channels, so the button that looks
+            // for hardware has to look for all of it.
+            Button { text: "Rescan"; clicked => { root.rescan-cameras(); } }
+            Button {
+              text: root.live-running ? "Stop preview" : "Start preview";
+              clicked => {
+                if (root.live-running) { root.live-stop(); } else { root.live-start(); }
+              }
+            }
+          }
+          Rectangle {
+            background: #1c1c1c;
+            border-width: 1px;
+            border-color: #444;
+            vertical-stretch: 1;
+            clip: true;
+            Image {
+              source: root.live-preview-image;
+              image-fit: contain;
+              width: 100%;
+              height: 100%;
+            }
+            if !root.live-running: Text {
+              text: "Preview stopped. Press “Start preview”.";
+              color: #888;
+              horizontal-alignment: center;
+              vertical-alignment: center;
+            }
+          }
+          // Live histogram of the preview frame (exposure aid).
+          Rectangle {
+            height: 56px;
+            border-width: 1px;
+            border-color: #cccccc;
+            background: white;
+            clip: true;
+            Image {
+              source: root.live-histogram-image;
+              width: 100%;
+              height: 100%;
+              image-fit: fill;
+            }
+          }
+          // Exposure-time slider (log scale) + live readout. Disabled when
+          // the camera can't do manual exposure (then HDR is impossible).
+          // "Highlight saturated" rides along here because it is about what the
+          // exposure did: those pixels carry no intensity, so anything measured
+          // from them is wrong.
+          HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Exposure:"; vertical-alignment: center; }
+            Slider {
+              minimum: 0.0; maximum: 1.0;
+              value <=> root.live-exposure-slider;
+              horizontal-stretch: 1;
+              enabled: root.exposure-supported;
+              changed(v) => { root.live-exposure-changed(v); }
+            }
+            Text {
+              text: root.exposure-supported ? root.live-exposure-label : "auto";
+              vertical-alignment: center;
+              width: 64px;
+              horizontal-alignment: right;
+            }
+            CheckBox {
+              text: "Highlight saturated";
+              checked <=> root.gd-highlight-saturated;
+              toggled => { root.gd-highlight-saturated-changed(self.checked); }
+            }
+          }
+          // The activation countdown, and only that: 45 seconds of a UV
+          // pre-exposure look identical to a hung program without it. Every
+          // other word about the run goes to the window's status bar rather
+          // than into a box of its own here.
+          if root.gd-activation-progress > 0: Rectangle {
+            height: 6px;
+            vertical-stretch: 0;
+            background: #dcdce0;
+            border-radius: 3px;
+            Rectangle {
+              x: 0;
+              width: parent.width * root.gd-activation-progress;
+              height: 6px;
+              border-radius: 3px;
+              background: #7a4fb5;
+            }
+          }
+        }
+
+        // ---- right: what to acquire ------------------------------------
+        VerticalLayout {
+          width: 330px;
+          spacing: 6px;
+          alignment: start;
+
+          // The enclosure, when there is one to connect to. Hidden entirely
+          // with a plain camera: an empty "Instrument" box would only raise
+          // the question of what is missing.
+          if root.gd-instrument-names.length > 0: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            height: 28px;
+            ComboBox {
+              model: root.gd-instrument-names;
+              current-index <=> root.gd-instrument-index;
+              horizontal-stretch: 1;
+              enabled: !root.gd-connected;
+              selected(v) => { root.gd-instrument-selected(self.current-index); }
+            }
+            Button {
+              text: root.gd-connected ? "Disconnect" : "Connect";
+              clicked => {
+                if (root.gd-connected) { root.gd-disconnect(); } else { root.gd-connect(); }
+              }
+            }
+          }
+
+          HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Gel type:"; vertical-alignment: center; }
+            ComboBox {
+              model: root.gel-type-names;
+              current-index <=> root.gd-gel-type-index;
+              horizontal-stretch: 1;
+              selected(v) => { root.gel-type-changed(self.current-index); }
+            }
+          }
+
+          Text {
+            text: root.gd-connected ? "Channels to acquire" : "Image";
+            font-weight: 700;
+            vertical-stretch: 0;
+          }
+          // One row per light source, as a table: tick to include it in the
+          // run, a lamp column for the one that is in the machine, then the
+          // channel and what will be shot for it. With a plain camera there is
+          // one channel and nothing to tick — an instrument that cannot change
+          // its light has exactly one.
+          Rectangle {
+            height: root.gd-channel-items.length * 30px + 22px;
+            vertical-stretch: 0;
+            background: white;
+            border-width: 1px;
+            border-color: #d0d0d4;
+            VerticalLayout {
+              alignment: start;
+              padding: 1px;
+              // Header. The lamp column has no title: a circle under a word
+              // twice its width would only spread the table out.
+              Rectangle {
+                height: 20px;
+                background: #f0f0f2;
+                HorizontalLayout {
+                  padding-left: 6px;
+                  padding-right: 6px;
+                  spacing: 6px;
+                  if root.gd-connected: Rectangle { width: 22px; }
+                  Rectangle { width: 14px; }
+                  Text {
+                    text: "Channel";
+                    width: 90px;
+                    font-size: 11px;
+                    color: #666;
+                    vertical-alignment: center;
+                  }
+                  Text {
+                    text: "Image";
+                    horizontal-stretch: 1;
+                    font-size: 11px;
+                    color: #666;
+                    vertical-alignment: center;
+                  }
+                }
+              }
+              for c[i] in root.gd-channel-items: Rectangle {
+                height: 30px;
+                background: i == root.gd-channel-index ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
+                TouchArea { clicked => { root.gd-channel-selected(i); } }
+                HorizontalLayout {
+                  padding-left: 6px;
+                  padding-right: 6px;
+                  spacing: 6px;
+                  if root.gd-connected: CheckBox {
+                    width: 22px;
+                    checked: c.selected;
+                    toggled => { root.gd-channel-toggled(i, self.checked); }
+                  }
+                  // Filled for the tray in the machine right now: that channel
+                  // is lit, and can be shot without touching anything.
+                  Rectangle {
+                    width: 14px;
+                    Rectangle {
+                      width: 10px;
+                      height: 10px;
+                      x: 2px;
+                      y: (parent.height - 10px) / 2;
+                      border-radius: 5px;
+                      border-width: 1px;
+                      border-color: c.inserted ? #2e9e46 : #c8c8cc;
+                      background: c.inserted ? #2e9e46 : transparent;
+                    }
+                  }
+                  Text {
+                    text: c.name;
+                    width: 90px;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    font-weight: c.selected ? 700 : 400;
+                    color: c.selected ? #222 : #777;
+                  }
+                  Text {
+                    text: c.summary;
+                    horizontal-stretch: 1;
+                    color: #888;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                  }
+                }
+              }
+            }
+          }
+          // Selecting a channel is what lights it: the tray decides which
+          // lamps, and this decides that they burn. When the channel is not
+          // the tray that is in, that is what this line says.
+          if root.gd-channel-hint != "": Text {
+            text: root.gd-channel-hint;
+            color: root.gd-channel-ready ? #2e9e46 : #b26b00;
+            font-size: 11px;
+            wrap: word-wrap;
+            vertical-stretch: 0;
+          }
+
+          // ---- how to shoot the selected channel ----
+          HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Take:"; vertical-alignment: center; }
+            ComboBox {
+              model: ["Single image", "HDR bracket"];
+              current-index <=> root.gd-capture-mode-index;
+              horizontal-stretch: 1;
+              enabled: root.exposure-supported;
+              selected(v) => { root.capture-mode-changed(self.current-index); }
+            }
+          }
+          // The bracket's ends. Each "Set" adopts the exposure the slider is on
+          // now, so the bounds are found by looking at the picture rather than
+          // by typing numbers. Right-aligned against their buttons.
+          if root.gd-capture-mode-index == 1: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Min:"; vertical-alignment: center; }
+            Text {
+              text: root.hdr-min-label;
+              vertical-alignment: center;
+              horizontal-alignment: right;
+              horizontal-stretch: 1;
+            }
+            Button { text: "Set"; clicked => { root.set-hdr-lower(); } }
+          }
+          if root.gd-capture-mode-index == 1: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Max:"; vertical-alignment: center; }
+            Text {
+              text: root.hdr-max-label;
+              vertical-alignment: center;
+              horizontal-alignment: right;
+              horizontal-stretch: 1;
+            }
+            Button { text: "Set"; clicked => { root.set-hdr-upper(); } }
+          }
+          if root.gd-capture-mode-index == 1: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Steps:"; vertical-alignment: center; }
+            ComboBox {
+              model: ["2", "3", "5", "7"];
+              current-index <=> root.gd-hdr-steps-idx;
+              horizontal-stretch: 1;
+              selected(v) => { root.hdr-steps-changed(self.current-index); }
+            }
+            Text {
+              text: root.hdr-range-label;
+              color: #888;
+              vertical-alignment: center;
+              width: 56px;
+              horizontal-alignment: right;
+            }
+          }
+          // Stain-free only: a UV pre-exposure that drives the chemistry,
+          // run before the image exposure.
+          if root.gd-activation-applicable: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Text { text: "Activation:"; vertical-alignment: center; }
+            LineEdit {
+              text <=> root.gd-activation-s;
+              horizontal-stretch: 1;
+              edited(t) => { root.gd-activation-changed(t); }
+            }
+            Text { text: "s"; vertical-alignment: center; }
+          }
+          HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            Button {
+              text: "Auto this";
+              horizontal-stretch: 1;
+              enabled: root.exposure-supported && !root.capture-active;
+              clicked => { root.live-auto(); }
+            }
+            // Only worth offering when there is more than one channel to
+            // walk, and only an enclosure can walk them.
+            if root.gd-connected: Button {
+              text: "Auto all";
+              horizontal-stretch: 1;
+              enabled: root.gd-can-run;
+              clicked => { root.gd-auto(); }
+            }
+          }
+          Text {
+            text: root.gd-connected
+              ? "Auto meters where nothing clips: “this” for the selected channel, “all” for every ticked one in turn."
+              : "Auto meters the scene and sets the exposure to where nothing clips.";
+            color: #888; font-size: 11px; wrap: word-wrap;
+            vertical-stretch: 0;
+          }
+
+          Button {
+            text: root.gd-running ? "Abort run" : (root.gd-connected ? "Run" : "Capture");
+            primary: true;
+            vertical-stretch: 0;
+            enabled: root.gd-connected
+              ? (root.gd-running || root.gd-can-run)
+              : !root.capture-active;
+            clicked => {
+              if (root.gd-running) { root.gd-abort(); }
+              else if (root.gd-connected) { root.gd-run(); }
+              else { root.live-capture(); }
+            }
+          }
+          if root.gd-connected && !root.gd-running && root.gd-run-blocker != "": Text {
+            text: root.gd-run-blocker;
+            color: #b26b00;
+            font-size: 11px;
+            wrap: word-wrap;
+            vertical-stretch: 0;
+          }
+          if root.gd-message != "": Text {
+            text: root.gd-message;
+            color: #666;
+            font-size: 11px;
+            wrap: word-wrap;
+            vertical-stretch: 0;
+          }
+
+          // --- simulated enclosure bench controls ---
+          // Only for the simulator: these are the things you would do to the
+          // real box with your hands, and they make the interlocks and the
+          // fault paths workable with no hardware.
+          if root.gd-simulated && root.gd-connected: GroupBox {
+            title: "Simulated instrument";
+            vertical-stretch: 0;
+            VerticalLayout {
+              alignment: start;
+              spacing: 6px;
+              HorizontalLayout {
+                spacing: 6px;
+                Text { text: "Tray:"; vertical-alignment: center; }
+                ComboBox {
+                  model: ["none", "UV", "White light", "Blue light", "Stain-free"];
+                  current-index <=> root.gd-sim-tray-index;
+                  horizontal-stretch: 1;
+                  selected(v) => { root.gd-sim-tray(self.current-index); }
+                }
+              }
+              CheckBox {
+                text: "Door closed";
+                checked: root.gd-door-closed;
+                toggled => { root.gd-sim-door(self.checked); }
+              }
+              Button { text: "Press Run button"; clicked => { root.gd-sim-press-button(); } }
+              Text { text: "Inject faults:"; color: #666; font-size: 11px; }
+              CheckBox { text: "No sample tray"; toggled => { root.gd-sim-fault(0, self.checked); } }
+              CheckBox { text: "Lamp assembly unseated"; toggled => { root.gd-sim-fault(1, self.checked); } }
+              CheckBox { text: "Lamp bank 1 failed"; toggled => { root.gd-sim-fault(3, self.checked); } }
+              CheckBox { text: "Lamp bank 2 failed"; toggled => { root.gd-sim-fault(4, self.checked); } }
+            }
+          }
+          // Absorbs the leftover height so the controls above keep their
+          // natural size instead of being stretched apart.
+          Rectangle { vertical-stretch: 1; }
+        }
+      }
+    }
