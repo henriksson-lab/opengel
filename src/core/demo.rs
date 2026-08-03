@@ -150,6 +150,7 @@ fn analysis_from_truth(truth: &GroundTruth) -> Analysis {
                 v_center: v,
                 v_half_width: 0.012,
                 integrated_density: 0.0,
+                channel_density: Vec::new(),
                 size: None,
                 known_size: None,
                 angle: 0.0,

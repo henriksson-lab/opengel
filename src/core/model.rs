@@ -46,6 +46,118 @@ impl GelType {
     }
 }
 
+/// One name/value pair of acquisition metadata, exactly as the source recorded
+/// it.
+///
+/// Deliberately untyped. Instruments disagree about what they report — a Gel
+/// Doc EZ writes `Illumination Mode`, a ChemiDoc MP writes `Excitation Source`
+/// and `Emission Filter`, a ChemiDoc XRS+ adds `Binning` — and a fixed schema
+/// would silently drop whatever it did not anticipate. We do not interpret
+/// these; we carry them, and show them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attribute {
+    /// Human-readable name, e.g. `"Exposure Time (sec)"`.
+    pub name: String,
+    pub value: String,
+}
+
+impl Attribute {
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Attribute {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// An acquisition record: attributes in the order the source listed them, which
+/// is the order a user reading the instrument's own report expects.
+pub type Attributes = Vec<Attribute>;
+
+/// The colour a channel is drawn in when channels are composited.
+///
+/// Bio-Rad's `<colormap>` element, and ours. Anything unrecognized reads as
+/// [`ChannelColor::Gray`] rather than failing the load — a colour is a display
+/// preference, and losing one is not worth losing the pixels over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChannelColor {
+    #[default]
+    Gray,
+    Red,
+    Green,
+    Blue,
+    Cyan,
+    Magenta,
+    Yellow,
+}
+
+impl ChannelColor {
+    /// Parse a `<colormap>` string. Unknown names fall back to `Gray`.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "red" => ChannelColor::Red,
+            "green" => ChannelColor::Green,
+            "blue" => ChannelColor::Blue,
+            "cyan" => ChannelColor::Cyan,
+            "magenta" => ChannelColor::Magenta,
+            "yellow" => ChannelColor::Yellow,
+            _ => ChannelColor::Gray,
+        }
+    }
+
+    /// Linear RGB weights used to tint this channel when compositing.
+    pub fn rgb(self) -> (f32, f32, f32) {
+        match self {
+            ChannelColor::Gray => (1.0, 1.0, 1.0),
+            ChannelColor::Red => (1.0, 0.0, 0.0),
+            ChannelColor::Green => (0.0, 1.0, 0.0),
+            ChannelColor::Blue => (0.0, 0.0, 1.0),
+            ChannelColor::Cyan => (0.0, 1.0, 1.0),
+            ChannelColor::Magenta => (1.0, 0.0, 1.0),
+            ChannelColor::Yellow => (1.0, 1.0, 0.0),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ChannelColor::Gray => "Gray",
+            ChannelColor::Red => "Red",
+            ChannelColor::Green => "Green",
+            ChannelColor::Blue => "Blue",
+            ChannelColor::Cyan => "Cyan",
+            ChannelColor::Magenta => "Magenta",
+            ChannelColor::Yellow => "Yellow",
+        }
+    }
+}
+
+/// One acquisition channel: the same gel, imaged under one illumination.
+///
+/// Channels share the document's geometry — one warp, one set of lanes, one set
+/// of band positions — because they are the same physical gel photographed
+/// several times. What differs per channel is intensity, which is why
+/// [`Band::channel_density`] is a vector while the band's position is not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Channel {
+    pub id: u32,
+    /// Display name — the source's application ("Stain Free Blot") when it has
+    /// one, otherwise "Channel N".
+    pub name: String,
+    #[serde(default)]
+    pub color: ChannelColor,
+}
+
+impl Channel {
+    pub fn new(id: u32, name: impl Into<String>, color: ChannelColor) -> Self {
+        Channel {
+            id,
+            name: name.into(),
+            color,
+        }
+    }
+}
+
 /// Per-image capture metadata (stored in `metadata.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CaptureMeta {
@@ -63,6 +175,11 @@ pub struct CaptureMeta {
     /// Bracket group id: images sharing a value form one HDR exposure bracket.
     #[serde(default)]
     pub bracket_group: Option<u32>,
+    /// The instrument's own acquisition record for this frame, carried verbatim.
+    /// Populated when importing a vendor file; empty for our own captures until
+    /// something fills it in.
+    #[serde(default)]
+    pub acquisition: Attributes,
 }
 
 /// A single captured image, referenced by filename inside the ZIP.
@@ -77,6 +194,8 @@ pub struct GelImage {
     /// True if the PNG is 16-bit (higher dynamic range per frame).
     #[serde(default)]
     pub sixteen_bit: bool,
+    /// Which channel this frame belongs to, by [`Channel::id`].
+    pub channel: u32,
     pub meta: CaptureMeta,
 }
 
@@ -129,8 +248,17 @@ pub struct Band {
     pub v_center: f64,
     /// Peak half-extent along `v` (band spread in migration).
     pub v_half_width: f64,
-    /// Background-subtracted integrated density (area under the peak).
+    /// Background-subtracted integrated density (area under the peak), measured
+    /// on the document's working image.
     pub integrated_density: f64,
+    /// The same measurement taken separately in each channel, indexed by
+    /// [`Channel::id`]. Empty until a per-channel measurement has been run.
+    ///
+    /// The band's *position* is deliberately not per-channel: channels are the
+    /// same gel under different light, so they share geometry and differ only
+    /// in how much signal each one sees.
+    #[serde(default)]
+    pub channel_density: Vec<f64>,
     /// Estimated size (bp/nt/Da) from ladder calibration.
     #[serde(default)]
     pub size: Option<f64>,
@@ -324,6 +452,19 @@ pub struct GelProject {
     pub gel_type: GelType,
     #[serde(default)]
     pub images: Vec<GelImage>,
+    /// Acquisition channels — always at least one, so no call site has to
+    /// branch on whether a document is multichannel just to read its pixels.
+    pub channels: Vec<Channel>,
+    /// Document-level metadata from the source file — its name, the operator,
+    /// a description. Carried verbatim, like [`CaptureMeta::acquisition`].
+    #[serde(default)]
+    pub metadata: Attributes,
+    /// Display the image inverted by default: the source said a zero sample
+    /// should render *white*, which is how blots are conventionally shown. It
+    /// describes presentation only — the pixels are stored as they were read,
+    /// with high values meaning more signal either way.
+    #[serde(default)]
+    pub display_inverted: bool,
     #[serde(default)]
     pub analysis: Analysis,
     /// Record of a saved HDR merge (`images/merged.png`), if one was computed and
@@ -356,8 +497,26 @@ impl GelProject {
             version: FORMAT_VERSION,
             gel_type,
             images: Vec::new(),
+            channels: vec![Channel::new(0, "Channel 1", ChannelColor::Gray)],
+            metadata: Attributes::new(),
+            display_inverted: false,
             analysis: Analysis::default(),
             hdr: None,
         }
+    }
+
+    /// True when the document holds more than one acquisition channel.
+    pub fn is_multichannel(&self) -> bool {
+        self.channels.len() > 1
+    }
+
+    /// Indices into [`GelProject::images`] belonging to `channel`.
+    pub fn image_indices_for_channel(&self, channel: u32) -> Vec<usize> {
+        self.images
+            .iter()
+            .enumerate()
+            .filter(|(_, img)| img.channel == channel)
+            .map(|(i, _)| i)
+            .collect()
     }
 }

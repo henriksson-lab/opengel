@@ -86,6 +86,8 @@ pub struct OpenDocumentState {
     pub hdr_align: bool,
     pub hdr_deghost: bool,
     pub view_frame: Option<usize>,
+    /// Which acquisition channel is displayed and analysed.
+    pub view_channel: u32,
     pub trace_mode: TraceMode,
     pub trace_zoom: f64,
     pub trace_pan: f64,
@@ -163,6 +165,8 @@ pub struct AppState {
     /// Which captured frame to display: `None` = the merged HDR working image,
     /// `Some(i)` = raw frame `i`. Analysis always uses the merged image.
     pub view_frame: Option<usize>,
+    /// Which acquisition channel is displayed and analysed.
+    pub view_channel: u32,
     /// Optional stages for the HDR "Recompute" action (bias / align / de-ghost).
     pub hdr_bias_subtraction: bool,
     pub hdr_align: bool,
@@ -239,6 +243,12 @@ pub struct AppState {
     pub live_exposure_s: f64,
     /// Most recent live preview frame.
     pub preview: Option<GrayF32>,
+
+    // ---- Gel Doc EZ tab ----
+    /// The imaging enclosure, its protocol library and the run state machine.
+    /// Separate from the live-capture fields above because an enclosure run is
+    /// a sequenced instrument operation, not a frame grab.
+    pub geldoc: crate::geldoc::GelDocState,
 }
 
 /// Exposure-time slider range (seconds), log-mapped. Covers sub-millisecond to
@@ -288,6 +298,7 @@ impl AppState {
             hover_x: -1.0,
             hover_y: -1.0,
             view_frame: None,
+            view_channel: 0,
             trace_mode: TraceMode::Intensity,
             trace_zoom: 1.0,
             trace_pan: 0.5,
@@ -320,6 +331,7 @@ impl AppState {
             hdr_steps: 3,
             live_exposure_s: 0.1,
             preview: None,
+            geldoc: crate::geldoc::GelDocState::new(),
         }
     }
 
@@ -357,6 +369,7 @@ impl AppState {
             hdr_align: self.hdr_align,
             hdr_deghost: self.hdr_deghost,
             view_frame: self.view_frame,
+            view_channel: self.view_channel,
             trace_mode: self.trace_mode,
             trace_zoom: self.trace_zoom,
             trace_pan: self.trace_pan,
@@ -398,6 +411,7 @@ impl AppState {
         self.hdr_align = open.hdr_align;
         self.hdr_deghost = open.hdr_deghost;
         self.view_frame = open.view_frame;
+        self.view_channel = open.view_channel;
         self.trace_mode = open.trace_mode;
         self.trace_zoom = open.trace_zoom;
         self.trace_pan = open.trace_pan;
@@ -438,6 +452,7 @@ impl AppState {
         self.hdr_align = false;
         self.hdr_deghost = false;
         self.view_frame = None;
+        self.view_channel = 0;
         self.trace_mode = TraceMode::Intensity;
         self.trace_zoom = 1.0;
         self.trace_pan = 0.5;
@@ -492,6 +507,7 @@ impl AppState {
         self.invert = false;
         self.show_unwarped = false;
         self.view_frame = None;
+        self.view_channel = 0;
         self.hdr_bias_subtraction = false;
         self.hdr_align = false;
         self.hdr_deghost = false;
@@ -978,6 +994,133 @@ impl AppState {
     /// The selector index matching the current `view_frame`.
     pub fn view_frame_index(&self) -> usize {
         self.view_frame.map_or(0, |i| i + 1)
+    }
+
+    /// Labels for the channel selector, e.g. "DyLight 549 (Green)".
+    pub fn channel_labels(&self) -> Vec<String> {
+        self.doc
+            .as_ref()
+            .map(|d| {
+                d.project
+                    .channels
+                    .iter()
+                    .map(|c| match c.color {
+                        opengel::core::ChannelColor::Gray => c.name.clone(),
+                        color => format!("{} ({})", c.name, color.label()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// True when the open document has more than one channel, which is the only
+    /// case where the channel selector is worth showing.
+    pub fn is_multichannel(&self) -> bool {
+        self.doc
+            .as_ref()
+            .is_some_and(|d| d.project.is_multichannel())
+    }
+
+    /// Show and analyse a different channel.
+    ///
+    /// The working image is recomputed from that channel alone. Lanes, bands
+    /// and the warp are deliberately left untouched: channels are the same gel
+    /// under different light, so the geometry found in one is the geometry of
+    /// all of them.
+    pub fn set_view_channel(&mut self, sel: usize) {
+        let Some(doc) = &self.doc else { return };
+        let Some(channel) = doc.project.channels.get(sel) else {
+            return;
+        };
+        self.view_channel = channel.id;
+        // A saved HDR merge belongs to whichever channel produced it, so it
+        // cannot stand in for another one.
+        self.work = if doc.merged.is_some() {
+            let id = channel.id;
+            doc.project
+                .image_indices_for_channel(id)
+                .first()
+                .and_then(|&i| doc.frames.get(i))
+                .map(GrayF32::from_dynamic)
+        } else {
+            doc.working_image_for_channel(channel.id)
+        };
+        self.view_frame = None;
+        self.bump_doc_gen();
+    }
+
+    /// The selector index matching the current `view_channel`.
+    pub fn view_channel_index(&self) -> usize {
+        self.doc
+            .as_ref()
+            .and_then(|d| {
+                d.project
+                    .channels
+                    .iter()
+                    .position(|c| c.id == self.view_channel)
+            })
+            .unwrap_or(0)
+    }
+
+    /// Every metadata row to show in the Metadata tab, as
+    /// `(section, name, value)`.
+    ///
+    /// Sections are just headings — nothing here is interpreted, because the
+    /// instruments disagree about what they report and the useful thing is to
+    /// show whatever was recorded rather than the subset we anticipated.
+    pub fn metadata_rows(&self) -> Vec<(String, String, String)> {
+        let Some(doc) = &self.doc else {
+            return Vec::new();
+        };
+        let p = &doc.project;
+        let mut rows = Vec::new();
+
+        rows.push(("Document".to_string(), "Gel type".to_string(), format!("{:?}", p.gel_type)));
+        if let Some(path) = &self.source_path {
+            rows.push((
+                "Document".to_string(),
+                "File".to_string(),
+                path.display().to_string(),
+            ));
+        }
+        for a in &p.metadata {
+            rows.push(("Document".to_string(), a.name.clone(), a.value.clone()));
+        }
+
+        for channel in &p.channels {
+            let section = if p.is_multichannel() {
+                format!("Channel {} — {}", channel.id + 1, channel.name)
+            } else {
+                "Acquisition".to_string()
+            };
+            if p.is_multichannel() {
+                rows.push((section.clone(), "Display colour".to_string(), channel.color.label().to_string()));
+            }
+            for &i in &p.image_indices_for_channel(channel.id) {
+                let img = &p.images[i];
+                rows.push((
+                    section.clone(),
+                    "Size".to_string(),
+                    format!("{} × {} px", img.width, img.height),
+                ));
+                if img.meta.acquisition.is_empty() {
+                    // Our own captures have no vendor record; say so rather
+                    // than showing an empty section.
+                    rows.push((
+                        section.clone(),
+                        "Exposure".to_string(),
+                        format!("{:.3} s", img.meta.exposure_seconds),
+                    ));
+                    if let Some(cam) = &img.meta.camera_name {
+                        rows.push((section.clone(), "Camera".to_string(), cam.clone()));
+                    }
+                }
+                for a in &img.meta.acquisition {
+                    rows.push((section.clone(), a.name.clone(), a.value.clone()));
+                }
+            }
+        }
+        rows
     }
 
     /// The grayscale image currently shown (selected raw frame, or the merged
@@ -2283,8 +2426,20 @@ impl AppState {
                 return Ok(());
             }
         }
-        let doc = GelDocument::load(path).with_context(|| format!("loading {}", path.display()))?;
+        let doc = if opengel::core::scn::has_scn_extension(path) {
+            GelDocument::load_scn(path)
+                .with_context(|| format!("reading Image Lab scan {}", path.display()))?
+        } else {
+            GelDocument::load(path).with_context(|| format!("loading {}", path.display()))?
+        };
+        // A source that asked for a white background gets one. This is the only
+        // place the preference is applied: it is how the document should first
+        // appear, not a lock — the user's own invert toggle still rules after.
+        let display_inverted = doc.project.display_inverted;
         self.replace_active_with_document(doc, Some(path.to_path_buf()), "Untitled gel");
+        if display_inverted {
+            self.set_invert(true);
+        }
         Ok(())
     }
 
@@ -2683,6 +2838,7 @@ impl AppState {
                 v_center: (yc / h as f64).clamp(0.0, 1.0),
                 v_half_width: half / h as f64,
                 integrated_density: density,
+                channel_density: Vec::new(),
                 size: None,
                 known_size: None,
                 angle: 0.0,

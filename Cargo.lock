@@ -6563,6 +6563,7 @@ dependencies = [
  "printpdf",
  "rayon",
  "rfd",
+ "roxmltree",
  "rustfft",
  "serde",
  "serde_json",

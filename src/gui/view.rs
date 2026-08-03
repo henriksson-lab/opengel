@@ -5,10 +5,39 @@
 //! only produces the path geometry and colors.
 
 use opengel::core::GrayF32;
+use opengel::instrument::application::APPLICATIONS;
+use opengel::instrument::protocol::{ExposureMode, ProtocolStep};
 use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 
+use crate::geldoc::{GelDocState, RunPhase};
 use crate::state::{AppState, LaneTrace, TraceMode};
-use crate::{AppWindow, AxisTick, LaneItem, TracePath, TreeRow, WarpKnot};
+use crate::{
+    AppWindow, AxisTick, FaultItem, LaneItem, MetaRow, ProtocolItem, StepItem, TracePath, TreeRow,
+    WarpKnot,
+};
+
+/// Rebuild the Metadata tab's rows.
+///
+/// The section heading is emitted on the first row of each run rather than
+/// repeated, so a channel's fields read as one block.
+pub fn refresh_metadata(ui: &AppWindow, state: &AppState) {
+    let mut last_section = String::new();
+    let rows: Vec<MetaRow> = state
+        .metadata_rows()
+        .into_iter()
+        .map(|(section, name, value)| {
+            let first = section != last_section;
+            last_section = section.clone();
+            MetaRow {
+                section: section.into(),
+                name: name.into(),
+                value: value.into(),
+                first_in_section: first,
+            }
+        })
+        .collect();
+    ui.set_metadata_rows(ModelRc::new(VecModel::from(rows)));
+}
 
 /// Distinct colors for sample-lane traces (ladders use a fixed gold).
 const PALETTE: [(u8, u8, u8); 6] = [
@@ -78,6 +107,17 @@ pub fn refresh(ui: &AppWindow, state: &AppState) {
         .collect();
     ui.set_frame_names(ModelRc::new(VecModel::from(frames)));
     ui.set_frame_index(state.view_frame_index() as i32);
+
+    // Channel selector and the Metadata tab.
+    let channels: Vec<SharedString> = state
+        .channel_labels()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    ui.set_channel_names(ModelRc::new(VecModel::from(channels)));
+    ui.set_channel_index(state.view_channel_index() as i32);
+    ui.set_is_multichannel(state.is_multichannel());
+    refresh_metadata(ui, state);
 
     let tree: Vec<TreeRow> = state
         .tree_rows()
@@ -538,6 +578,218 @@ fn draw_migration_arrow(buf: &mut SharedPixelBuffer<slint::Rgb8Pixel>, state: &A
             color,
         );
     }
+}
+
+/// Refresh the Gel Doc EZ tab: instrument state, faults, protocols and steps.
+///
+/// Called from the same event pump that drains the camera, so this runs several
+/// times a second while the instrument is polled. It must therefore be cheap and
+/// must not clobber anything the user is typing — see `name_field_for`.
+pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
+    let gd = &state.geldoc;
+
+    // --- connection and identity ---
+    let names: Vec<SharedString> = gd.instruments.iter().map(SharedString::from).collect();
+    ui.set_gd_instrument_names(ModelRc::new(VecModel::from(names)));
+    ui.set_gd_instrument_index(gd.selected_instrument as i32);
+    ui.set_gd_connected(gd.connected);
+    ui.set_gd_simulated(gd.simulated);
+    ui.set_gd_model(
+        if gd.connected {
+            gd.info.model.clone()
+        } else {
+            "—".into()
+        }
+        .into(),
+    );
+    ui.set_gd_versions(
+        if gd.connected {
+            format!(
+                "fw {}  hw {}",
+                gd.info.firmware_string(),
+                gd.info.hardware_string()
+            )
+        } else {
+            String::new()
+        }
+        .into(),
+    );
+    ui.set_gd_serial(
+        if gd.info.serial.is_empty() {
+            String::new()
+        } else {
+            format!("SN {}", gd.info.serial)
+        }
+        .into(),
+    );
+
+    // --- live sense state ---
+    let tray = gd.inserted_tray();
+    ui.set_gd_tray_label(
+        tray.map(|t| t.label().to_string())
+            .unwrap_or_else(|| if gd.connected { "none".into() } else { "—".into() })
+            .into(),
+    );
+    ui.set_gd_tray_present(tray.is_some());
+    ui.set_gd_door_closed(gd.door_closed());
+    ui.set_gd_busy(gd.sense.is_some_and(|s| s.busy));
+    ui.set_gd_watch_button(gd.watch_run_button);
+    // The sense bits nobody has decoded. Shown, not hidden: the front Run
+    // button is believed to be in there, and seeing the mask move when the
+    // button is pressed is how it gets identified on real hardware.
+    ui.set_gd_undecoded_label(
+        if gd.undecoded != 0 {
+            format!("Undecoded sense bits high: 0x{:04x}", gd.undecoded)
+        } else {
+            String::new()
+        }
+        .into(),
+    );
+
+    // --- faults, each with its remedy ---
+    let faults: Vec<FaultItem> = gd
+        .faults
+        .messages()
+        .into_iter()
+        .map(|m| FaultItem {
+            headline: m.headline.into(),
+            remedy: m.remedy.into(),
+        })
+        .collect();
+    ui.set_gd_faults(ModelRc::new(VecModel::from(faults)));
+
+    // --- protocol list ---
+    let protocols: Vec<ProtocolItem> = gd
+        .library
+        .protocols
+        .iter()
+        .map(|p| ProtocolItem {
+            name: p.name.clone().into(),
+            tray: p
+                .tray()
+                .map(|t| t.label().to_string())
+                .unwrap_or_else(|| "?".into())
+                .into(),
+            is_default: gd.library.is_default(&p.name),
+        })
+        .collect();
+    ui.set_gd_protocol_items(ModelRc::new(VecModel::from(protocols)));
+    ui.set_gd_protocol_index(gd.selected_protocol as i32);
+    ui.set_gd_protocol_is_default(
+        gd.protocol()
+            .is_some_and(|p| gd.library.is_default(&p.name)),
+    );
+    // Only rewrite the name field when the selection changed, so a refresh
+    // triggered by an instrument poll cannot overwrite an in-progress edit.
+    if gd.name_field_for.get() != gd.selected_protocol {
+        gd.name_field_for.set(gd.selected_protocol);
+        ui.set_gd_protocol_name(
+            gd.protocol()
+                .map(|p| p.name.clone())
+                .unwrap_or_default()
+                .into(),
+        );
+    }
+
+    // --- steps ---
+    let steps: Vec<StepItem> = ProtocolStep::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, &step)| {
+            let applicable = step != ProtocolStep::Activation
+                || gd.application().is_some_and(|a| a.needs_activation);
+            StepItem {
+                number: i as i32 + 1,
+                label: step.label().into(),
+                enabled: gd.protocol().is_some_and(|p| p.step_enabled(step)),
+                mandatory: step.is_mandatory(),
+                applicable,
+            }
+        })
+        .collect();
+    ui.set_gd_step_items(ModelRc::new(VecModel::from(steps)));
+    ui.set_gd_step_index(
+        ProtocolStep::ALL
+            .iter()
+            .position(|&s| s == gd.selected_step)
+            .unwrap_or(0) as i32,
+    );
+
+    // --- step options ---
+    let apps: Vec<SharedString> = APPLICATIONS
+        .iter()
+        .map(|a| SharedString::from(format!("{}  ({})", a.label(), a.tray.label())))
+        .collect();
+    ui.set_gd_application_names(ModelRc::new(VecModel::from(apps)));
+    ui.set_gd_application_index(
+        gd.protocol()
+            .and_then(|p| APPLICATIONS.iter().position(|a| a.id == p.application))
+            .unwrap_or(0) as i32,
+    );
+    ui.set_gd_application_tray(
+        gd.application()
+            .map(|a| a.tray.label().to_string())
+            .unwrap_or_else(|| "—".into())
+            .into(),
+    );
+    match gd.tray_mismatch() {
+        Some((wanted, inserted)) => {
+            ui.set_gd_tray_mismatch(true);
+            ui.set_gd_tray_mismatch_text(
+                match inserted {
+                    Some(inserted) => format!(
+                        "The {} tray is inserted. This application needs the {} tray — imaging it \
+                         on the wrong tray gives a blank gel.",
+                        inserted.label(),
+                        wanted.label()
+                    ),
+                    None => format!("Insert the {} tray.", wanted.label()),
+                }
+                .into(),
+            );
+        }
+        None => {
+            ui.set_gd_tray_mismatch(false);
+            ui.set_gd_tray_mismatch_text(SharedString::new());
+        }
+    }
+
+    let exposure = gd.protocol().map(|p| p.exposure).unwrap_or_default();
+    ui.set_gd_exposure_mode_index(match exposure.mode {
+        ExposureMode::AutoIntense => 0,
+        ExposureMode::AutoFaint => 1,
+        ExposureMode::Manual => 2,
+    });
+    ui.set_gd_exposure_slider(GelDocState::slider_from_exposure(exposure.manual_s));
+    ui.set_gd_exposure_label(fmt_seconds(exposure.clamped_manual()).into());
+    ui.set_gd_last_exposure_label(
+        gd.last_exposure_s
+            .map(|t| format!("Last run exposed for {}.", fmt_seconds(t)))
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_gd_activation_applicable(gd.application().is_some_and(|a| a.needs_activation));
+    ui.set_gd_activation_s(
+        gd.protocol()
+            .map(|p| format!("{:.0}", p.activation_s))
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_gd_highlight_saturated(gd.protocol().is_some_and(|p| p.highlight_saturated));
+
+    // --- run state ---
+    let blocker = gd.run_blocker();
+    ui.set_gd_can_run(blocker.is_none());
+    ui.set_gd_run_blocker(blocker.unwrap_or_default().into());
+    ui.set_gd_running(gd.phase.is_running());
+    ui.set_gd_phase_label(gd.phase.label().into());
+    ui.set_gd_activation_progress(match &gd.phase {
+        RunPhase::Activating { elapsed_s, total_s } if *total_s > 0.0 => {
+            (elapsed_s / total_s).clamp(0.0, 1.0) as f32
+        }
+        _ => 0.0,
+    });
+    ui.set_gd_message(gd.message.clone().into());
 }
 
 /// Refresh the Live tab: camera name, running state, status, preview image.

@@ -11,6 +11,14 @@ const MAX_RECENT_LADDERS: usize = 10;
 pub struct AppConfig {
     #[serde(default)]
     pub recent_ladders: Vec<String>,
+    /// Saved Gel Doc EZ protocols and the default bound to each tray.
+    ///
+    /// Protocols are the unit of reproducibility — a run you can repeat next
+    /// month — so they outlive the session and live in the user's settings
+    /// rather than in a document. `None` means this user has never opened the
+    /// tab, and gets the starter library.
+    #[serde(default)]
+    pub geldoc_protocols: Option<opengel::instrument::protocol::ProtocolLibrary>,
 }
 
 pub fn load_config() -> AppConfig {

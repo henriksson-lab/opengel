@@ -47,6 +47,42 @@ export struct WarpKnot {
     active: bool,
 }
 
+// One active instrument fault, in the user's language. `remedy` is what to do
+// about it — a fault the user can't act on is just an error message.
+export struct FaultItem {
+    headline: string,
+    remedy: string,
+}
+
+// A saved protocol in the Gel Doc EZ tab's left pane. Defaults are colour-coded
+// apart from the rest, because the default is what the hardware Run button
+// executes for its tray.
+export struct ProtocolItem {
+    name: string,
+    tray: string,
+    is-default: bool,
+}
+
+// One step of a protocol. `applicable` is false for a step this protocol can
+// never run (gel activation outside stain-free), which is shown greyed rather
+// than hidden so the sequence stays recognisable between protocols.
+export struct StepItem {
+    number: int,
+    label: string,
+    enabled: bool,
+    mandatory: bool,
+    applicable: bool,
+}
+
+// One row of the Metadata tab. `section` is a heading like "Channel 2 —
+// DyLight 549"; consecutive rows sharing one are drawn under a single header.
+export struct MetaRow {
+    section: string,
+    name: string,
+    value: string,
+    first-in-section: bool,
+}
+
 export component AppWindow inherits Window {
     title: "OpenGel";
     preferred-width: 1180px;
@@ -93,6 +129,12 @@ export component AppWindow inherits Window {
     in property <string> status: "Open a .gel.zip, or run `opengel --demo` to load a demo gel.";
     in property <string> gel-type-label: "-";
     in-out property <int> frame-index: 0;
+    // Acquisition channels. The selector is hidden entirely for the ordinary
+    // single-channel gel, where a control offering one choice is just noise.
+    in property <[string]> channel-names;
+    in property <bool> is-multichannel: false;
+    in-out property <int> channel-index: 0;
+    in property <[MetaRow]> metadata-rows;
     in-out property <float> disp-lo: 0.0;     // contrast window, fractions of [min,max]
     in-out property <float> disp-hi: 1.0;
     in-out property <bool> invert: false;
@@ -156,6 +198,54 @@ export component AppWindow inherits Window {
     in property <bool> capture-active: false;             // capture in progress
     in property <string> capture-status: "";
     in property <bool> exposure-supported: true;          // camera has manual exposure
+    // Which tab is shown. Bound to the TabWidget so `--tab N` can select one.
+    in-out property <int> active-tab: 0;
+
+    // Gel Doc EZ tab.
+    in property <[string]> gd-instrument-names;
+    in-out property <int> gd-instrument-index: 0;
+    in property <bool> gd-connected: false;
+    in property <bool> gd-simulated: false;
+    in property <string> gd-model: "—";
+    in property <string> gd-versions: "";
+    in property <string> gd-serial: "";
+    // Live instrument state.
+    in property <string> gd-tray-label: "—";
+    in property <bool> gd-tray-present: false;
+    in property <bool> gd-door-closed: false;
+    in property <bool> gd-busy: false;
+    in property <[FaultItem]> gd-faults;
+    in property <string> gd-undecoded-label: "";
+    in-out property <bool> gd-watch-button: true;
+    // Protocols.
+    in property <[ProtocolItem]> gd-protocol-items;
+    in-out property <int> gd-protocol-index: 0;
+    in-out property <string> gd-protocol-name: "";
+    in property <bool> gd-protocol-is-default: false;
+    // Steps.
+    in property <[StepItem]> gd-step-items;
+    in-out property <int> gd-step-index: 0;
+    // Step options.
+    in property <[string]> gd-application-names;
+    in-out property <int> gd-application-index: 0;
+    in property <string> gd-application-tray: "—";
+    in property <bool> gd-tray-mismatch: false;
+    in property <string> gd-tray-mismatch-text: "";
+    in-out property <int> gd-exposure-mode-index: 0;
+    in-out property <float> gd-exposure-slider: 0.5;
+    in property <string> gd-exposure-label: "0.100 s";
+    in property <string> gd-last-exposure-label: "";
+    in-out property <string> gd-activation-s: "45";
+    in property <bool> gd-activation-applicable: false;
+    in-out property <bool> gd-highlight-saturated: true;
+    // Run.
+    in property <bool> gd-can-run: false;
+    in property <string> gd-run-blocker: "";
+    in property <bool> gd-running: false;
+    in property <string> gd-phase-label: "Ready.";
+    in property <float> gd-activation-progress: 0;
+    in property <string> gd-message: "";
+
     // Trace tab.
     in property <[TracePath]> trace-plots;
     in property <[string]> trace-yticks;
@@ -190,6 +280,7 @@ export component AppWindow inherits Window {
     callback cancel-fit-dialog();
     callback measure();
     callback frame-changed(int);
+    callback channel-changed(int);
     callback display-changed();
     callback hover-moved(float, float);   // normalized hover pos over the gel
     callback press-at(float, float) -> bool; // select annotation; true = draggable
@@ -239,6 +330,33 @@ export component AppWindow inherits Window {
     callback hdr-steps-changed(int);
     callback camera-selected(int);         // pick a camera from the dropdown
     callback rescan-cameras();             // re-enumerate cameras
+    // Gel Doc EZ tab.
+    callback gd-rescan();
+    callback gd-instrument-selected(int);
+    callback gd-connect();
+    callback gd-disconnect();
+    callback gd-clear-faults();
+    callback gd-watch-button-changed(bool);
+    callback gd-protocol-selected(int);
+    callback gd-protocol-new();
+    callback gd-protocol-delete();
+    callback gd-protocol-make-default();
+    callback gd-protocol-renamed(string);
+    callback gd-step-selected(int);
+    callback gd-step-toggled(int, bool);
+    callback gd-application-selected(int);
+    callback gd-exposure-mode-changed(int);
+    callback gd-exposure-changed(float);
+    callback gd-activation-changed(string);
+    callback gd-highlight-saturated-changed(bool);
+    callback gd-run();
+    callback gd-abort();
+    // Simulated-enclosure bench controls.
+    callback gd-sim-tray(int);
+    callback gd-sim-door(bool);
+    callback gd-sim-fault(int, bool);
+    callback gd-sim-press-button();
+
     // Trace tab.
     callback toggle-lane(int);
     callback trace-mode-changed(int);
@@ -310,6 +428,9 @@ export component AppWindow inherits Window {
     }
     TabWidget {
       vertical-stretch: 1;
+      // Bound so the tab can be selected from the command line (`--tab N`),
+      // which is what makes scripted screenshots of a specific tab possible.
+      current-index <=> root.active-tab;
       Tab {
         title: "Gel";
         HorizontalBox {
@@ -320,6 +441,17 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 spacing: 6px;
                 padding: 0px;
+                // Channel first: it selects which acquisition you are looking
+                // at, and the frame selector below picks an exposure within it.
+                if root.is-multichannel: Text { text: "Channel:"; vertical-alignment: center; }
+                if root.is-multichannel: ComboBox {
+                    model: root.channel-names;
+                    current-index <=> root.channel-index;
+                    width: 175px;
+                    vertical-stretch: 0;
+                    enabled: root.has-open-file;
+                    selected(v) => { root.channel-changed(self.current-index); }
+                }
                 Text { text: "Image:"; vertical-alignment: center; }
                 ComboBox {
                     model: root.frame-names;
@@ -1072,6 +1204,555 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+      }
+
+      Tab {
+        title: "Gel Doc EZ";
+        VerticalLayout {
+          padding: 6px;
+          spacing: 6px;
+
+          // ---- instrument status strip -------------------------------------
+          // Always visible: the manual makes "is the imager connected?" a
+          // precondition of every workflow, so it is a fixed part of the tab
+          // rather than something to go looking for.
+          Rectangle {
+            height: 34px;
+            background: #f4f4f6;
+            border-width: 1px;
+            border-color: #d8d8dc;
+            border-radius: 4px;
+            HorizontalLayout {
+              padding-left: 10px;
+              padding-right: 10px;
+              spacing: 14px;
+              // Connection lamp.
+              Rectangle {
+                width: 12px;
+                Rectangle {
+                  width: 10px; height: 10px; border-radius: 5px;
+                  y: (parent.height - 10px) / 2;
+                  background: root.gd-connected ? #2e9e46 : #b0b0b6;
+                }
+              }
+              Text {
+                text: root.gd-connected ? root.gd-model : "Not connected";
+                font-weight: 700;
+                vertical-alignment: center;
+              }
+              Text { text: root.gd-versions; color: #666; vertical-alignment: center; }
+              Text { text: root.gd-serial; color: #666; vertical-alignment: center; }
+              Rectangle { horizontal-stretch: 1; }
+              // Live tray + door. These change under the user's hands, so they
+              // sit next to each other and update on every poll.
+              Text {
+                text: "Tray: " + root.gd-tray-label;
+                color: !root.gd-connected ? #888 : (root.gd-tray-present ? #222 : #b26b00);
+                vertical-alignment: center;
+              }
+              Text {
+                text: !root.gd-connected ? "Door —" : (root.gd-door-closed ? "Door closed" : "Door OPEN");
+                color: !root.gd-connected ? #888 : (root.gd-door-closed ? #2e9e46 : #c0392b);
+                font-weight: (root.gd-connected && !root.gd-door-closed) ? 700 : 400;
+                vertical-alignment: center;
+              }
+              if root.gd-busy: Text { text: "busy"; color: #b26b00; vertical-alignment: center; }
+              if root.gd-simulated: Text {
+                text: "SIMULATED";
+                color: #7a4fb5;
+                font-weight: 700;
+                vertical-alignment: center;
+              }
+            }
+          }
+
+          // ---- fault banner ------------------------------------------------
+          // Faults latch, so this stays up until the user clears it. Each one
+          // carries its remedy: "lamp failure in bank 1" is only actionable if
+          // it also says the lamps are replaced as a set.
+          if root.gd-faults.length > 0: Rectangle {
+            background: #fdf0ee;
+            border-width: 1px;
+            border-color: #e2b3ab;
+            border-radius: 4px;
+            VerticalLayout {
+              padding: 8px;
+              spacing: 6px;
+              for f in root.gd-faults: VerticalLayout {
+                spacing: 2px;
+                Text { text: "⚠  " + f.headline; color: #a03024; font-weight: 700; wrap: word-wrap; }
+                Text { text: f.remedy; color: #6b4a45; font-size: 11px; wrap: word-wrap; }
+              }
+              HorizontalLayout {
+                alignment: start;
+                Button { text: "Clear faults"; clicked => { root.gd-clear-faults(); } }
+              }
+            }
+          }
+
+          HorizontalBox {
+            padding: 0px;
+
+            // ---- left: protocols and their steps ---------------------------
+            VerticalLayout {
+              width: 250px;
+              spacing: 6px;
+
+              Text { text: "Protocols"; font-weight: 700; }
+              Rectangle {
+                vertical-stretch: 1;
+                background: white;
+                border-width: 1px;
+                border-color: #d0d0d4;
+                ScrollView {
+                  VerticalLayout {
+                    alignment: start;
+                    for p[i] in root.gd-protocol-items: Rectangle {
+                      height: 30px;
+                      background: i == root.gd-protocol-index ? #eaf4ec : #ffffff;
+                      TouchArea { clicked => { root.gd-protocol-selected(i); } }
+                      HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 6px;
+                        // The manual's colour code: the default protocol for a
+                        // tray is green, every other protocol blue.
+                        Rectangle {
+                          width: 4px;
+                          background: p.is-default ? #2e9e46 : #3b6fb5;
+                        }
+                        Text {
+                          text: p.name;
+                          color: p.is-default ? #1d6b30 : #24406e;
+                          vertical-alignment: center;
+                          horizontal-stretch: 1;
+                          overflow: elide;
+                        }
+                        Text {
+                          text: p.tray;
+                          color: #888;
+                          font-size: 10px;
+                          vertical-alignment: center;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              HorizontalLayout {
+                spacing: 4px;
+                Button { text: "New"; clicked => { root.gd-protocol-new(); } }
+                Button { text: "Delete"; clicked => { root.gd-protocol-delete(); } }
+              }
+              Button {
+                text: "Set as default for this tray";
+                enabled: !root.gd-protocol-is-default;
+                clicked => { root.gd-protocol-make-default(); }
+              }
+              Text {
+                text: "The default protocol for the inserted tray is what the instrument's green Run button executes.";
+                color: #888; font-size: 11px; wrap: word-wrap;
+              }
+
+              Text { text: "Steps"; font-weight: 700; }
+              VerticalLayout {
+                spacing: 0px;
+                for s[i] in root.gd-step-items: Rectangle {
+                  height: 28px;
+                  background: i == root.gd-step-index ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
+                  TouchArea { clicked => { root.gd-step-selected(i); } }
+                  HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 6px;
+                    CheckBox {
+                      checked: s.enabled;
+                      // Mandatory steps have nothing to toggle: without an
+                      // application there is no tray to check, and without a
+                      // capture there is no image.
+                      enabled: !s.mandatory && s.applicable;
+                      toggled => { root.gd-step-toggled(i, self.checked); }
+                    }
+                    Text {
+                      text: s.number + ". " + s.label;
+                      vertical-alignment: center;
+                      horizontal-stretch: 1;
+                      color: s.applicable ? (s.enabled ? #222 : #999) : #bbb;
+                    }
+                  }
+                }
+              }
+            }
+
+            // ---- centre: the camera inside the enclosure -------------------
+            VerticalLayout {
+              horizontal-stretch: 1;
+              spacing: 6px;
+              HorizontalLayout {
+                spacing: 6px;
+                Text { text: "Camera:"; vertical-alignment: center; }
+                ComboBox {
+                  model: root.camera-names;
+                  current-index <=> root.camera-index;
+                  horizontal-stretch: 1;
+                  selected(v) => { root.camera-selected(self.current-index); }
+                }
+                Button {
+                  text: root.live-running ? "Stop preview" : "Start preview";
+                  clicked => {
+                    if (root.live-running) { root.live-stop(); } else { root.live-start(); }
+                  }
+                }
+              }
+              Rectangle {
+                background: #1c1c1c;
+                border-width: 1px;
+                border-color: #444;
+                vertical-stretch: 1;
+                clip: true;
+                Image {
+                  source: root.live-preview-image;
+                  image-fit: contain;
+                  width: 100%;
+                  height: 100%;
+                }
+                if !root.live-running: Text {
+                  text: "Preview stopped. The gel image appears here after a run.";
+                  color: #888;
+                  horizontal-alignment: center;
+                  vertical-alignment: center;
+                }
+              }
+              Rectangle {
+                height: 56px;
+                border-width: 1px;
+                border-color: #cccccc;
+                background: white;
+                clip: true;
+                Image {
+                  source: root.live-histogram-image;
+                  width: 100%;
+                  height: 100%;
+                  image-fit: fill;
+                }
+              }
+              // Run status: the phase, plus the activation countdown when one
+              // is running (45 seconds of nothing visible otherwise).
+              Rectangle {
+                height: 46px;
+                background: #f4f4f6;
+                border-width: 1px;
+                border-color: #d8d8dc;
+                border-radius: 4px;
+                VerticalLayout {
+                  padding: 6px;
+                  spacing: 4px;
+                  Text { text: root.gd-phase-label; vertical-alignment: center; }
+                  if root.gd-activation-progress > 0: Rectangle {
+                    height: 6px;
+                    background: #dcdce0;
+                    border-radius: 3px;
+                    Rectangle {
+                      x: 0;
+                      width: parent.width * root.gd-activation-progress;
+                      height: 6px;
+                      border-radius: 3px;
+                      background: #7a4fb5;
+                    }
+                  }
+                }
+              }
+            }
+
+            // ---- right: options for the selected step, and Run -------------
+            VerticalLayout {
+              width: 330px;
+              spacing: 8px;
+              alignment: start;
+
+              GroupBox {
+                title: "Instrument";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  HorizontalLayout {
+                    spacing: 6px;
+                    ComboBox {
+                      model: root.gd-instrument-names;
+                      current-index <=> root.gd-instrument-index;
+                      horizontal-stretch: 1;
+                      selected(v) => { root.gd-instrument-selected(self.current-index); }
+                    }
+                    Button { text: "Rescan"; clicked => { root.gd-rescan(); } }
+                  }
+                  Button {
+                    text: root.gd-connected ? "Disconnect" : "Connect";
+                    clicked => {
+                      if (root.gd-connected) { root.gd-disconnect(); } else { root.gd-connect(); }
+                    }
+                  }
+                  CheckBox {
+                    text: "Hardware Run button starts the default protocol";
+                    checked <=> root.gd-watch-button;
+                    toggled => { root.gd-watch-button-changed(self.checked); }
+                  }
+                  // Honest about what this is: the vendor software has a front
+                  // button, but which sense bit reports it was never
+                  // established, so we watch for any undecoded bit going high
+                  // and say so rather than pretending to decode it.
+                  if root.gd-undecoded-label != "": Text {
+                    text: root.gd-undecoded-label;
+                    color: #888; font-size: 11px; wrap: word-wrap;
+                  }
+                }
+              }
+
+              // --- step 1: Application ---
+              if root.gd-step-index == 0: GroupBox {
+                title: "1. Application";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  ComboBox {
+                    model: root.gd-application-names;
+                    current-index <=> root.gd-application-index;
+                    selected(v) => { root.gd-application-selected(self.current-index); }
+                  }
+                  Text { text: "Needs the " + root.gd-application-tray + " tray."; color: #666; wrap: word-wrap; }
+                  // The commonest setup mistake: the right dye on the wrong
+                  // tray, which images as a blank gel with nothing obviously
+                  // wrong. Caught before the run, not after.
+                  if root.gd-tray-mismatch: Text {
+                    text: root.gd-tray-mismatch-text;
+                    color: #c0392b;
+                    wrap: word-wrap;
+                  }
+                }
+              }
+
+              // --- step 2: Image exposure ---
+              if root.gd-step-index == 1: GroupBox {
+                title: "2. Image exposure";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  ComboBox {
+                    model: ["Auto — intense bands", "Auto — faint bands", "Manual"];
+                    current-index <=> root.gd-exposure-mode-index;
+                    selected(v) => { root.gd-exposure-mode-changed(self.current-index); }
+                  }
+                  Text {
+                    text: root.gd-exposure-mode-index == 0
+                      ? "Exposes so nothing clips — every band stays quantifiable."
+                      : (root.gd-exposure-mode-index == 1
+                         ? "Exposes longer so faint bands lift clear of the background. The brightest bands may saturate, and saturated pixels cannot be quantified."
+                         : "A fixed exposure time between 0.001 and 10 s.");
+                    color: #888; font-size: 11px; wrap: word-wrap;
+                  }
+                  if root.gd-exposure-mode-index == 2: HorizontalLayout {
+                    spacing: 6px;
+                    Slider {
+                      minimum: 0.0; maximum: 1.0;
+                      value <=> root.gd-exposure-slider;
+                      horizontal-stretch: 1;
+                      changed(v) => { root.gd-exposure-changed(v); }
+                    }
+                    Text {
+                      text: root.gd-exposure-label;
+                      vertical-alignment: center;
+                      width: 70px;
+                      horizontal-alignment: right;
+                    }
+                  }
+                  // After an auto run, what it settled on — the starting point
+                  // the manual asks for when switching to manual.
+                  if root.gd-last-exposure-label != "": Text {
+                    text: root.gd-last-exposure-label;
+                    color: #666; font-size: 11px;
+                  }
+                }
+              }
+
+              // --- step 3: Gel activation (stain-free only) ---
+              if root.gd-step-index == 2: GroupBox {
+                title: "3. Gel activation";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  if !root.gd-activation-applicable: Text {
+                    text: "Only stain-free applications are activated. This step is skipped for the selected application.";
+                    color: #888; font-size: 11px; wrap: word-wrap;
+                  }
+                  if root.gd-activation-applicable: HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "Activation time:"; vertical-alignment: center; }
+                    LineEdit {
+                      text <=> root.gd-activation-s;
+                      horizontal-stretch: 1;
+                      edited(t) => { root.gd-activation-changed(t); }
+                    }
+                    Text { text: "s"; vertical-alignment: center; }
+                  }
+                  if root.gd-activation-applicable: Text {
+                    text: "A UV pre-exposure that drives the stain-free chemistry, run before the image exposure.";
+                    color: #888; font-size: 11px; wrap: word-wrap;
+                  }
+                }
+              }
+
+              // --- step 4: Capture ---
+              if root.gd-step-index == 3: GroupBox {
+                title: "4. Capture";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  CheckBox {
+                    text: "Highlight saturated pixels";
+                    checked <=> root.gd-highlight-saturated;
+                    toggled => { root.gd-highlight-saturated-changed(self.checked); }
+                  }
+                  Text {
+                    text: "Saturated pixels are rendered red in the captured image. They carry no intensity information, so anything measured from them is wrong.";
+                    color: #888; font-size: 11px; wrap: word-wrap;
+                  }
+                }
+              }
+
+              GroupBox {
+                title: "Protocol name";
+                vertical-stretch: 0;
+                LineEdit {
+                  text <=> root.gd-protocol-name;
+                  accepted(t) => { root.gd-protocol-renamed(t); }
+                  edited(t) => { root.gd-protocol-renamed(t); }
+                }
+              }
+
+              Button {
+                text: root.gd-running ? "Abort run" : "Run";
+                primary: true;
+                enabled: root.gd-running || root.gd-can-run;
+                clicked => {
+                  if (root.gd-running) { root.gd-abort(); } else { root.gd-run(); }
+                }
+              }
+              if !root.gd-running && root.gd-run-blocker != "": Text {
+                text: root.gd-run-blocker;
+                color: #b26b00;
+                font-size: 11px;
+                wrap: word-wrap;
+              }
+              if root.gd-message != "": Text {
+                text: root.gd-message;
+                color: #666;
+                font-size: 11px;
+                wrap: word-wrap;
+              }
+
+              // --- simulated enclosure bench controls ---
+              // Only for the simulator: these are the things you would do to the
+              // real box with your hands, and they make the interlocks and the
+              // fault paths testable with no hardware.
+              if root.gd-simulated && root.gd-connected: GroupBox {
+                title: "Simulated instrument";
+                vertical-stretch: 0;
+                VerticalLayout {
+                  alignment: start;
+                  spacing: 6px;
+                  HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "Tray:"; vertical-alignment: center; }
+                    ComboBox {
+                      model: ["none", "UV", "White light", "Blue light", "Stain-free"];
+                      horizontal-stretch: 1;
+                      selected(v) => { root.gd-sim-tray(self.current-index); }
+                    }
+                  }
+                  CheckBox {
+                    text: "Door closed";
+                    checked: root.gd-door-closed;
+                    toggled => { root.gd-sim-door(self.checked); }
+                  }
+                  Button { text: "Press Run button"; clicked => { root.gd-sim-press-button(); } }
+                  Text { text: "Inject faults:"; color: #666; font-size: 11px; }
+                  CheckBox { text: "No sample tray"; toggled => { root.gd-sim-fault(0, self.checked); } }
+                  CheckBox { text: "Lamp assembly unseated"; toggled => { root.gd-sim-fault(1, self.checked); } }
+                  CheckBox { text: "Lamp bank 1 failed"; toggled => { root.gd-sim-fault(3, self.checked); } }
+                  CheckBox { text: "Lamp bank 2 failed"; toggled => { root.gd-sim-fault(4, self.checked); } }
+                }
+              }
+              // Absorbs the leftover height so the groups above keep their
+              // natural size instead of being stretched apart.
+              Rectangle { vertical-stretch: 1; }
+            }
+          }
+        }
+      }
+      // ---- Metadata --------------------------------------------------------
+      // What the instrument recorded about how the image was taken, shown as
+      // plain name/value rows. Nothing here is interpreted: instruments
+      // disagree about what they report, and the honest thing is to display
+      // whatever the file carried rather than the fields we anticipated.
+      Tab {
+        title: "Metadata";
+        VerticalBox {
+          if root.metadata-rows.length == 0: Text {
+            text: root.has-open-file
+                ? "This file records no acquisition metadata."
+                : "Open a gel to see how it was acquired.";
+            color: #666;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            vertical-stretch: 1;
+          }
+          if root.metadata-rows.length > 0: Rectangle {
+            vertical-stretch: 1;
+            background: white;
+            border-width: 1px;
+            border-color: #d0d0d4;
+            border-radius: 4px;
+            ScrollView {
+              VerticalLayout {
+                alignment: start;
+                padding: 10px;
+                for row[i] in root.metadata-rows: VerticalLayout {
+                  spacing: 0px;
+                  if row.first-in-section: Text {
+                    text: row.section;
+                    font-weight: 700;
+                    color: #24406e;
+                    // Space above every heading but the first, so sections
+                    // separate without a rule between them.
+                    height: i == 0 ? 22px : 34px;
+                    vertical-alignment: bottom;
+                  }
+                  HorizontalLayout {
+                    height: 22px;
+                    spacing: 8px;
+                    Text {
+                      text: row.name;
+                      color: #555;
+                      width: 210px;
+                      overflow: elide;
+                      vertical-alignment: center;
+                    }
+                    Text {
+                      text: row.value;
+                      horizontal-stretch: 1;
+                      overflow: elide;
+                      vertical-alignment: center;
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

@@ -35,6 +35,9 @@ image = "0.25"
 ndarray = "0.16"
 rustfft = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Read-only XML, for the metadata documents inside Bio-Rad `.scn`/`.mscn` files.
+# Already in the tree as a transitive dependency of the SVG stack.
+roxmltree = "0.21"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rayon = "1"

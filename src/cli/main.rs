@@ -88,20 +88,21 @@ enum Command {
     },
 }
 
-#[cfg(numanager_backend)]
+/// Rules for both device layers: the cameras nu-manager drives over USB, and the
+/// imaging enclosures OpenGel drives over hidraw. The enclosure rules are always
+/// available — that driver is ours and is compiled unconditionally — so this
+/// succeeds even in a build with no nu-manager backend.
 fn cmd_udev_rules() -> Result<()> {
+    #[cfg(numanager_backend)]
     print!("{}", opengel::camera::numanager_backend::udev_rules());
+    #[cfg(not(numanager_backend))]
+    println!(
+        "# Built without the nu-manager backend, so no camera USB rules are\n\
+         # included here — only the imaging-enclosure rules below."
+    );
+    println!();
+    print!("{}", opengel::instrument::udev_rules());
     Ok(())
-}
-
-/// Without the nu-manager backend there is no vendor list to generate from, and
-/// emitting an empty rules file would look like "no devices need access".
-#[cfg(not(numanager_backend))]
-fn cmd_udev_rules() -> Result<()> {
-    anyhow::bail!(
-        "this build has no nu-manager backend, so there are no USB access \
-         rules to generate (rebuild with the `numanager-camera` feature)"
-    )
 }
 
 fn parse_gel_type(s: &str) -> Result<GelType> {
@@ -165,25 +166,36 @@ fn parse_warp_mode(s: &str) -> Result<opengel::sim::WarpMode> {
 }
 
 fn cmd_info(path: &std::path::Path) -> Result<()> {
-    let doc = GelDocument::load(path).with_context(|| format!("loading {}", path.display()))?;
+    let doc = load_or_import(path, GelType::Dna)?;
     let p = &doc.project;
     println!(
         "format {} v{}  gel_type {:?}",
         p.format, p.version, p.gel_type
     );
+    for attr in &p.metadata {
+        println!("  {}: {}", attr.name, attr.value);
+    }
+    println!("channels: {}", p.channels.len());
+    for c in &p.channels {
+        println!("  {}. {}  [{}]", c.id, c.name, c.color.label());
+    }
     println!("images: {}", p.images.len());
     for img in &p.images {
         println!(
-            "  {} {}x{}  {:.3}s{}",
+            "  {} {}x{}  {:.3}s  channel {}{}",
             img.filename,
             img.width,
             img.height,
             img.meta.exposure_seconds,
+            img.channel,
             img.meta
                 .bracket_group
                 .map(|g| format!("  bracket {g}"))
                 .unwrap_or_default()
         );
+        for attr in &img.meta.acquisition {
+            println!("      {}: {}", attr.name, attr.value);
+        }
     }
     let a = &p.analysis;
     println!(
@@ -232,7 +244,8 @@ fn cmd_ladders(gel_type: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Load a `.gel.zip`, or wrap a loose image (jpg/png/…) into a new project.
+/// Load a `.gel.zip` or a Bio-Rad `.scn`/`.mscn`, or wrap a loose image
+/// (jpg/png/…) into a new project.
 fn load_or_import(path: &std::path::Path, gel_type: GelType) -> Result<GelDocument> {
     let is_zip = path
         .extension()
@@ -241,6 +254,11 @@ fn load_or_import(path: &std::path::Path, gel_type: GelType) -> Result<GelDocume
         .unwrap_or(false);
     if is_zip {
         GelDocument::load(path).with_context(|| format!("loading {}", path.display()))
+    } else if opengel::core::scn::has_scn_extension(path) {
+        // An Image Lab scan brings its own gel type, read from the reagent the
+        // instrument recorded, so `gel_type` is not consulted here.
+        GelDocument::load_scn(path)
+            .with_context(|| format!("reading Image Lab scan {}", path.display()))
     } else {
         let img = image::open(path).with_context(|| format!("opening image {}", path.display()))?;
         let meta = opengel::core::CaptureMeta {

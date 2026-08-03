@@ -18,7 +18,9 @@ use image::{DynamicImage, ImageFormat};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 
-use crate::core::model::{Analysis, GelImage, GelProject, GelType, HdrRecord, FORMAT_VERSION};
+use crate::core::model::{
+    Analysis, Attributes, Channel, GelImage, GelProject, GelType, HdrRecord, FORMAT_VERSION,
+};
 use crate::core::GrayF32;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +50,13 @@ struct Manifest {
     /// Present when a merged HDR image (`images/merged.png`) is stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hdr: Option<HdrRecord>,
+    /// Acquisition channels — one entry for an ordinary single-channel gel.
+    channels: Vec<Channel>,
+    /// Document-level metadata carried over from the source file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    metadata: Attributes,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    display_inverted: bool,
 }
 
 /// Filename of the persisted HDR merge inside the zip.
@@ -89,6 +98,7 @@ impl GelDocument {
                 width: frame.width(),
                 height: frame.height(),
                 sixteen_bit,
+                channel: 0,
                 meta,
             });
         }
@@ -97,6 +107,78 @@ impl GelDocument {
             frames,
             merged: None,
         }
+    }
+
+    /// Import a Bio-Rad Image Lab scan as a document.
+    ///
+    /// Each channel of the scan becomes one channel here, holding one frame.
+    /// The instrument's acquisition record rides along on each frame's
+    /// [`CaptureMeta::acquisition`][crate::core::CaptureMeta::acquisition] —
+    /// carried, not interpreted, because instruments disagree about what they
+    /// report and dropping the unfamiliar parts would lose exactly the details
+    /// that make an image reproducible.
+    pub fn from_scn(scn: &crate::core::scn::ScnFile) -> Self {
+        use crate::core::model::{Attribute, CaptureMeta};
+
+        let mut project = GelProject::new(scn.gel_type());
+        project.metadata = scn.metadata.clone();
+        project.display_inverted = scn.display_inverted;
+        project.channels.clear();
+
+        let mut frames = Vec::with_capacity(scn.channels.len());
+        for (i, channel) in scn.channels.iter().enumerate() {
+            project
+                .channels
+                .push(Channel::new(i as u32, &channel.name, channel.color));
+
+            // The bit depth the file arrived at is part of how it was taken, and
+            // is not otherwise recoverable once the samples are rescaled.
+            let mut acquisition = channel.acquisition.clone();
+            if channel.max_value != u16::MAX as u32 {
+                acquisition.push(Attribute::new(
+                    "Source Bit Ceiling",
+                    channel.max_value.to_string(),
+                ));
+            }
+            if let Some((w, h)) = channel.original_size {
+                acquisition.push(Attribute::new("Native Readout", format!("{w} × {h} px")));
+            }
+            if let Some((w, h)) = channel.size_mm {
+                acquisition.push(Attribute::new("Imaged Area", format!("{w} × {h} mm")));
+            }
+
+            project.images.push(GelImage {
+                id: i as u32,
+                filename: format!("images/img_{i:02}.png"),
+                width: channel.width,
+                height: channel.height,
+                sixteen_bit: true,
+                channel: i as u32,
+                meta: CaptureMeta {
+                    exposure_seconds: channel.exposure_seconds,
+                    gain: None,
+                    camera_name: channel.imager.clone(),
+                    timestamp: channel.timestamp.clone(),
+                    // Channels are separate acquisitions, not an exposure
+                    // bracket of one scene: merging them would average away the
+                    // very differences they were taken to record.
+                    bracket_group: None,
+                    acquisition,
+                },
+            });
+            frames.push(channel.image.clone());
+        }
+
+        GelDocument {
+            project,
+            frames,
+            merged: None,
+        }
+    }
+
+    /// Read a `.scn`/`.mscn` file straight into a document.
+    pub fn load_scn(path: impl AsRef<Path>) -> std::result::Result<Self, crate::core::scn::ScnError> {
+        Ok(Self::from_scn(&crate::core::scn::ScnFile::load(path)?))
     }
 
     /// Serialize to a `.gel.zip` file at `path`.
@@ -125,6 +207,9 @@ impl GelDocument {
                 version: FORMAT_VERSION,
                 gel_type: self.project.gel_type,
                 hdr: self.project.hdr,
+                channels: self.project.channels.clone(),
+                metadata: self.project.metadata.clone(),
+                display_inverted: self.project.display_inverted,
             };
             write_json(&mut zip, "manifest.json", &manifest, opts)?;
             write_json(&mut zip, "metadata.json", &self.project.images, opts)?;
@@ -162,6 +247,15 @@ impl GelDocument {
     /// positive exposures) they are HDR-merged; otherwise the first frame is
     /// used. Returns `None` when there are no frames.
     pub fn working_image(&self) -> Option<crate::core::GrayF32> {
+        self.working_image_for_channel(self.project.channels.first().map(|c| c.id).unwrap_or(0))
+    }
+
+    /// The working image for one channel.
+    ///
+    /// Channels are separate acquisitions of the same gel, so each resolves on
+    /// its own: an exposure bracket *within* a channel still HDR-merges, but
+    /// frames from different channels are never merged together.
+    pub fn working_image_for_channel(&self, channel: u32) -> Option<crate::core::GrayF32> {
         use std::collections::BTreeMap;
         // A saved (possibly option-tuned) HDR merge wins over re-merging.
         if let Some(merged) = &self.merged {
@@ -170,9 +264,21 @@ impl GelDocument {
         if self.frames.is_empty() {
             return None;
         }
+        let in_channel = self.project.image_indices_for_channel(channel);
+        // An unknown channel id falls back to every frame rather than to none:
+        // showing the wrong channel beats showing a blank window.
+        let in_channel = if in_channel.is_empty() {
+            (0..self.frames.len()).collect()
+        } else {
+            in_channel
+        };
+        let first = *in_channel.first()?;
         let mut groups: BTreeMap<Option<u32>, Vec<usize>> = BTreeMap::new();
-        for (i, img) in self.project.images.iter().enumerate() {
-            groups.entry(img.meta.bracket_group).or_default().push(i);
+        for &i in &in_channel {
+            groups
+                .entry(self.project.images[i].meta.bracket_group)
+                .or_default()
+                .push(i);
         }
         let bracket = groups
             .iter()
@@ -193,7 +299,7 @@ impl GelDocument {
                 }
             }
         }
-        Some(crate::core::GrayF32::from_dynamic(&self.frames[0]))
+        Some(crate::core::GrayF32::from_dynamic(&self.frames[first]))
     }
 
     /// Load a document from an in-memory ZIP byte buffer.
@@ -234,6 +340,9 @@ impl GelDocument {
             version: manifest.version,
             gel_type: manifest.gel_type,
             images,
+            channels: manifest.channels,
+            metadata: manifest.metadata,
+            display_inverted: manifest.display_inverted,
             analysis,
             hdr: manifest.hdr,
         };

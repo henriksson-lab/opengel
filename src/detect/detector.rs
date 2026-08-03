@@ -160,6 +160,7 @@ impl Detection {
                     v_center,
                     v_half_width: ((v_hi - v_lo).abs() / 2.0).max(1e-4),
                     integrated_density: b.integrated_density,
+                    channel_density: Vec::new(),
                     size: None,
                     known_size: None,
                     angle: b.angle,

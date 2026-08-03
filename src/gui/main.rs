@@ -9,6 +9,8 @@ mod camera_glue;
 mod camera_worker;
 mod config;
 mod email;
+mod geldoc;
+mod instrument_worker;
 mod state;
 mod view;
 
@@ -59,6 +61,8 @@ fn main() -> anyhow::Result<()> {
     //   --show-warp       overlay the NURBS warp grid
     //   --show-unwarped   show the rectified (dewarped) view
     //   --invert          invert display colors
+    //   --tab N           select a tab (0 Gel, 1 Trace, 2 Live, 3 Gel Doc EZ,
+    //                     4 Metadata)
     // The view toggles set both app state (drives rendering) and the matching UI
     // property (so the checkboxes reflect the startup state) — handy for scripted
     // screenshots.
@@ -78,11 +82,24 @@ fn main() -> anyhow::Result<()> {
             None
         };
 
+        // Flags that take a separate value. The value looks like a positional
+        // argument, so it has to be excluded before hunting for the file path —
+        // otherwise `--tab 3` tries to open a file called "3".
+        const VALUE_FLAGS: [&str; 2] = ["--transparency", "--tab"];
+        let is_flag_value = |i: usize| {
+            i > 0 && VALUE_FLAGS.contains(&args[i - 1].as_str())
+        };
+
         // Load the document first (demo or positional path).
         if has("--demo") {
             let msg = state.borrow_mut().load_demo();
             ui.set_status(msg.into());
-        } else if let Some(path) = args.iter().find(|a| !a.starts_with("--")) {
+        } else if let Some(path) = args
+            .iter()
+            .enumerate()
+            .find(|(i, a)| !a.starts_with("--") && !is_flag_value(*i))
+            .map(|(_, a)| a)
+        {
             if let Err(e) = state.borrow_mut().open_path(std::path::Path::new(path)) {
                 ui.set_status(format!("Open failed: {e}").into());
             }
@@ -116,6 +133,12 @@ fn main() -> anyhow::Result<()> {
             state.borrow_mut().set_show_warp(true);
             ui.set_show_warp(true);
         }
+        // `--tab N` selects a tab (0 = Gel, 1 = Trace, 2 = Live, 3 = Gel Doc EZ,
+        // 4 = Metadata),
+        // so a screenshot script can capture any of them.
+        if let Some(tab) = value("--tab").and_then(|s| s.parse::<i32>().ok()) {
+            ui.set_active_tab(tab.max(0));
+        }
         if has("--show-unwarped") {
             state.borrow_mut().set_show_unwarped(true);
             ui.set_show_unwarped(true);
@@ -132,9 +155,26 @@ fn main() -> anyhow::Result<()> {
     cam_handle.list_cameras();
     state.borrow_mut().cam = Some(cam_handle);
 
+    // ---- Instrument worker thread ----
+    // Same pattern as the camera: the enclosure is polled off the UI thread, and
+    // a run is sequenced across both workers by the pump below.
+    let (inst_handle, inst_events) = instrument_worker::spawn();
+    inst_handle.list();
+    {
+        let mut st = state.borrow_mut();
+        st.geldoc.library = app_config
+            .borrow()
+            .geldoc_protocols
+            .clone()
+            .unwrap_or_else(opengel::instrument::protocol::ProtocolLibrary::starter);
+        st.geldoc.inst = Some(inst_handle);
+    }
+    view::refresh_geldoc(&ui, &state.borrow());
+
     let event_pump = Rc::new(slint::Timer::default());
     {
         use camera_worker::CamEvent;
+        use instrument_worker::InstEvent;
         let ui_weak = ui.as_weak();
         let state = state.clone();
         event_pump.start(
@@ -144,6 +184,98 @@ fn main() -> anyhow::Result<()> {
                 let ui = ui_weak.unwrap();
                 let mut live_dirty = false;
                 let mut doc_dirty = false;
+                let mut geldoc_dirty = false;
+
+                // --- instrument events ---
+                while let Ok(evt) = inst_events.try_recv() {
+                    let mut st = state.borrow_mut();
+                    geldoc_dirty = true;
+                    match evt {
+                        InstEvent::Instruments(names) => {
+                            if st.geldoc.selected_instrument >= names.len() {
+                                st.geldoc.selected_instrument = 0;
+                            }
+                            st.geldoc.instruments = names;
+                        }
+                        InstEvent::Connected { info, simulated } => {
+                            st.geldoc.connected = true;
+                            st.geldoc.simulated = simulated;
+                            st.geldoc.message = format!("Connected to {}.", info.model);
+                            st.geldoc.info = info;
+                            let watch = st.geldoc.watch_run_button;
+                            if let Some(inst) = &st.geldoc.inst {
+                                inst.watch_run_button(watch);
+                            }
+                        }
+                        InstEvent::ConnectFailed(e) => {
+                            st.geldoc.connected = false;
+                            st.geldoc.message = format!("Connection failed: {e}");
+                            drop(st);
+                            ui.set_status(format!("Instrument connection failed: {e}").into());
+                        }
+                        InstEvent::Disconnected => {
+                            st.geldoc.connected = false;
+                            st.geldoc.sense = None;
+                            st.geldoc.faults = opengel::instrument::Faults::NONE;
+                            st.geldoc.message = "Disconnected.".into();
+                        }
+                        InstEvent::Status {
+                            sense,
+                            faults,
+                            undecoded,
+                        } => {
+                            st.geldoc.sense = Some(sense);
+                            st.geldoc.faults = faults;
+                            st.geldoc.undecoded = undecoded;
+                        }
+                        InstEvent::ButtonPressed { mask } => {
+                            // The hardware Run button (most likely — see the
+                            // worker). It runs the default protocol for whatever
+                            // tray is actually in, which is what the button
+                            // means on the instrument.
+                            if st.geldoc.watch_run_button && !st.geldoc.phase.is_running() {
+                                let msg = st.geldoc_button_run();
+                                drop(st);
+                                ui.set_status(msg.into());
+                            } else {
+                                st.geldoc.message =
+                                    format!("Sense bit 0x{mask:04x} went high.");
+                            }
+                        }
+                        InstEvent::Activating { elapsed_s, total_s } => {
+                            st.geldoc.phase = geldoc::RunPhase::Activating { elapsed_s, total_s };
+                            st.geldoc.message = st.geldoc.phase.label();
+                        }
+                        InstEvent::LightsReady => {
+                            st.geldoc_lights_ready();
+                            live_dirty = true;
+                        }
+                        InstEvent::RunRefused(reason) => {
+                            st.geldoc.phase = geldoc::RunPhase::Idle;
+                            st.geldoc.message = reason.clone();
+                            st.capturing = false;
+                            drop(st);
+                            ui.set_status(format!("Run refused: {reason}").into());
+                        }
+                        InstEvent::RunFinished {
+                            faults,
+                            door_violation,
+                        } => {
+                            let msg = st.geldoc_run_finished(faults, door_violation);
+                            drop(st);
+                            ui.set_status(msg.into());
+                            doc_dirty = true;
+                            live_dirty = true;
+                        }
+                        InstEvent::Error(e) => {
+                            st.geldoc.message = e.clone();
+                            drop(st);
+                            ui.set_status(e.into());
+                        }
+                    }
+                }
+
+                // --- camera events ---
                 while let Ok(evt) = cam_events.try_recv() {
                     let mut st = state.borrow_mut();
                     match evt {
@@ -169,6 +301,11 @@ fn main() -> anyhow::Result<()> {
                             st.preview = Some(frame);
                             live_dirty = true;
                         }
+                        CamEvent::Metering { attempt, exposure_s } => {
+                            st.capture_status =
+                                format!("Metering (attempt {attempt}) at {exposure_s:.3} s…");
+                            live_dirty = true;
+                        }
                         CamEvent::CaptureProgress { done, total } => {
                             st.capture_status = if total <= 1 {
                                 "Capturing…".into()
@@ -183,6 +320,14 @@ fn main() -> anyhow::Result<()> {
                                 // Arrived after the user cancelled — discard it.
                                 st.cancel_requested = false;
                                 drop(st);
+                                live_dirty = true;
+                            } else if st.geldoc.phase == geldoc::RunPhase::Exposing {
+                                // A Gel Doc EZ run: hold the frames rather than
+                                // adopting them, until the instrument confirms
+                                // the door stayed shut for the whole exposure.
+                                st.geldoc_capture_done(frames);
+                                drop(st);
+                                geldoc_dirty = true;
                                 live_dirty = true;
                             } else {
                                 let n = frames.len();
@@ -205,6 +350,12 @@ fn main() -> anyhow::Result<()> {
                             st.capturing = false;
                             let cancelled = st.cancel_requested;
                             st.cancel_requested = false;
+                            // A failed exposure still leaves the lamps on, so
+                            // the run has to be ended rather than just reported.
+                            if st.geldoc.phase.is_running() {
+                                st.geldoc.abort_run(format!("Exposure failed: {e}"));
+                                geldoc_dirty = true;
+                            }
                             drop(st);
                             if !cancelled {
                                 ui.set_status(format!("Capture failed: {e}").into());
@@ -214,6 +365,10 @@ fn main() -> anyhow::Result<()> {
                         CamEvent::Cancelled => {
                             st.capturing = false;
                             st.cancel_requested = false;
+                            if st.geldoc.phase.is_running() {
+                                st.geldoc.abort_run("Run cancelled.");
+                                geldoc_dirty = true;
+                            }
                             drop(st);
                             ui.set_status("Capture cancelled.".into());
                             live_dirty = true;
@@ -226,6 +381,9 @@ fn main() -> anyhow::Result<()> {
                 if doc_dirty || live_dirty {
                     view::refresh_live(&ui, &state.borrow());
                 }
+                if doc_dirty || geldoc_dirty {
+                    view::refresh_geldoc(&ui, &state.borrow());
+                }
             },
         );
     }
@@ -237,7 +395,9 @@ fn main() -> anyhow::Result<()> {
         ui.on_open(move || {
             let ui = ui_weak.unwrap();
             if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Gel documents", &["zip", "scn", "mscn", "sscn", "smscn"])
                 .add_filter("OpenGel", &["zip"])
+                .add_filter("Bio-Rad Image Lab", &["scn", "mscn", "sscn", "smscn"])
                 .pick_file()
             {
                 match state.borrow_mut().open_path(&path) {
@@ -749,6 +909,18 @@ fn main() -> anyhow::Result<()> {
             view::refresh_image(&ui, &state.borrow());
         });
     }
+    // Switch which acquisition channel is displayed and analysed.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_channel_changed(move |idx| {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().set_view_channel(idx as usize);
+            // A full refresh, not just the image: the frame selector lists this
+            // channel's exposures, and the traces are measured from it.
+            view::refresh(&ui, &state.borrow());
+        });
+    }
     // Re-render when the contrast window or invert toggle changes.
     {
         let ui_weak = ui.as_weak();
@@ -1240,6 +1412,324 @@ fn main() -> anyhow::Result<()> {
             state.borrow_mut().cancel_capture();
             view::refresh_live(&ui, &state.borrow());
         });
+    }
+
+    // ---- Gel Doc EZ tab ----
+    // Instrument I/O runs on the instrument worker (see the event pump); these
+    // callbacks only mutate state and enqueue commands.
+    {
+        // Protocols are the unit of reproducibility, so every edit is persisted
+        // immediately — losing a protocol to a crash would lose the ability to
+        // repeat an experiment.
+        let persist = {
+            let state = state.clone();
+            let app_config = app_config.clone();
+            Rc::new(move || {
+                let mut cfg = app_config.borrow_mut();
+                cfg.geldoc_protocols = Some(state.borrow().geldoc.library.clone());
+                if let Err(e) = config::save_config(&cfg) {
+                    eprintln!("saving protocols failed: {e}");
+                }
+            })
+        };
+
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_rescan(move || {
+                let ui = ui_weak.unwrap();
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.list();
+                }
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let state = state.clone();
+            ui.on_gd_instrument_selected(move |idx| {
+                state.borrow_mut().geldoc.selected_instrument = idx.max(0) as usize;
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_connect(move || {
+                let ui = ui_weak.unwrap();
+                {
+                    let mut st = state.borrow_mut();
+                    st.geldoc.message = "Connecting…".into();
+                    let index = st.geldoc.selected_instrument;
+                    if let Some(inst) = &st.geldoc.inst {
+                        inst.connect(index);
+                    }
+                }
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_disconnect(move || {
+                let ui = ui_weak.unwrap();
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.disconnect();
+                }
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_clear_faults(move || {
+                let ui = ui_weak.unwrap();
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.clear_faults();
+                }
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let state = state.clone();
+            ui.on_gd_watch_button_changed(move |watch| {
+                let mut st = state.borrow_mut();
+                st.geldoc.watch_run_button = watch;
+                if let Some(inst) = &st.geldoc.inst {
+                    inst.watch_run_button(watch);
+                }
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_protocol_selected(move |idx| {
+                let ui = ui_weak.unwrap();
+                state.borrow_mut().geldoc.select_protocol(idx.max(0) as usize);
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_protocol_new(move || {
+                let ui = ui_weak.unwrap();
+                let name = state.borrow_mut().geldoc.new_protocol();
+                persist();
+                ui.set_status(format!("Created protocol “{name}”.").into());
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_protocol_delete(move || {
+                let ui = ui_weak.unwrap();
+                state.borrow_mut().geldoc.delete_selected_protocol();
+                // Force the name field to re-sync with the new selection.
+                state.borrow().geldoc.name_field_for.set(usize::MAX);
+                persist();
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_protocol_make_default(move || {
+                let ui = ui_weak.unwrap();
+                let ok = state.borrow_mut().geldoc.make_selected_default();
+                persist();
+                ui.set_status(
+                    if ok {
+                        "This protocol now runs when the instrument's Run button is pressed with \
+                         its tray inserted."
+                    } else {
+                        "This protocol has no tray, so it cannot be a default."
+                    }
+                    .into(),
+                );
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_protocol_renamed(move |name| {
+                state.borrow_mut().geldoc.rename_selected_protocol(&name);
+                // The field already shows what the user typed; keep the view
+                // from rewriting it underneath them.
+                state
+                    .borrow()
+                    .geldoc
+                    .name_field_for
+                    .set(state.borrow().geldoc.selected_protocol);
+                persist();
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_step_selected(move |idx| {
+                let ui = ui_weak.unwrap();
+                let step = opengel::instrument::protocol::ProtocolStep::ALL
+                    [(idx.max(0) as usize).min(3)];
+                state.borrow_mut().geldoc.selected_step = step;
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_step_toggled(move |idx, enabled| {
+                let ui = ui_weak.unwrap();
+                let step = opengel::instrument::protocol::ProtocolStep::ALL
+                    [(idx.max(0) as usize).min(3)];
+                state.borrow_mut().geldoc.set_step_enabled(step, enabled);
+                persist();
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_application_selected(move |idx| {
+                let ui = ui_weak.unwrap();
+                if let Some(app) =
+                    opengel::instrument::application::APPLICATIONS.get(idx.max(0) as usize)
+                {
+                    state.borrow_mut().geldoc.set_application(app.id);
+                }
+                persist();
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_exposure_mode_changed(move |idx| {
+                use opengel::instrument::protocol::ExposureMode;
+                let ui = ui_weak.unwrap();
+                let mode = match idx {
+                    1 => ExposureMode::AutoFaint,
+                    2 => ExposureMode::Manual,
+                    _ => ExposureMode::AutoIntense,
+                };
+                state.borrow_mut().geldoc.set_exposure_mode(mode);
+                persist();
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_exposure_changed(move |f| {
+                let ui = ui_weak.unwrap();
+                let seconds = geldoc::GelDocState::exposure_from_slider(f);
+                state.borrow_mut().geldoc.set_manual_exposure_s(seconds);
+                persist();
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_activation_changed(move |text| {
+                // Ignore unparseable input rather than resetting the field: the
+                // user is mid-edit, and "4" on the way to "45" is not an error.
+                if let Ok(seconds) = text.trim().parse::<f64>() {
+                    state.borrow_mut().geldoc.set_activation_s(seconds);
+                    persist();
+                }
+            });
+        }
+        {
+            let state = state.clone();
+            let persist = persist.clone();
+            ui.on_gd_highlight_saturated_changed(move |on| {
+                if let Some(p) = state.borrow_mut().geldoc.protocol_mut() {
+                    p.highlight_saturated = on;
+                }
+                persist();
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_run(move || {
+                let ui = ui_weak.unwrap();
+                let msg = state.borrow_mut().geldoc_run();
+                ui.set_status(msg.into());
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_abort(move || {
+                let ui = ui_weak.unwrap();
+                {
+                    let mut st = state.borrow_mut();
+                    st.cancel_capture();
+                    st.geldoc.abort_run("Run aborted.");
+                }
+                ui.set_status("Run aborted; the lamps were switched off.".into());
+                view::refresh_geldoc(&ui, &state.borrow());
+            });
+        }
+        // --- simulated-instrument bench controls ---
+        {
+            let state = state.clone();
+            ui.on_gd_sim_tray(move |idx| {
+                use opengel::instrument::TrayType;
+                let tray = match idx {
+                    1 => Some(TrayType::Uv),
+                    2 => Some(TrayType::White),
+                    3 => Some(TrayType::Blue),
+                    4 => Some(TrayType::StainFree),
+                    _ => None,
+                };
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.sim_set_tray(tray);
+                }
+            });
+        }
+        {
+            let state = state.clone();
+            ui.on_gd_sim_door(move |closed| {
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.sim_set_door(closed);
+                }
+            });
+        }
+        {
+            let state = state.clone();
+            ui.on_gd_sim_fault(move |bit, on| {
+                let mut st = state.borrow_mut();
+                let mask = 1u16 << bit.clamp(0, 15);
+                let faults = if on {
+                    st.geldoc.faults.0 | mask
+                } else {
+                    st.geldoc.faults.0 & !mask
+                };
+                st.geldoc.faults = opengel::instrument::Faults(faults);
+                if let Some(inst) = &st.geldoc.inst {
+                    inst.sim_set_faults(faults);
+                }
+            });
+        }
+        {
+            let state = state.clone();
+            ui.on_gd_sim_press_button(move || {
+                if let Some(inst) = &state.borrow().geldoc.inst {
+                    inst.sim_press_button();
+                }
+            });
+        }
     }
 
     ui.run()?;
