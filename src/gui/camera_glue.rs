@@ -27,8 +27,14 @@ enum CameraChoice {
 }
 
 /// Probe every compiled-in backend, in priority order.
-fn enumerate() -> Vec<(String, CameraChoice)> {
+///
+/// Returns what was found and whether any backend *failed to answer*, which is
+/// not the same as finding nothing: a probe that errored has told us nothing
+/// about what is attached. See [`list_camera_names`], which is what acts on the
+/// difference.
+fn enumerate() -> (Vec<(String, CameraChoice)>, bool) {
     let mut out = Vec::new();
+    let mut probe_failed = false;
     #[cfg(all(numanager_backend, not(test)))]
     {
         use opengel::camera::numanager_backend;
@@ -41,27 +47,29 @@ fn enumerate() -> Vec<(String, CameraChoice)> {
             // nothing) usually means USB permissions — on Linux, the udev rule
             // in `packaging/` is missing. Silently showing no camera would send
             // people hunting in the wrong place.
-            Err(e) => eprintln!("nu-manager camera discovery failed: {e}"),
+            Err(e) => {
+                probe_failed = true;
+                eprintln!("nu-manager camera discovery failed: {e}");
+            }
         }
     }
     #[cfg(all(nokhwa_backend, not(test)))]
     {
         use opengel::camera::nokhwa_backend;
-        if let Ok(cams) = nokhwa_backend::list_cameras() {
-            out.extend(
+        match nokhwa_backend::list_cameras() {
+            Ok(cams) => out.extend(
                 cams.into_iter()
                     .map(|c| (c.name, CameraChoice::Nokhwa(c.index))),
-            );
+            ),
+            Err(_) => probe_failed = true,
         }
     }
-    if out.is_empty() {
-        out.extend(
-            mock::list_cameras()
-                .into_iter()
-                .map(|c| (c.name, CameraChoice::Mock(c.index))),
-        );
-    }
-    out
+    (out, probe_failed)
+}
+
+/// Whether a listed choice is real hardware rather than the synthetic fallback.
+fn is_real(choice: &CameraChoice) -> bool {
+    !matches!(choice, CameraChoice::Mock(_))
 }
 
 thread_local! {
@@ -72,8 +80,30 @@ thread_local! {
 
 /// Names of the available cameras. Order defines the index used by
 /// [`open_camera_by_index`].
+///
+/// A re-probe never demotes a real camera to the mock. nu-manager's discovery
+/// *opens* what it finds, so it cannot claim a USB interface we are already
+/// holding open — which means the commonest reason a probe fails is that the
+/// bench camera is working. Falling back to the synthetic gel there would swap
+/// the user's camera out from under them mid-session, which is exactly what it
+/// looks like: the demo gel appearing in the live preview for no reason.
 pub fn list_camera_names() -> Vec<String> {
-    let choices = enumerate();
+    let (mut choices, probe_failed) = enumerate();
+    if !choices.iter().any(|(_, choice)| is_real(choice)) {
+        let kept = LISTED.with(|listed| listed.borrow().clone());
+        if probe_failed && kept.iter().any(|(_, choice)| is_real(choice)) {
+            // Keep the previous list wholesale rather than merging: the index a
+            // caller holds is a position in the list it was handed.
+            choices = kept;
+        }
+    }
+    if choices.is_empty() {
+        choices.extend(
+            mock::list_cameras()
+                .into_iter()
+                .map(|c| (c.name, CameraChoice::Mock(c.index))),
+        );
+    }
     let names = choices.iter().map(|(name, _)| name.clone()).collect();
     LISTED.with(|listed| *listed.borrow_mut() = choices);
     names
@@ -87,7 +117,7 @@ pub fn list_camera_names() -> Vec<String> {
 fn choice_at(index: usize) -> CameraChoice {
     let listed = LISTED.with(|listed| listed.borrow().get(index).map(|(_, choice)| *choice));
     listed.unwrap_or_else(|| {
-        let choices = enumerate();
+        let (choices, _) = enumerate();
         let choice = choices.get(index).map(|(_, choice)| *choice);
         LISTED.with(|listed| *listed.borrow_mut() = choices);
         choice.unwrap_or(CameraChoice::Mock(0))

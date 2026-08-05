@@ -1,5 +1,5 @@
 import { Button, ComboBox, VerticalBox, HorizontalBox, GroupBox, Slider, LineEdit, ScrollView, TabWidget, CheckBox } from "std-widgets.slint";
-import { LaneItem, TracePath, TreeRow, AxisTick, WarpKnot, FaultItem, ChannelItem, MetaRow, StatusChip, TabButton } from "common.slint";
+import { LaneItem, TracePath, TreeRow, AxisTick, WarpKnot, FaultItem, MetaRow, StatusChip, TabButton } from "common.slint";
 import { GelTab } from "gel.slint";
 import { TraceTab } from "trace.slint";
 import { MetadataTab } from "metadata.slint";
@@ -153,20 +153,22 @@ export component AppWindow inherits Window {
     // The lamps are lit (including during a stain-free activation) — the state
     // in which the door must stay shut.
     in property <bool> gd-lamps-on: false;
+    // Why the lamps are off, when they are: they are automatic, so the state
+    // alone would not tell the user what to do about it.
+    in property <string> gd-lamps-label: "Lamps off";
     in property <[FaultItem]> gd-faults;
     in property <string> gd-undecoded-label: "";
-    // Channels: one per light source. The list is the whole acquisition — for
-    // each ticked channel, one image.
-    in property <[ChannelItem]> gd-channel-items;
-    in property <[string]> gd-channel-names;      // the same channels, for a dropdown
-    in property <int> gd-channel-index: 0;        // the channel being edited/framed
-    // Exposure controls for the channel being edited (see the note above).
+    // Exposure controls for the one image an acquisition takes.
     in-out property <int> gd-capture-mode-index: 0;
     in-out property <int> gd-hdr-steps-idx: 1;
     in-out property <int> gd-gel-type-index: 0;
-    in property <string> gd-channel-label: "UV";
-    // Whether the channel being edited is the tray that is inserted. Imaging on
-    // the wrong light source gives a blank gel with nothing obviously wrong.
+    // What the image is a picture of: the light source the instrument reports,
+    // or the camera when there is no instrument to ask. Read, never chosen.
+    in property <string> gd-channel-label: "Camera";
+    in property <string> gd-channel-summary: "";
+    // Whether there is a light source at all — with an enclosure, a tray in the
+    // machine. Imaging an unlit gel gives a blank frame with nothing obviously
+    // wrong.
     in property <bool> gd-channel-ready: false;
     in property <string> gd-channel-hint: "";
     // The tray the simulated bench currently holds, for its own control.
@@ -261,14 +263,14 @@ export component AppWindow inherits Window {
     // Live tab.
     callback live-start();
     callback live-stop();
-    callback live-capture();               // take this channel's image
-    callback live-auto();                  // meter, and set this channel from it
+    callback live-capture();               // take the image
+    callback live-auto();                  // meter, and set the exposure from it
     callback cancel-capture();             // cancel an in-progress capture
     callback live-exposure-changed(float); // exposure slider moved
     callback set-hdr-lower();              // adopt current exposure as HDR min
     callback set-hdr-upper();              // adopt current exposure as HDR max
     callback hdr-steps-changed(int);
-    callback capture-mode-changed(int);    // single / HDR, for this channel
+    callback capture-mode-changed(int);    // single / HDR
     callback camera-selected(int);         // pick a camera from the dropdown
     callback rescan-cameras();             // re-enumerate cameras
     // Gel Doc EZ tab.
@@ -277,11 +279,8 @@ export component AppWindow inherits Window {
     callback gd-connect();
     callback gd-disconnect();
     callback gd-clear-faults();
-    callback gd-channel-selected(int);       // edit / frame this channel
-    callback gd-channel-toggled(int, bool);  // include it in the run
     callback gd-activation-changed(string);
     callback gd-highlight-saturated-changed(bool);
-    callback gd-auto();                      // meter every selected channel
     callback gd-run();
     callback gd-abort();
     // Simulated-enclosure bench controls.
@@ -462,10 +461,6 @@ export component AppWindow inherits Window {
         trace-zoom-at(a0, a1) => { root.trace-zoom-at(a0, a1); }
       }
 
-      // ---- Live ------------------------------------------------------------
-      // A bare camera, framing one channel. The channel is a light source, so
-      // the exposure settings shown here are that channel's — the same ones the
-      // Gel Doc EZ tab runs.
       // ---- Metadata --------------------------------------------------------
       // What the instrument recorded about how the image was taken, shown as
       // plain name/value rows. Nothing here is interpreted: instruments
@@ -476,12 +471,13 @@ export component AppWindow inherits Window {
         metadata-rows : root.metadata-rows;
       }
       // ---- Capture ---------------------------------------------------------
-      // One tab for taking pictures, whatever is attached. With a plain camera
-      // it is a viewfinder and a Capture button: one channel, no lights to
-      // manage. With an imaging enclosure the same tab grows the things only an
-      // enclosure has — a channel per light source, the door and tray
-      // interlocks, latched faults, and a run that walks the channels. The
-      // hardware decides which; there is nothing to switch between by hand.
+      // One tab for taking pictures, whatever is attached, and always one
+      // image. With a plain camera it is a viewfinder and a Capture button.
+      // With an imaging enclosure the same tab grows the things only an
+      // enclosure has — the light source it reports, the door and tray
+      // interlocks, latched faults, and a run that sequences the lamps with the
+      // exposure. The hardware decides which; there is nothing to switch
+      // between by hand.
       if root.active-tab == 3: CaptureTab {
         camera-index <=> root.camera-index;
         camera-names : root.camera-names;
@@ -494,9 +490,9 @@ export component AppWindow inherits Window {
         gd-can-run : root.gd-can-run;
         gd-capture-mode-index <=> root.gd-capture-mode-index;
         gd-channel-hint : root.gd-channel-hint;
-        gd-channel-index : root.gd-channel-index;
-        gd-channel-items : root.gd-channel-items;
+        gd-channel-label : root.gd-channel-label;
         gd-channel-ready : root.gd-channel-ready;
+        gd-channel-summary : root.gd-channel-summary;
         gd-connected : root.gd-connected;
         gd-door-closed : root.gd-door-closed;
         gd-faults : root.gd-faults;
@@ -506,6 +502,7 @@ export component AppWindow inherits Window {
         gd-instrument-index <=> root.gd-instrument-index;
         gd-instrument-names : root.gd-instrument-names;
         gd-lamps-on : root.gd-lamps-on;
+        gd-lamps-label : root.gd-lamps-label;
         gd-message : root.gd-message;
         gd-model : root.gd-model;
         gd-phase-label : root.gd-phase-label;
@@ -531,9 +528,6 @@ export component AppWindow inherits Window {
         capture-mode-changed(a0) => { root.capture-mode-changed(a0); }
         gd-abort => { root.gd-abort(); }
         gd-activation-changed(a0) => { root.gd-activation-changed(a0); }
-        gd-auto => { root.gd-auto(); }
-        gd-channel-selected(a0) => { root.gd-channel-selected(a0); }
-        gd-channel-toggled(a0, a1) => { root.gd-channel-toggled(a0, a1); }
         gd-clear-faults => { root.gd-clear-faults(); }
         gd-connect => { root.gd-connect(); }
         gd-disconnect => { root.gd-disconnect(); }

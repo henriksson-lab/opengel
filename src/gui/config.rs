@@ -11,14 +11,16 @@ const MAX_RECENT_LADDERS: usize = 10;
 pub struct AppConfig {
     #[serde(default)]
     pub recent_ladders: Vec<String>,
-    /// The acquisition plan: which channels to shoot and how to expose each.
+    /// How to expose the one image an acquisition takes.
     ///
     /// Exposure settings are a property of the bench — this camera, in this box,
     /// with these lamps — not of a document, so they outlive the session and
     /// live in the user's settings. `None` means this user has never run the
-    /// instrument, and gets the defaults.
+    /// instrument, and gets the defaults. A settings file written before the
+    /// per-light-source plan collapsed into one channel simply has a key nobody
+    /// reads any more, and starts from the defaults.
     #[serde(default)]
-    pub acquisition_plan: Option<opengel::instrument::AcquisitionPlan>,
+    pub capture_plan: Option<opengel::instrument::CapturePlan>,
 }
 
 pub fn load_config() -> AppConfig {

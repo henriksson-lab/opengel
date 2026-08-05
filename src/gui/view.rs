@@ -12,7 +12,7 @@ use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 use crate::geldoc::RunPhase;
 use crate::state::{AppState, LaneTrace, TraceMode};
 use crate::{
-    AppWindow, AxisTick, ChannelItem, FaultItem, LaneItem, MetaRow, TracePath, TreeRow, WarpKnot,
+    AppWindow, AxisTick, FaultItem, LaneItem, MetaRow, TracePath, TreeRow, WarpKnot,
 };
 
 /// Rebuild the Metadata tab's rows.
@@ -655,6 +655,22 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
     // Lit lamps are a state the user must not open the door on, and the
     // instrument does not report them: it is the run phase that knows.
     ui.set_gd_lamps_on(gd.lamps_lit());
+    // The lamps are automatic — they follow the preview — so when they are off
+    // the useful thing to show is *why*, not the bare fact.
+    ui.set_gd_lamps_label(
+        if gd.lamps_lit() {
+            "Lamps ON".to_string()
+        } else if !state.live_running {
+            "Lamps off — preview stopped".to_string()
+        } else if !gd.door_closed() {
+            "Lamps off — door open".to_string()
+        } else if gd.inserted_tray().is_none() {
+            "Lamps off — no tray".to_string()
+        } else {
+            "Lamps off".to_string()
+        }
+        .into(),
+    );
     // The sense bits nobody has decoded. Shown, not hidden: the front Run
     // button is believed to be in there, and seeing the mask move when the
     // button is pressed is how it gets identified on real hardware.
@@ -679,44 +695,12 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
         .collect();
     ui.set_gd_faults(ModelRc::new(VecModel::from(faults)));
 
-    // --- the channels to acquire ---
+    // --- the one channel ---
     //
-    // An instrument that cannot change its light has one channel. With a plain
-    // camera that is the whole list: a checklist of light sources you cannot
-    // select between would be a lie about what the hardware can do.
-    let channels: Vec<ChannelItem> = if gd.connected {
-        gd.plan
-            .channels
-            .iter()
-            .map(|c| ChannelItem {
-                name: c.label().into(),
-                selected: c.selected,
-                summary: c.summary().into(),
-                inserted: tray == Some(c.tray),
-            })
-            .collect()
-    } else {
-        vec![ChannelItem {
-            name: "Camera".into(),
-            selected: true,
-            summary: gd.channel().summary().into(),
-            inserted: false,
-        }]
-    };
-    ui.set_gd_channel_items(ModelRc::new(VecModel::from(channels)));
-    let names: Vec<SharedString> = gd
-        .plan
-        .channels
-        .iter()
-        .map(|c| SharedString::from(c.label()))
-        .collect();
-    ui.set_gd_channel_names(ModelRc::new(VecModel::from(names)));
-    ui.set_gd_channel_index(if gd.connected {
-        gd.current_channel_index() as i32
-    } else {
-        0
-    });
-    ui.set_gd_channel_label(gd.channel().label().into());
+    // There is nothing to pick: the tray in the machine is the light source, so
+    // this reports what the image will be rather than offering a choice.
+    ui.set_gd_channel_label(gd.channel_label().into());
+    ui.set_gd_channel_summary(gd.plan.summary().into());
     ui.set_gd_gel_type_index(state.gel_type.index() as i32);
     // The bench control mirrors the tray that is actually in, so it cannot sit
     // there claiming "none" over an inserted tray.
@@ -728,29 +712,34 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
         Some(TrayType::StainFree) => 4,
     });
 
-    // --- settings of the channel being edited ---
-    let channel = gd.channel();
-    ui.set_gd_capture_mode_index(channel.mode.index() as i32);
+    // --- how the image is exposed ---
+    let plan = &gd.plan;
+    ui.set_gd_capture_mode_index(plan.mode.index() as i32);
     ui.set_gd_hdr_steps_idx(state.hdr_steps_idx() as i32);
-    ui.set_gd_channel_ready(gd.current_channel_ready());
-    // The commonest setup mistake is the right gel under the wrong light, which
-    // images as a blank gel with nothing obviously wrong. Say which tray this
-    // channel needs whenever it is not the one that is in.
+    ui.set_gd_channel_ready(gd.channel_ready());
+    // With an enclosure, the light source is a fact about the machine rather
+    // than a setting: say what it is, and what is still between here and a
+    // picture. The tray is also the commonest setup mistake — a gel under no
+    // light images as a blank gel with nothing obviously wrong.
     ui.set_gd_channel_hint(
-        match (gd.connected, gd.inserted_tray(), gd.current_channel_ready()) {
-            (false, _, _) => String::new(),
-            (true, _, true) => format!("Lit: the {} tray is inserted.", channel.label()),
-            (true, Some(inserted), false) => format!(
-                "Not lit — the {} tray is inserted, this channel needs the {} tray.",
-                inserted.label(),
-                channel.label()
+        match (gd.connected, tray) {
+            (false, _) => String::new(),
+            (true, Some(tray)) if gd.lamps_lit() => {
+                format!("Lit: the {} tray is inserted.", tray.label())
+            }
+            (true, Some(tray)) => format!(
+                "The {} tray is inserted — start the preview to light it.",
+                tray.label()
             ),
-            (true, None, false) => format!("Not lit — insert the {} tray.", channel.label()),
+            (true, None) => "No tray is inserted — the tray is the light source.".to_string(),
         }
         .into(),
     );
-    ui.set_gd_activation_applicable(channel.tray == TrayType::StainFree);
-    ui.set_gd_activation_s(format!("{:.0}", channel.activation_s).into());
+    // Stain-free activation is a property of the tray that is in, not a setting
+    // that travels: hide it under every other light source rather than offering
+    // a UV pre-exposure that will not run.
+    ui.set_gd_activation_applicable(tray == Some(TrayType::StainFree));
+    ui.set_gd_activation_s(format!("{:.0}", plan.activation_s).into());
     ui.set_gd_highlight_saturated(gd.plan.highlight_saturated);
     ui.set_gd_last_exposure_label(
         gd.last_exposure_s
@@ -802,16 +791,16 @@ pub fn refresh_live(ui: &AppWindow, state: &AppState) {
     let hist = state.preview_histogram(256);
     ui.set_live_histogram_image(render_histogram(&hist, 0.0, 1.0, 1024, 120));
 
-    // Exposure controls. These belong to the channel being framed, so the Live
-    // tab and the Gel Doc EZ tab always show the same numbers for it.
-    let channel = state.live_channel();
+    // Exposure controls. One acquisition, one set of numbers — the preview runs
+    // at the same exposure a capture will take.
+    let plan = state.capture_plan();
     ui.set_live_exposure_slider(state.live_exposure_slider());
-    ui.set_live_exposure_label(fmt_seconds(channel.exposure_s).into());
-    ui.set_hdr_min_label(fmt_seconds(channel.hdr_min_s).into());
-    ui.set_hdr_max_label(fmt_seconds(channel.hdr_max_s).into());
+    ui.set_live_exposure_label(fmt_seconds(plan.exposure_s).into());
+    ui.set_hdr_min_label(fmt_seconds(plan.hdr_min_s).into());
+    ui.set_hdr_max_label(fmt_seconds(plan.hdr_max_s).into());
     ui.set_hdr_range_label(format!("{:.1} EV", state.hdr_range_ev()).into());
     ui.set_gd_hdr_steps_idx(state.hdr_steps_idx() as i32);
-    ui.set_gd_capture_mode_index(channel.mode.index() as i32);
+    ui.set_gd_capture_mode_index(plan.mode.index() as i32);
 
     // Camera selection dropdown.
     let names: Vec<SharedString> = state.cameras.iter().map(SharedString::from).collect();

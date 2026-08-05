@@ -53,6 +53,14 @@ pub enum CamEvent {
     Opened { name: String, manual_exposure: bool },
     OpenFailed(String),
     Preview(GrayF32),
+    /// The camera refused to hand over a preview frame. Reported rather than
+    /// swallowed: a camera erroring on every grab looks exactly like one staring
+    /// at a dark scene, and the difference is the whole diagnosis.
+    PreviewFailed(String),
+    /// The camera stopped answering altogether and the handle has been dropped —
+    /// unplugged, or wedged past recovering. The preview is over; a rescan is
+    /// what picks it up again.
+    CameraLost(String),
     /// An auto-exposure metering attempt, so the user sees it converging rather
     /// than watching a still dialog through several exposures.
     Metering { attempt: usize, exposure_s: f64 },
@@ -128,27 +136,54 @@ pub fn spawn() -> (CameraHandle, Receiver<CamEvent>) {
     )
 }
 
+/// Consecutive failed preview grabs after which the camera is treated as gone
+/// rather than as dropping frames.
+const PREVIEW_FAILURES_BEFORE_LOST: usize = 5;
+
 fn worker_main(rx: Receiver<CamCommand>, tx: Sender<CamEvent>, cancel: Arc<AtomicBool>) {
     let mut cam: Option<Box<dyn Camera>> = None;
     let mut previewing = false;
+    // The last preview error reported, so a camera failing 50 times a second
+    // says so once instead of flooding the channel — and says so again if the
+    // failure changes.
+    let mut preview_error: Option<String> = None;
+    // Consecutive failed grabs, reset by the first frame that arrives.
+    let mut preview_failures: usize = 0;
 
     loop {
-        // When previewing we poll for commands and keep grabbing frames; when
-        // idle we block so the thread sleeps until the next command.
-        let cmd = if previewing && cam.is_some() {
-            match rx.try_recv() {
-                Ok(c) => Some(c),
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => return,
-            }
-        } else {
+        // Take everything that is waiting, not one command per iteration. Each
+        // iteration also grabs a frame, so a queue drained one command at a time
+        // advances at the frame rate — and dragging the exposure slider emits a
+        // command per step, which left the camera seconds behind the control
+        // that was being dragged.
+        //
+        // When previewing we poll; when idle we block so the thread sleeps until
+        // the next command.
+        let mut pending: Vec<CamCommand> = Vec::new();
+        if !(previewing && cam.is_some()) {
             match rx.recv() {
-                Ok(c) => Some(c),
+                Ok(c) => pending.push(c),
                 Err(_) => return,
             }
-        };
+        }
+        loop {
+            match rx.try_recv() {
+                Ok(c) => pending.push(c),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
 
-        if let Some(cmd) = cmd {
+        // Exposure is a level, not an event: within one batch only the last
+        // value means anything, and applying each superseded one costs a whole
+        // frame. Every other command is kept, in order.
+        let latest_exposure = pending
+            .iter()
+            .rposition(|c| matches!(c, CamCommand::SetExposure(_)));
+        for (position, cmd) in pending.into_iter().enumerate() {
+            if matches!(cmd, CamCommand::SetExposure(_)) && Some(position) != latest_exposure {
+                continue;
+            }
             match cmd {
                 CamCommand::Shutdown => return,
                 CamCommand::ListCameras => {
@@ -200,13 +235,39 @@ fn worker_main(rx: Receiver<CamCommand>, tx: Sender<CamEvent>, cancel: Arc<Atomi
         // sleep caps the rate (~50 fps) so a fast camera can't spin the thread
         // or flood the event channel; a slow device is unaffected.
         if previewing {
-            if let Some(c) = cam.as_deref_mut() {
-                if let Ok(frame) = c.capture() {
+            // The grab is taken out of the borrow before anything is decided, so
+            // a camera that has to be dropped can be.
+            match cam.as_deref_mut().map(|c| c.capture()) {
+                None => previewing = false,
+                Some(Ok(frame)) => {
+                    preview_error = None;
+                    preview_failures = 0;
                     let _ = tx.send(CamEvent::Preview(GrayF32::from_dynamic(&frame)));
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            } else {
-                previewing = false;
+                Some(Err(e)) => {
+                    // A dropped frame is often transient, so keep trying — but
+                    // never in silence: an unreported failure is a black
+                    // rectangle the user reads as "the camera sees nothing".
+                    let message = e.to_string();
+                    preview_failures += 1;
+                    if preview_error.as_deref() != Some(message.as_str()) {
+                        let _ = tx.send(CamEvent::PreviewFailed(message.clone()));
+                        preview_error = Some(message.clone());
+                    }
+                    // Past this many in a row it is not a dropped frame, it is a
+                    // camera that has gone. Let the handle go rather than
+                    // spinning on a dead device: the USB interface it holds is
+                    // also what a reconnected camera needs to be claimed with.
+                    if preview_failures >= PREVIEW_FAILURES_BEFORE_LOST {
+                        cam = None;
+                        previewing = false;
+                        preview_failures = 0;
+                        preview_error = None;
+                        let _ = tx.send(CamEvent::CameraLost(message));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
             }
         }
     }

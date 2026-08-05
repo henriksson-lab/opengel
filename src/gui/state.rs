@@ -1388,36 +1388,26 @@ impl AppState {
         ((t / EXPOSURE_MIN_S).ln() / (EXPOSURE_MAX_S / EXPOSURE_MIN_S).ln()) as f32
     }
 
-    /// The channel the live view is framing: the one whose settings the Live tab
-    /// edits and whose exposure the preview runs at.
-    pub fn live_channel(&self) -> &opengel::instrument::ChannelPlan {
-        self.geldoc.channel()
+    /// How the one image is exposed — what the preview runs at and what a
+    /// capture will take.
+    pub fn capture_plan(&self) -> &opengel::instrument::CapturePlan {
+        &self.geldoc.plan
     }
 
-    /// The exposure the preview and a single capture run at, i.e. the current
-    /// channel's single-frame time.
+    /// The exposure the preview and a single capture run at.
     pub fn live_exposure_s(&self) -> f64 {
-        self.geldoc.channel().exposure_s
+        self.geldoc.plan.exposure_s
     }
 
-    /// Point the live view (and the settings controls) at another channel, and
-    /// re-expose the camera for it.
-    pub fn set_live_channel(&mut self, index: usize) {
-        self.geldoc.select_channel(index);
-        self.apply_live_exposure();
-        // Selecting a channel is what lights it.
-        self.geldoc_sync_lamps();
-    }
-
-    /// Set the current channel's exposure from a log-scale slider position, and
-    /// apply it to the camera worker.
+    /// Set the exposure from a log-scale slider position, and apply it to the
+    /// camera worker.
     pub fn set_live_exposure_slider(&mut self, f: f32) {
         let seconds = Self::exposure_from_slider(f);
-        self.geldoc.set_exposure_s(seconds);
+        self.geldoc.plan.set_exposure_s(seconds);
         self.apply_live_exposure();
     }
 
-    /// Push the current channel's exposure to the camera.
+    /// Push the exposure to the camera.
     pub fn apply_live_exposure(&self) {
         if let Some(cam) = &self.cam {
             cam.set_exposure(self.live_exposure_s().max(EXPOSURE_MIN_S));
@@ -1429,38 +1419,37 @@ impl AppState {
         Self::slider_from_exposure(self.live_exposure_s())
     }
 
-    /// Adopt the current exposure as this channel's lower / upper HDR bound.
+    /// Adopt the current exposure as the bracket's lower / upper bound.
     pub fn set_hdr_lower_from_current(&mut self) {
         let t = self.live_exposure_s();
-        self.geldoc.set_hdr_min_s(t);
+        self.geldoc.plan.set_hdr_min_s(t);
     }
     pub fn set_hdr_upper_from_current(&mut self) {
         let t = self.live_exposure_s();
-        self.geldoc.set_hdr_max_s(t);
+        self.geldoc.plan.set_hdr_max_s(t);
     }
 
     /// Number of HDR steps from a dropdown index into [`HDR_STEP_OPTIONS`].
     pub fn set_hdr_steps_idx(&mut self, idx: usize) {
         let steps = HDR_STEP_OPTIONS.get(idx).copied().unwrap_or(3);
-        self.geldoc.set_hdr_steps(steps);
+        self.geldoc.plan.set_hdr_steps(steps);
     }
     pub fn hdr_steps_idx(&self) -> usize {
         HDR_STEP_OPTIONS
             .iter()
-            .position(|&n| n == self.geldoc.channel().hdr_steps)
+            .position(|&n| n == self.geldoc.plan.hdr_steps)
             .unwrap_or(1)
     }
 
-    /// Single frame or HDR bracket for the current channel.
+    /// Single frame or HDR bracket.
     pub fn set_capture_mode_idx(&mut self, idx: usize) {
-        self.geldoc
-            .set_capture_mode(opengel::instrument::CaptureMode::from_index(idx));
+        self.geldoc.plan.mode = opengel::instrument::CaptureMode::from_index(idx);
     }
 
     /// Dynamic range covered by the current bracket, in EV (stops). Shown in the
     /// UI so the user can judge whether the step count fits the range.
     pub fn hdr_range_ev(&self) -> f64 {
-        self.geldoc.channel().hdr_range_ev()
+        self.geldoc.plan.hdr_range_ev()
     }
 
     /// Set the list of available cameras (reported by the worker).
@@ -1501,6 +1490,10 @@ impl AppState {
     /// Open the selected camera and begin live preview (on the worker thread).
     pub fn live_start(&mut self) -> String {
         self.live_running = true;
+        // Fluorescence needs the lamps: a preview of an unlit gel is a black
+        // frame, whatever the camera is doing. Which lamps is not a question —
+        // the tray that is in is the light source.
+        self.geldoc_sync_lamps();
         let exposure = self.live_exposure_s().max(EXPOSURE_MIN_S);
         if let Some(cam) = &self.cam {
             cam.open(self.selected_camera);
@@ -1515,6 +1508,8 @@ impl AppState {
 
     pub fn live_stop(&mut self) {
         self.live_running = false;
+        // Nobody is looking any more; do not go on burning the lamps.
+        self.geldoc_sync_lamps();
         if let Some(cam) = &self.cam {
             cam.stop_preview();
         }
@@ -1541,18 +1536,42 @@ impl AppState {
 
     /// Make a captured set of frames the current gel document. Called from the
     /// UI event loop when the worker reports a finished capture.
+    ///
+    /// A capture is one channel. What that channel *is* comes from the
+    /// instrument: the tray that lit it names and colours it. With no instrument
+    /// there is nothing to say, so nothing is said — the document gets a plain
+    /// unnamed channel rather than an invented light source.
     pub fn adopt_capture(&mut self, imgs: Vec<image::DynamicImage>, metas: Vec<CaptureMeta>) {
-        let doc = GelDocument::from_frames(self.gel_type, imgs, metas);
-        self.replace_active_with_document(doc, None, "Captured gel");
+        let tray = self.geldoc.channel_tray();
+        let frames = imgs
+            .into_iter()
+            .zip(metas.into_iter().chain(std::iter::repeat_with(
+                CaptureMeta::default,
+            )))
+            .collect();
+        self.adopt_capture_frames(frames, tray);
     }
 
-    /// Make a captured multi-channel acquisition the current gel document.
-    ///
-    /// One document, one channel per light source: they are separate
-    /// acquisitions of the same gel, sharing its geometry, so they belong in the
-    /// same document rather than in one document each.
-    pub fn adopt_capture_channels(&mut self, channels: Vec<opengel::core::CapturedChannel>) {
-        let doc = GelDocument::from_channels(self.gel_type, channels);
+    /// Make a captured image the current document, labelled with the light
+    /// source it was taken under (when one is known).
+    pub fn adopt_capture_frames(
+        &mut self,
+        frames: Vec<(image::DynamicImage, CaptureMeta)>,
+        tray: Option<opengel::instrument::TrayType>,
+    ) {
+        let doc = match tray {
+            Some(tray) => {
+                let (name, color) = crate::geldoc::channel_identity(tray);
+                GelDocument::from_channels(
+                    self.gel_type,
+                    vec![opengel::core::CapturedChannel { name, color, frames }],
+                )
+            }
+            None => {
+                let (imgs, metas): (Vec<_>, Vec<_>) = frames.into_iter().unzip();
+                GelDocument::from_frames(self.gel_type, imgs, metas)
+            }
+        };
         self.replace_active_with_document(doc, None, "Captured gel");
     }
 
@@ -1564,12 +1583,11 @@ impl AppState {
         group
     }
 
-    /// Capture the current channel on the worker (non-blocking): one frame, or
-    /// the channel's HDR bracket. The result arrives via a [`CamEvent`] and is
-    /// applied by the UI event loop.
+    /// Capture on the worker (non-blocking): one frame, or the HDR bracket. The
+    /// result arrives via a [`CamEvent`] and is applied by the UI event loop.
     pub fn live_capture(&mut self) {
         let group = self.next_bracket_group();
-        let exposures = self.geldoc.channel().exposures();
+        let exposures = self.geldoc.plan.exposures();
         self.capturing = true;
         self.cancel_requested = false;
         self.auto_metering = false;
@@ -1583,14 +1601,14 @@ impl AppState {
         }
     }
 
-    /// Meter the scene and write what it settles on into the current channel's
-    /// settings — the Live tab's "Auto". No document is produced: this sets up
-    /// the exposure, it does not take the picture.
+    /// Meter the scene and write what it settles on into the plan — the "Auto"
+    /// button. No document is produced: this sets up the exposure, it does not
+    /// take the picture.
     pub fn live_auto_expose(&mut self) {
         self.capturing = true;
         self.cancel_requested = false;
         self.auto_metering = true;
-        self.capture_status = format!("Metering {}…", self.geldoc.channel().label());
+        self.capture_status = format!("Metering {}…", self.geldoc.channel_label());
         if let Some(cam) = &self.cam {
             cam.capture_auto(
                 crate::camera_worker::AutoExposureMode::IntenseBands,
@@ -1600,15 +1618,15 @@ impl AppState {
         }
     }
 
-    /// Apply a metering result to the current channel. Returns the line to show.
+    /// Apply a metering result to the plan. Returns the line to show.
     pub fn apply_auto_exposure(&mut self, metered_s: f64) -> String {
         self.auto_metering = false;
-        self.geldoc.channel_mut().apply_metered(metered_s);
+        self.geldoc.plan.apply_metered(metered_s);
         self.apply_live_exposure();
         format!(
             "Auto — {}: {}",
-            self.geldoc.channel().label(),
-            self.geldoc.channel().summary()
+            self.geldoc.channel_label(),
+            self.geldoc.plan.summary()
         )
     }
 
@@ -3685,13 +3703,13 @@ mod tests {
     }
 
     #[test]
-    fn a_channels_hdr_bracket_is_geometric() {
+    fn the_hdr_bracket_is_geometric() {
         let mut st = AppState::new();
         st.set_capture_mode_idx(1); // HDR
-        st.geldoc.set_hdr_min_s(0.01);
-        st.geldoc.set_hdr_max_s(1.0);
+        st.geldoc.plan.set_hdr_min_s(0.01);
+        st.geldoc.plan.set_hdr_max_s(1.0);
         st.set_hdr_steps_idx(1); // → 3 steps
-        let e = st.geldoc.channel().exposures();
+        let e = st.geldoc.plan.exposures();
         assert_eq!(e.len(), 3);
         assert!((e[0] - 0.01).abs() < 1e-9);
         assert!((e[1] - 0.1).abs() < 1e-9, "mid = {}", e[1]); // geometric mean
@@ -3699,10 +3717,10 @@ mod tests {
         // Log-even: constant ratio between consecutive exposures.
         assert!(((e[1] / e[0]) - (e[2] / e[1])).abs() < 1e-9);
 
-        // Single mode = one frame at that channel's exposure.
+        // Single mode = one frame at the set exposure.
         st.set_capture_mode_idx(0);
-        st.geldoc.set_exposure_s(0.25);
-        assert_eq!(st.geldoc.channel().exposures(), vec![0.25]);
+        st.geldoc.plan.set_exposure_s(0.25);
+        assert_eq!(st.geldoc.plan.exposures(), vec![0.25]);
 
         // Covered dynamic range in EV.
         assert!((st.hdr_range_ev() - 100.0_f64.log2()).abs() < 1e-9);
@@ -3718,33 +3736,48 @@ mod tests {
         }
         // Adopting the current exposure as the HDR bounds.
         let mut st = AppState::new();
-        st.geldoc.set_exposure_s(0.05);
+        st.geldoc.plan.set_exposure_s(0.05);
         st.set_hdr_lower_from_current();
-        assert!((st.geldoc.channel().hdr_min_s - 0.05).abs() < 1e-9);
-        st.geldoc.set_exposure_s(1.5);
+        assert!((st.geldoc.plan.hdr_min_s - 0.05).abs() < 1e-9);
+        st.geldoc.plan.set_exposure_s(1.5);
         st.set_hdr_upper_from_current();
-        assert!((st.geldoc.channel().hdr_max_s - 1.5).abs() < 1e-9);
+        assert!((st.geldoc.plan.hdr_max_s - 1.5).abs() < 1e-9);
         // Bounds never cross.
-        assert!(st.geldoc.channel().hdr_min_s <= st.geldoc.channel().hdr_max_s);
+        assert!(st.geldoc.plan.hdr_min_s <= st.geldoc.plan.hdr_max_s);
     }
 
     #[test]
-    fn the_live_view_follows_the_selected_channel() {
-        // The Live tab and the Gel Doc EZ tab edit the same per-channel
-        // settings, so switching channel switches which exposure is live.
-        use opengel::instrument::{AcquisitionPlan, TrayType};
+    fn the_channel_is_whatever_tray_is_in() {
+        use opengel::instrument::{Sense, TrayType};
         let mut st = AppState::new();
-        st.set_live_channel(AcquisitionPlan::index_of(TrayType::Uv));
-        st.geldoc.set_exposure_s(0.02);
-        st.set_live_channel(AcquisitionPlan::index_of(TrayType::White));
-        st.geldoc.set_exposure_s(0.5);
-        assert!((st.live_exposure_s() - 0.5).abs() < 1e-12);
-        st.set_live_channel(AcquisitionPlan::index_of(TrayType::Uv));
-        assert!((st.live_exposure_s() - 0.02).abs() < 1e-12);
+
+        // No instrument: one channel, and nothing invented about a light source.
+        assert_eq!(st.geldoc.channel_tray(), None);
+        assert_eq!(st.geldoc.channel_label(), "Camera");
+        assert!(st.geldoc.channel_ready(), "a bare camera can always shoot");
+
+        // Connected: the tray in the machine *is* the channel, no selection
+        // involved, and swapping it swaps what the image will be labelled.
+        st.geldoc.connected = true;
+        assert_eq!(st.geldoc.channel_tray(), None);
+        assert!(!st.geldoc.channel_ready(), "no tray, no light source");
+        for tray in TrayType::ALL {
+            st.geldoc.sense = Some(Sense {
+                tray: Some(tray),
+                door_closed: true,
+                ..Sense::default()
+            });
+            assert_eq!(st.geldoc.channel_tray(), Some(tray));
+            assert_eq!(st.geldoc.channel_label(), tray.label());
+            // …and that is what the captured image gets named after.
+            let (name, _color) = crate::geldoc::channel_identity(tray);
+            assert_eq!(name, tray.label());
+            assert!(st.geldoc.channel_ready());
+        }
     }
 
     #[test]
-    fn auto_writes_its_metered_exposure_into_the_current_channel() {
+    fn auto_writes_its_metered_exposure_into_the_plan() {
         let mut st = AppState::new();
         st.auto_metering = true;
         st.apply_auto_exposure(0.08);
@@ -3752,8 +3785,8 @@ mod tests {
         assert!((st.live_exposure_s() - 0.08).abs() < 1e-12);
         // The metered time is where nothing clips, so it is the bracket's short
         // end, not its middle.
-        assert!((st.geldoc.channel().hdr_min_s - 0.08).abs() < 1e-12);
-        assert!(st.geldoc.channel().hdr_max_s > 0.08);
+        assert!((st.geldoc.plan.hdr_min_s - 0.08).abs() < 1e-12);
+        assert!(st.geldoc.plan.hdr_max_s > 0.08);
     }
 
     #[test]

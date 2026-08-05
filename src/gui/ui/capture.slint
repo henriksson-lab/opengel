@@ -1,4 +1,4 @@
-import { FaultItem, ChannelItem } from "common.slint";
+import { FaultItem } from "common.slint";
 import { StatusChip } from "common.slint";
 import { Button, ComboBox, CheckBox, Slider, GroupBox, ScrollView, LineEdit, HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
 
@@ -14,9 +14,9 @@ export component CaptureTab inherits VerticalLayout {
     in property <bool> gd-can-run: false;
     in-out property <int> gd-capture-mode-index: 0;
     in property <string> gd-channel-hint: "";
-    in property <int> gd-channel-index: 0;
-    in property <[ChannelItem]> gd-channel-items;
+    in property <string> gd-channel-label: "Camera";
     in property <bool> gd-channel-ready: false;
+    in property <string> gd-channel-summary: "";
     in property <bool> gd-connected: false;
     in property <bool> gd-door-closed: false;
     in property <[FaultItem]> gd-faults;
@@ -26,6 +26,7 @@ export component CaptureTab inherits VerticalLayout {
     in-out property <int> gd-instrument-index: 0;
     in property <[string]> gd-instrument-names;
     in property <bool> gd-lamps-on: false;
+    in property <string> gd-lamps-label: "Lamps off";
     in property <string> gd-message: "";
     in property <string> gd-model: "—";
     in property <string> gd-phase-label: "Ready.";
@@ -51,9 +52,6 @@ export component CaptureTab inherits VerticalLayout {
     callback capture-mode-changed(int);
     callback gd-abort();
     callback gd-activation-changed(string);
-    callback gd-auto();
-    callback gd-channel-selected(int);
-    callback gd-channel-toggled(int, bool);
     callback gd-clear-faults();
     callback gd-connect();
     callback gd-disconnect();
@@ -108,8 +106,11 @@ export component CaptureTab inherits VerticalLayout {
             tint: root.gd-tray-present ? #3b6fb5 : #d08a1e;
             alert: !root.gd-tray-present;
           }
+          // Automatic: the lamps follow the preview and the selected channel,
+          // so when they are off this says why rather than leaving the user to
+          // hunt for a switch that does not exist.
           StatusChip {
-            label: root.gd-lamps-on ? "Lamps ON" : "Lamps off";
+            label: root.gd-lamps-label;
             tint: root.gd-lamps-on ? #d08a1e : #b0b0b6;
             alert: root.gd-lamps-on;
           }
@@ -297,103 +298,57 @@ export component CaptureTab inherits VerticalLayout {
             }
           }
 
-          Text {
-            text: root.gd-connected ? "Channels to acquire" : "Image";
-            font-weight: 700;
-            vertical-stretch: 0;
-          }
-          // One row per light source, as a table: tick to include it in the
-          // run, a lamp column for the one that is in the machine, then the
-          // channel and what will be shot for it. With a plain camera there is
-          // one channel and nothing to tick — an instrument that cannot change
-          // its light has exactly one.
+          // What the picture will be: one channel, always. It is reported, not
+          // chosen — an enclosure names it after the tray that lights it, and a
+          // bare camera has nothing to say beyond "the camera". A control
+          // offering one option would only imply there could be others.
           Rectangle {
-            height: root.gd-channel-items.length * 30px + 22px;
+            height: 44px;
             vertical-stretch: 0;
             background: white;
             border-width: 1px;
             border-color: #d0d0d4;
-            VerticalLayout {
-              alignment: start;
-              padding: 1px;
-              // Header. The lamp column has no title: a circle under a word
-              // twice its width would only spread the table out.
+            border-radius: 4px;
+            HorizontalLayout {
+              padding-left: 8px;
+              padding-right: 8px;
+              spacing: 8px;
+              // Lit means the lamps are burning on this light source right now.
               Rectangle {
-                height: 20px;
-                background: #f0f0f2;
-                HorizontalLayout {
-                  padding-left: 6px;
-                  padding-right: 6px;
-                  spacing: 6px;
-                  if root.gd-connected: Rectangle { width: 22px; }
-                  Rectangle { width: 14px; }
-                  Text {
-                    text: "Channel";
-                    width: 90px;
-                    font-size: 11px;
-                    color: #666;
-                    vertical-alignment: center;
-                  }
-                  Text {
-                    text: "Image";
-                    horizontal-stretch: 1;
-                    font-size: 11px;
-                    color: #666;
-                    vertical-alignment: center;
-                  }
+                width: 10px;
+                Rectangle {
+                  width: 10px;
+                  height: 10px;
+                  y: (parent.height - 10px) / 2;
+                  border-radius: 5px;
+                  border-width: 1px;
+                  background: root.gd-lamps-on ? #d08a1e : transparent;
+                  border-color: root.gd-lamps-on
+                    ? #d08a1e
+                    : (root.gd-channel-ready ? #2e9e46 : #c8c8cc);
                 }
               }
-              for c[i] in root.gd-channel-items: Rectangle {
-                height: 30px;
-                background: i == root.gd-channel-index ? #eaf4ec : (Math.mod(i, 2) == 0 ? #f7f7f9 : #ffffff);
-                TouchArea { clicked => { root.gd-channel-selected(i); } }
-                HorizontalLayout {
-                  padding-left: 6px;
-                  padding-right: 6px;
-                  spacing: 6px;
-                  if root.gd-connected: CheckBox {
-                    width: 22px;
-                    checked: c.selected;
-                    toggled => { root.gd-channel-toggled(i, self.checked); }
-                  }
-                  // Filled for the tray in the machine right now: that channel
-                  // is lit, and can be shot without touching anything.
-                  Rectangle {
-                    width: 14px;
-                    Rectangle {
-                      width: 10px;
-                      height: 10px;
-                      x: 2px;
-                      y: (parent.height - 10px) / 2;
-                      border-radius: 5px;
-                      border-width: 1px;
-                      border-color: c.inserted ? #2e9e46 : #c8c8cc;
-                      background: c.inserted ? #2e9e46 : transparent;
-                    }
-                  }
-                  Text {
-                    text: c.name;
-                    width: 90px;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    font-weight: c.selected ? 700 : 400;
-                    color: c.selected ? #222 : #777;
-                  }
-                  Text {
-                    text: c.summary;
-                    horizontal-stretch: 1;
-                    color: #888;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                  }
+              VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                Text {
+                  text: root.gd-channel-label;
+                  font-weight: 700;
+                  color: root.gd-channel-ready ? #222 : #777;
+                  overflow: elide;
+                }
+                Text {
+                  text: root.gd-channel-summary;
+                  color: #888;
+                  font-size: 11px;
+                  overflow: elide;
                 }
               }
+              Rectangle { horizontal-stretch: 1; }
             }
           }
-          // Selecting a channel is what lights it: the tray decides which
-          // lamps, and this decides that they burn. When the channel is not
-          // the tray that is in, that is what this line says.
+          // The tray is the light source, so what it is and whether it is
+          // burning is the one thing worth saying about the channel.
           if root.gd-channel-hint != "": Text {
             text: root.gd-channel-hint;
             color: root.gd-channel-ready ? #2e9e46 : #b26b00;
@@ -406,6 +361,7 @@ export component CaptureTab inherits VerticalLayout {
           HorizontalLayout {
             spacing: 6px;
             vertical-stretch: 0;
+            height: 28px;
             Text { text: "Take:"; vertical-alignment: center; }
             ComboBox {
               model: ["Single image", "HDR bracket"];
@@ -415,36 +371,27 @@ export component CaptureTab inherits VerticalLayout {
               selected(v) => { root.capture-mode-changed(self.current-index); }
             }
           }
-          // The bracket's ends. Each "Set" adopts the exposure the slider is on
-          // now, so the bounds are found by looking at the picture rather than
-          // by typing numbers. Right-aligned against their buttons.
+          // The bracket's ends, one line. Each "Set" adopts the exposure the
+          // slider is on now, so the bounds are found by looking at the picture
+          // rather than by typing numbers.
           if root.gd-capture-mode-index == 1: HorizontalLayout {
-            spacing: 6px;
+            spacing: 4px;
             vertical-stretch: 0;
+            height: 28px;
             Text { text: "Min:"; vertical-alignment: center; }
-            Text {
-              text: root.hdr-min-label;
-              vertical-alignment: center;
-              horizontal-alignment: right;
-              horizontal-stretch: 1;
-            }
+            Text { text: root.hdr-min-label; vertical-alignment: center; }
             Button { text: "Set"; clicked => { root.set-hdr-lower(); } }
-          }
-          if root.gd-capture-mode-index == 1: HorizontalLayout {
-            spacing: 6px;
-            vertical-stretch: 0;
+            // The slack goes between the two ends, not between a label and the
+            // value it labels.
+            Rectangle { horizontal-stretch: 1; }
             Text { text: "Max:"; vertical-alignment: center; }
-            Text {
-              text: root.hdr-max-label;
-              vertical-alignment: center;
-              horizontal-alignment: right;
-              horizontal-stretch: 1;
-            }
+            Text { text: root.hdr-max-label; vertical-alignment: center; }
             Button { text: "Set"; clicked => { root.set-hdr-upper(); } }
           }
           if root.gd-capture-mode-index == 1: HorizontalLayout {
             spacing: 6px;
             vertical-stretch: 0;
+            height: 28px;
             Text { text: "Steps:"; vertical-alignment: center; }
             ComboBox {
               model: ["2", "3", "5", "7"];
@@ -465,6 +412,7 @@ export component CaptureTab inherits VerticalLayout {
           if root.gd-activation-applicable: HorizontalLayout {
             spacing: 6px;
             vertical-stretch: 0;
+            height: 28px;
             Text { text: "Activation:"; vertical-alignment: center; }
             LineEdit {
               text <=> root.gd-activation-s;
@@ -473,32 +421,17 @@ export component CaptureTab inherits VerticalLayout {
             }
             Text { text: "s"; vertical-alignment: center; }
           }
-          HorizontalLayout {
-            spacing: 6px;
+          // Meter to where nothing clips. One image, so one Auto — with an
+          // enclosure it runs under the lamps, otherwise on the room.
+          Button {
+            text: "Auto exposure";
             vertical-stretch: 0;
-            Button {
-              text: "Auto this";
-              horizontal-stretch: 1;
-              enabled: root.exposure-supported && !root.capture-active;
-              clicked => { root.live-auto(); }
-            }
-            // Only worth offering when there is more than one channel to
-            // walk, and only an enclosure can walk them.
-            if root.gd-connected: Button {
-              text: "Auto all";
-              horizontal-stretch: 1;
-              enabled: root.gd-can-run;
-              clicked => { root.gd-auto(); }
-            }
+            height: 28px;
+            enabled: root.gd-connected
+              ? (root.gd-can-run && root.exposure-supported)
+              : (root.exposure-supported && !root.capture-active);
+            clicked => { root.live-auto(); }
           }
-          Text {
-            text: root.gd-connected
-              ? "Auto meters where nothing clips: “this” for the selected channel, “all” for every ticked one in turn."
-              : "Auto meters the scene and sets the exposure to where nothing clips.";
-            color: #888; font-size: 11px; wrap: word-wrap;
-            vertical-stretch: 0;
-          }
-
           Button {
             text: root.gd-running ? "Abort run" : (root.gd-connected ? "Run" : "Capture");
             primary: true;

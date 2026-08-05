@@ -55,17 +55,6 @@ export struct FaultItem {
     remedy: string,
 }
 
-// One acquisition channel — a light source, which on this instrument means a
-// tray. `selected` is "take this one in the run"; `inserted` is "this is the
-// tray physically in the machine right now", which is the difference between a
-// channel that can be shot immediately and one that needs a tray swap.
-export struct ChannelItem {
-    name: string,
-    selected: bool,
-    summary: string,
-    inserted: bool,
-}
-
 // One row of the Metadata tab. `section` is a heading like "Channel 2 —
 // DyLight 549"; consecutive rows sharing one are drawn under a single header.
 export struct MetaRow {

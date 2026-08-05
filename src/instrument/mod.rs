@@ -28,7 +28,7 @@ pub mod transport;
 #[cfg(target_os = "linux")]
 pub mod hidraw;
 
-pub use acquisition::{AcquisitionPlan, CaptureMode, ChannelPlan};
+pub use acquisition::{CaptureMode, CapturePlan};
 pub use geldoc_ez::GelDocEz;
 
 #[derive(Debug, thiserror::Error)]

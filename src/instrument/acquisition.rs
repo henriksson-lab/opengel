@@ -1,20 +1,18 @@
-//! What to shoot: one image per selected *channel*.
+//! What to shoot: **one image**.
 //!
-//! **A channel is a light source.** On this instrument the light source is the
-//! tray — the sense word reports which tray is in, and that alone decides which
-//! lamps fire. There is no filter wheel and no per-dye optical state: the camera
-//! is monochrome behind one fixed emission filter, so ethidium bromide and SYBR
-//! Green on the UV tray are the *same acquisition*. Nothing here can be
-//! spectrally unmixed and nothing tries to be, which is why the dye is not part
-//! of the plan at all.
+//! An acquisition here is a single channel, always. The camera is monochrome
+//! behind one fixed emission filter and the light source is whichever tray is in
+//! the machine — there is no filter wheel and no per-dye optical state, so
+//! ethidium bromide and SYBR Green on the UV tray are the *same acquisition*.
+//! Nothing here can be spectrally unmixed and nothing tries to be, which is why
+//! neither the dye nor a list of channels is part of the plan.
 //!
-//! That leaves an acquisition as a short, honest list: for each channel you
-//! picked, take one image — a single frame, or an HDR bracket when one exposure
-//! cannot hold both the faint and the bright bands.
-//!
-//! Only one tray is physically inserted at a time, so a multi-channel plan is
-//! run with a pause between channels while the user swaps the tray. The plan
-//! says what to take; the run state machine in `gui::geldoc` sequences it.
+//! Only one tray is physically inserted at a time, so "which light source" is
+//! not a choice the software makes: it is a fact it reads. The plan says how to
+//! expose — a single frame, or an HDR bracket when one exposure cannot hold both
+//! the faint and the bright bands — and the instrument says what that exposure
+//! *is a picture of*. With no instrument the exposure settings are all there is,
+//! and the image is simply an image.
 
 use serde::{Deserialize, Serialize};
 
@@ -64,13 +62,9 @@ impl CaptureMode {
     }
 }
 
-/// One channel of an acquisition: a light source and how to expose it.
+/// How to expose the one image an acquisition takes.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ChannelPlan {
-    /// The light source, which on this instrument is the tray.
-    pub tray: TrayType,
-    /// Whether this channel is part of the run.
-    pub selected: bool,
+pub struct CapturePlan {
     pub mode: CaptureMode,
     /// Exposure time for a single capture, seconds.
     pub exposure_s: f64,
@@ -78,48 +72,82 @@ pub struct ChannelPlan {
     pub hdr_min_s: f64,
     pub hdr_max_s: f64,
     pub hdr_steps: usize,
-    /// Stain-free UV activation before the exposure, seconds. Only the
-    /// stain-free tray activates; 0 skips the step.
+    /// Stain-free UV activation before the exposure, seconds. Only ever run
+    /// under the stain-free tray; 0 skips the step.
     pub activation_s: f64,
+    /// Render saturated pixels red in the resulting image.
+    #[serde(default = "default_true")]
+    pub highlight_saturated: bool,
 }
 
-impl ChannelPlan {
-    pub fn new(tray: TrayType) -> Self {
+fn default_true() -> bool {
+    true
+}
+
+impl Default for CapturePlan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CapturePlan {
+    pub fn new() -> Self {
         Self {
-            tray,
-            // The UV tray is what the instrument ships with, so a fresh plan is
-            // already runnable without ticking anything.
-            selected: tray == TrayType::Uv,
             mode: CaptureMode::Single,
             exposure_s: 0.1,
             hdr_min_s: 0.01,
             hdr_max_s: 1.0,
             hdr_steps: 3,
-            activation_s: if tray == TrayType::StainFree {
-                DEFAULT_ACTIVATION_S
-            } else {
-                0.0
-            },
+            activation_s: DEFAULT_ACTIVATION_S,
+            highlight_saturated: true,
         }
     }
 
-    pub fn label(&self) -> &'static str {
-        self.tray.label()
+    /// Clamp a plan loaded from an older config back into legal bounds, so a
+    /// hand-edited or stale settings file cannot produce an inverted bracket or
+    /// a zero-length exposure.
+    pub fn normalized(mut self) -> Self {
+        self.exposure_s = self.exposure_s.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
+        self.hdr_min_s = self.hdr_min_s.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
+        self.hdr_max_s = self.hdr_max_s.clamp(self.hdr_min_s, EXPOSURE_MAX_S);
+        self.hdr_steps = self.hdr_steps.max(2);
+        self.activation_s = self.activation_s.clamp(0.0, MAX_ACTIVATION_S);
+        self
     }
 
-    /// Whether this channel runs the stain-free UV activation. Inherently
-    /// stain-free-only, whatever the stored time says — otherwise a channel that
-    /// inherited a time would sit there burning UV into a Coomassie gel.
-    pub fn activates(&self) -> bool {
-        self.tray == TrayType::StainFree && self.activation_s > 0.0
+    pub fn set_exposure_s(&mut self, seconds: f64) {
+        self.exposure_s = seconds.clamp(EXPOSURE_MIN_S, EXPOSURE_MAX_S);
     }
 
-    /// The activation time this channel should actually use.
-    pub fn effective_activation_s(&self) -> f64 {
-        if self.activates() {
+    /// Adopt an exposure as the bracket's lower / upper bound. The bounds never
+    /// cross: each is clamped against the other.
+    pub fn set_hdr_min_s(&mut self, seconds: f64) {
+        self.hdr_min_s = seconds.clamp(EXPOSURE_MIN_S, self.hdr_max_s);
+    }
+    pub fn set_hdr_max_s(&mut self, seconds: f64) {
+        self.hdr_max_s = seconds.clamp(self.hdr_min_s, EXPOSURE_MAX_S);
+    }
+    pub fn set_hdr_steps(&mut self, steps: usize) {
+        self.hdr_steps = steps.max(2);
+    }
+    pub fn set_activation_s(&mut self, seconds: f64) {
+        self.activation_s = seconds.max(0.0);
+    }
+
+    /// Whether a stain-free UV activation runs before the exposure, under the
+    /// tray that is in. Inherently stain-free-only, whatever the stored time
+    /// says — otherwise a leftover time would sit there burning UV into a
+    /// Coomassie gel.
+    pub fn activates(&self, tray: Option<TrayType>) -> bool {
+        tray == Some(TrayType::StainFree) && self.activation_s > 0.0
+    }
+
+    /// The activation time this acquisition should actually use.
+    pub fn effective_activation_s(&self, tray: Option<TrayType>) -> f64 {
+        if self.activates(tray) {
             // A negative or absurd activation time is a UV exposure nobody asked
             // for; bound it at five minutes.
-            self.activation_s.clamp(0.0, 300.0)
+            self.activation_s.clamp(0.0, MAX_ACTIVATION_S)
         } else {
             0.0
         }
@@ -153,7 +181,7 @@ impl ChannelPlan {
         (self.hdr_max_s.max(1e-9) / self.hdr_min_s.max(1e-9)).log2()
     }
 
-    /// Adopt what an auto exposure metered for this channel.
+    /// Adopt what an auto exposure metered.
     ///
     /// `metered_s` is the time at which the brightest pixels land just below
     /// saturation. For a single capture that *is* the answer: nothing clips, so
@@ -172,7 +200,7 @@ impl ChannelPlan {
         }
     }
 
-    /// One line describing what this channel will shoot.
+    /// One line describing what will be shot.
     pub fn summary(&self) -> String {
         match self.mode {
             CaptureMode::Single => format!("single {}", fmt_seconds(self.exposure_s)),
@@ -187,92 +215,8 @@ impl ChannelPlan {
     }
 }
 
-/// The whole acquisition: which channels to take, and how.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AcquisitionPlan {
-    /// One entry per light source, in [`TrayType::ALL`] order.
-    pub channels: Vec<ChannelPlan>,
-    /// Render saturated pixels red in the resulting image.
-    #[serde(default = "default_true")]
-    pub highlight_saturated: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-impl Default for AcquisitionPlan {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AcquisitionPlan {
-    pub fn new() -> Self {
-        Self {
-            channels: TrayType::ALL.into_iter().map(ChannelPlan::new).collect(),
-            highlight_saturated: true,
-        }
-    }
-
-    /// Repair a plan loaded from an older config: every tray gets an entry, in
-    /// catalogue order, whatever the file held.
-    pub fn normalized(mut self) -> Self {
-        let mut channels: Vec<ChannelPlan> = TrayType::ALL
-            .into_iter()
-            .map(|tray| {
-                self.channels
-                    .iter()
-                    .find(|c| c.tray == tray)
-                    .copied()
-                    .unwrap_or_else(|| ChannelPlan::new(tray))
-            })
-            .collect();
-        // Nothing selected is a plan that cannot run; fall back to the shipped
-        // tray rather than leaving a Run button that refuses forever.
-        if !channels.iter().any(|c| c.selected) {
-            if let Some(uv) = channels.iter_mut().find(|c| c.tray == TrayType::Uv) {
-                uv.selected = true;
-            }
-        }
-        self.channels = channels;
-        self
-    }
-
-    pub fn get(&self, tray: TrayType) -> &ChannelPlan {
-        self.channels
-            .iter()
-            .find(|c| c.tray == tray)
-            .expect("a plan has one channel per tray")
-    }
-
-    pub fn get_mut(&mut self, tray: TrayType) -> &mut ChannelPlan {
-        self.channels
-            .iter_mut()
-            .find(|c| c.tray == tray)
-            .expect("a plan has one channel per tray")
-    }
-
-    /// The channels the run will take, in tray order.
-    pub fn selected(&self) -> Vec<TrayType> {
-        self.channels
-            .iter()
-            .filter(|c| c.selected)
-            .map(|c| c.tray)
-            .collect()
-    }
-
-    pub fn index_of(tray: TrayType) -> usize {
-        TrayType::ALL.iter().position(|&t| t == tray).unwrap_or(0)
-    }
-
-    pub fn tray_at(index: usize) -> TrayType {
-        TrayType::ALL
-            .get(index)
-            .copied()
-            .unwrap_or(TrayType::Uv)
-    }
-}
+/// Longest stain-free activation the plan will run, in seconds.
+const MAX_ACTIVATION_S: f64 = 300.0;
 
 /// Human-readable exposure time: milliseconds under a second, else seconds.
 pub fn fmt_seconds(t: f64) -> String {
@@ -280,5 +224,47 @@ pub fn fmt_seconds(t: f64) -> String {
         format!("{:.0} ms", t * 1000.0)
     } else {
         format!("{t:.2} s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_runs_only_under_the_stain_free_tray() {
+        let mut plan = CapturePlan::new();
+        plan.set_activation_s(45.0);
+        assert!(plan.activates(Some(TrayType::StainFree)));
+        assert_eq!(plan.effective_activation_s(Some(TrayType::StainFree)), 45.0);
+        // Every other light source — and no instrument at all — skips it, so a
+        // stored time cannot leak a UV pre-exposure onto the wrong gel.
+        for tray in [
+            Some(TrayType::Uv),
+            Some(TrayType::White),
+            Some(TrayType::Blue),
+            None,
+        ] {
+            assert!(!plan.activates(tray), "{tray:?} must not activate");
+            assert_eq!(plan.effective_activation_s(tray), 0.0);
+        }
+    }
+
+    #[test]
+    fn a_stale_plan_is_clamped_into_legal_bounds() {
+        let plan = CapturePlan {
+            mode: CaptureMode::Hdr,
+            exposure_s: 0.0,
+            hdr_min_s: 5.0,
+            hdr_max_s: 0.5,
+            hdr_steps: 0,
+            activation_s: -3.0,
+            highlight_saturated: true,
+        }
+        .normalized();
+        assert!(plan.exposure_s >= EXPOSURE_MIN_S);
+        assert!(plan.hdr_min_s <= plan.hdr_max_s);
+        assert!(plan.hdr_steps >= 2);
+        assert_eq!(plan.activation_s, 0.0);
     }
 }

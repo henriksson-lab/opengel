@@ -182,8 +182,7 @@ fn main() -> anyhow::Result<()> {
         let mut st = state.borrow_mut();
         st.geldoc.plan = app_config
             .borrow()
-            .acquisition_plan
-            .clone()
+            .capture_plan
             .map(|plan| plan.normalized())
             .unwrap_or_default();
         st.geldoc.inst = Some(inst_handle);
@@ -235,9 +234,9 @@ fn main() -> anyhow::Result<()> {
                             st.geldoc.info = info;
                             if st.autostart_sim {
                                 st.autostart_sim = false;
-                                // The tray that is in selects the channel (see
-                                // `geldoc_sense_changed`), which lights it; all
-                                // this has to do is start framing.
+                                // The tray that is in is the light source, and
+                                // the preview is what lights it; all this has to
+                                // do is start framing.
                                 st.live_start();
                                 live_dirty = true;
                             }
@@ -269,11 +268,9 @@ fn main() -> anyhow::Result<()> {
                             st.geldoc.sense = Some(sense);
                             st.geldoc.faults = faults;
                             st.geldoc.undecoded = undecoded;
-                            // A run parked between channels is waiting for
-                            // exactly this: the tray swapped and the door shut.
-                            st.geldoc_sense_changed();
-                            // A tray swap changes what the selected channel can
-                            // be lit with; the lamps follow it.
+                            // Swapping the tray swaps the light source — and so
+                            // what the lamps may burn, and what the next image
+                            // will be labelled.
                             st.geldoc_sync_lamps();
                             geldoc_dirty = true;
                         }
@@ -363,6 +360,30 @@ fn main() -> anyhow::Result<()> {
                         CamEvent::Preview(frame) => {
                             st.preview = Some(frame);
                             live_dirty = true;
+                        }
+                        CamEvent::PreviewFailed(e) => {
+                            // The preview keeps trying; this is so a camera that
+                            // is failing rather than seeing a dark scene says
+                            // which it is.
+                            drop(st);
+                            ui.set_status(format!("Preview: {e}").into());
+                        }
+                        CamEvent::CameraLost(e) => {
+                            // The handle is gone on the worker side, so the UI
+                            // must not go on showing a running preview and a
+                            // last frame that no longer describes anything.
+                            st.live_running = false;
+                            st.preview = None;
+                            // Lamps burn for the preview; there is nothing to
+                            // look at now.
+                            st.geldoc_sync_lamps();
+                            drop(st);
+                            ui.set_status(
+                                format!("Camera disconnected ({e}). Press Rescan once it is back.")
+                                    .into(),
+                            );
+                            live_dirty = true;
+                            geldoc_dirty = true;
                         }
                         CamEvent::Metering {
                             attempt,
@@ -1437,15 +1458,15 @@ fn main() -> anyhow::Result<()> {
 
     // The plan is what makes a run repeatable next month, so every edit is
     // persisted immediately — an exposure re-found by hand after a crash is not
-    // the same exposure. Shared by both tabs: they edit the same channels.
+    // the same exposure.
     let persist = {
         let state = state.clone();
         let app_config = app_config.clone();
         Rc::new(move || {
             let mut cfg = app_config.borrow_mut();
-            cfg.acquisition_plan = Some(state.borrow().geldoc.plan.clone());
+            cfg.capture_plan = Some(state.borrow().geldoc.plan);
             if let Err(e) = config::save_config(&cfg) {
-                eprintln!("saving the acquisition plan failed: {e}");
+                eprintln!("saving the capture plan failed: {e}");
             }
         })
     };
@@ -1560,9 +1581,21 @@ fn main() -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_live_auto(move || {
             let ui = ui_weak.unwrap();
-            state.borrow_mut().live_auto_expose();
-            ui.set_status("Metering…".into());
+            // With an enclosure the metering frame has to be taken the way a
+            // real one would be — lamps lit, door watched — so it goes through
+            // the run machinery. A bare camera has none of that to sequence.
+            let msg = {
+                let mut st = state.borrow_mut();
+                if st.geldoc.connected {
+                    st.geldoc_auto()
+                } else {
+                    st.live_auto_expose();
+                    "Metering…".to_string()
+                }
+            };
+            ui.set_status(msg.into());
             view::refresh_live(&ui, &state.borrow());
+            view::refresh_geldoc(&ui, &state.borrow());
         });
     }
     {
@@ -1635,49 +1668,13 @@ fn main() -> anyhow::Result<()> {
             });
         }
         {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            ui.on_gd_channel_selected(move |idx| {
-                let ui = ui_weak.unwrap();
-                // Selecting a channel re-exposes the camera for it, so the live
-                // view shows what that channel would actually capture.
-                state.borrow_mut().set_live_channel(idx.max(0) as usize);
-                view::refresh_geldoc(&ui, &state.borrow());
-                view::refresh_live(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            let persist = persist.clone();
-            ui.on_gd_channel_toggled(move |idx, selected| {
-                let ui = ui_weak.unwrap();
-                state
-                    .borrow_mut()
-                    .geldoc
-                    .set_channel_selected(idx.max(0) as usize, selected);
-                persist();
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
-            let ui_weak = ui.as_weak();
-            let state = state.clone();
-            ui.on_gd_auto(move || {
-                let ui = ui_weak.unwrap();
-                let msg = state.borrow_mut().geldoc_auto();
-                ui.set_status(msg.into());
-                view::refresh_geldoc(&ui, &state.borrow());
-            });
-        }
-        {
             let state = state.clone();
             let persist = persist.clone();
             ui.on_gd_activation_changed(move |text| {
                 // Ignore unparseable input rather than resetting the field: the
                 // user is mid-edit, and "4" on the way to "45" is not an error.
                 if let Ok(seconds) = text.trim().parse::<f64>() {
-                    state.borrow_mut().geldoc.set_activation_s(seconds);
+                    state.borrow_mut().geldoc.plan.set_activation_s(seconds);
                     persist();
                 }
             });
