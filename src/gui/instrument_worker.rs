@@ -216,13 +216,19 @@ fn enumerate() -> Vec<(String, Candidate)> {
     #[cfg(target_os = "linux")]
     {
         use opengel::instrument::hidraw;
+        // Reached through the module rather than imported by name: these are
+        // used only on Linux, so a plain `use` reads as dead on every other
+        // platform and gets tidied away — taking the Linux build with it.
         for device in hidraw::find_devices(
-            VENDOR_ID,
-            &[PRODUCT_ID_GEL_DOC_EZ, PRODUCT_ID_CRITERION_STAIN_FREE],
+            geldoc_ez::VENDOR_ID,
+            &[
+                geldoc_ez::PRODUCT_ID_GEL_DOC_EZ,
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE,
+            ],
         ) {
             let model = match device.product_id {
-                PRODUCT_ID_GEL_DOC_EZ => "Gel Doc EZ",
-                PRODUCT_ID_CRITERION_STAIN_FREE => "Criterion Stain Free",
+                geldoc_ez::PRODUCT_ID_GEL_DOC_EZ => "Gel Doc EZ",
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE => "Criterion Stain Free",
                 _ => "Bio-Rad enclosure",
             }
             .to_string();
@@ -781,5 +787,32 @@ mod tests {
             InstEvent::Status { faults, .. } if faults.is_clear() => Some(()),
             _ => None,
         });
+    }
+
+    /// The USB ids `enumerate` matches on, reached exactly as the Linux-only
+    /// branch reaches them.
+    ///
+    /// That branch compiles on one platform and is developed on another, so
+    /// nothing else here would notice its names going stale — which is how the
+    /// import backing it was once tidied away as unused, leaving a build that
+    /// was green on macOS and broken on Linux. This fails everywhere instead.
+    #[test]
+    fn the_enclosure_usb_ids_resolve_through_the_module() {
+        assert_eq!(geldoc_ez::VENDOR_ID, 0x0614);
+        // As a *pattern*, which is where a stale path is quietly dangerous: a
+        // bare name that is no longer a constant in scope binds anything and
+        // matches everything, rather than failing to compile.
+        for (product_id, expected) in [
+            (geldoc_ez::PRODUCT_ID_GEL_DOC_EZ, "Gel Doc EZ"),
+            (geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE, "Criterion Stain Free"),
+            (0xffff, "Bio-Rad enclosure"),
+        ] {
+            let model = match product_id {
+                geldoc_ez::PRODUCT_ID_GEL_DOC_EZ => "Gel Doc EZ",
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE => "Criterion Stain Free",
+                _ => "Bio-Rad enclosure",
+            };
+            assert_eq!(model, expected, "product id 0x{product_id:04x}");
+        }
     }
 }

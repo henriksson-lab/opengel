@@ -33,7 +33,12 @@ enum CameraChoice {
 /// about what is attached. See [`list_camera_names`], which is what acts on the
 /// difference.
 fn enumerate() -> (Vec<(String, CameraChoice)>, bool) {
+    // Both are written only by the backend blocks below, and every one of those
+    // is behind a `cfg` — a build with no real backend (including the test
+    // harness, which compiles them out) leaves them untouched.
+    #[allow(unused_mut)]
     let mut out = Vec::new();
+    #[allow(unused_mut)]
     let mut probe_failed = false;
     #[cfg(all(numanager_backend, not(test)))]
     {
