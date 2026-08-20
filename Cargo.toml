@@ -88,10 +88,3 @@ nokhwa-camera = ["dep:nokhwa"]
 # (Toupcam/ToupTek, and everything else nu-manager grows a driver for).
 numanager-camera = ["dep:numanager-core", "dep:numanager-drivers"]
 gelgenie-ml = ["dep:burn", "dep:burn-store"]
-
-# TEMPORARY (bench): local nu-manager while the post-renumeration device lookup
-# is being verified against the camera. Remove once the fix is pushed.
-[patch.'https://github.com/henriksson-lab/numanager']
-numanager-core = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-core" }
-numanager-drivers = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-drivers" }
-numanager-winusb = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-winusb" }

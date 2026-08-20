@@ -6069,6 +6069,7 @@ dependencies = [
 [[package]]
 name = "numanager-core"
 version = "0.1.0"
+source = "git+https://github.com/henriksson-lab/numanager#71585281c9ded905a309fcec6624755ad5e751e5"
 dependencies = [
  "hidapi",
 ]
@@ -6076,6 +6077,7 @@ dependencies = [
 [[package]]
 name = "numanager-drivers"
 version = "0.1.0"
+source = "git+https://github.com/henriksson-lab/numanager#71585281c9ded905a309fcec6624755ad5e751e5"
 dependencies = [
  "futures-lite",
  "hex",
@@ -6092,6 +6094,7 @@ dependencies = [
 [[package]]
 name = "numanager-winusb"
 version = "0.1.0"
+source = "git+https://github.com/henriksson-lab/numanager#71585281c9ded905a309fcec6624755ad5e751e5"
 dependencies = [
  "numanager-core",
  "windows-sys 0.61.2",
