@@ -14,9 +14,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use image::{DynamicImage, GrayImage, RgbImage};
+use image::{DynamicImage, GrayImage, ImageBuffer, Luma, RgbImage};
 use numanager_core::config::HardwareConfig;
 use numanager_core::runtime::{DiscoveryRegistry, DriverCandidate, LocalRuntime, Runtime};
 use numanager_core::{
@@ -32,6 +33,7 @@ use crate::camera::{Camera, CameraError, CameraInfo, Capabilities, Exposure, Res
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Budget for a control transfer (property read/write).
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+static RAW16_DEBUG_PRINTS: AtomicUsize = AtomicUsize::new(0);
 
 fn backend_err(e: impl std::fmt::Display) -> CameraError {
     CameraError::Backend(e.to_string())
@@ -86,7 +88,10 @@ pub fn udev_rules() -> String {
     // the file says why each id is there.
     let mut by_vendor: BTreeMap<u16, Vec<&'static str>> = BTreeMap::new();
     for claim in numanager_drivers::usb_discovery::builtin_usb_vendor_claims() {
-        by_vendor.entry(claim.vendor_id).or_default().push(claim.driver);
+        by_vendor
+            .entry(claim.vendor_id)
+            .or_default()
+            .push(claim.driver);
     }
     for (vendor_id, drivers) in by_vendor {
         out.push_str(&format!(
@@ -204,10 +209,7 @@ impl NumanagerCamera {
 /// lines). `None` if the device doesn't report one.
 fn read_exposure_s(runtime: &LocalRuntime, device: &DeviceDescriptor) -> Option<f64> {
     let value = runtime
-        .execute(
-            Command::read_property(device, "exposure"),
-            CONTROL_TIMEOUT,
-        )
+        .execute(Command::read_property(device, "exposure"), CONTROL_TIMEOUT)
         .ok()?;
     time_seconds(&value)
 }
@@ -318,6 +320,65 @@ fn frame_to_image(frame: &Frame) -> Result<DynamicImage> {
         "Mono8" | "Raw8" | "Native" => GrayImage::from_raw(width, height, frame.data.clone())
             .map(DynamicImage::ImageLuma8)
             .ok_or_else(size_err),
+        // 16-bit samples stay at 16 bits rather than being reduced to 8: the
+        // extra bits are the point of a scientific sensor, and a gel's faint
+        // bands live in them. The device metadata declares byte order because
+        // Lumenera SDK formats are not uniformly little-endian.
+        "Mono16" | "Raw16" => {
+            let pixels = width as usize * height as usize;
+            if frame.data.len() < pixels * 2 {
+                return Err(size_err());
+            }
+            let big_endian = metadata_string(&frame.metadata, "sample_endian")
+                .is_some_and(|endian| endian == "big");
+            let raw_samples: Vec<u16> = frame.data[..pixels * 2]
+                .chunks_exact(2)
+                .map(|pair| {
+                    if big_endian {
+                        u16::from_be_bytes([pair[0], pair[1]])
+                    } else {
+                        u16::from_le_bytes([pair[0], pair[1]])
+                    }
+                })
+                .collect();
+            let raw_max = raw_samples.iter().copied().max().unwrap_or(0);
+            let bit_depth = metadata_u32(&frame.metadata, "bit_depth").filter(|bits| *bits <= 16);
+            let white_level = metadata_u32(&frame.metadata, "white_level")
+                .or_else(|| metadata_u32(&frame.metadata, "saturation_value"))
+                .or_else(|| bit_depth.map(|bits| (1u32 << bits.clamp(1, 16)) - 1))
+                .filter(|level| (1..u16::MAX as u32).contains(level));
+            debug_raw16_frame(
+                width,
+                height,
+                frame.pixel_format.as_str(),
+                bit_depth,
+                white_level,
+                &raw_samples,
+            );
+            let samples = match white_level {
+                Some(level) => {
+                    let sample_max = level as u16;
+                    let scale = u16::MAX as f32 / sample_max as f32;
+                    if raw_max <= sample_max {
+                        raw_samples
+                            .into_iter()
+                            .map(|raw| (raw as f32 * scale).round() as u16)
+                            .collect()
+                    } else {
+                        // The camera/driver is already returning container-wide
+                        // samples despite advertising a lower sensor bit depth.
+                        // Do not clip every over-range value to white: that
+                        // manufactures a saturation peak and destroys the
+                        // histogram shape the user needs for exposure work.
+                        raw_samples
+                    }
+                }
+                _ => raw_samples,
+            };
+            ImageBuffer::<Luma<u16>, Vec<u16>>::from_raw(width, height, samples)
+                .map(DynamicImage::ImageLuma16)
+                .ok_or_else(size_err)
+        }
         "Rgb8" => RgbImage::from_raw(width, height, frame.data.clone())
             .map(DynamicImage::ImageRgb8)
             .ok_or_else(size_err),
@@ -334,6 +395,70 @@ fn frame_to_image(frame: &Frame) -> Result<DynamicImage> {
             "unsupported nu-manager pixel format {other}"
         ))),
     }
+}
+
+fn metadata_u32(metadata: &BTreeMap<String, Value>, key: &str) -> Option<u32> {
+    match metadata.get(key) {
+        Some(Value::I64(value)) => u32::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+fn metadata_string<'a>(metadata: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a str> {
+    match metadata.get(key) {
+        Some(Value::String(value)) => Some(value),
+        _ => None,
+    }
+}
+
+fn debug_raw16_frame(
+    width: u32,
+    height: u32,
+    pixel_format: &str,
+    bit_depth: Option<u32>,
+    white_level: Option<u32>,
+    samples: &[u16],
+) {
+    if std::env::var_os("OPENGEL_DEBUG_RAW16").is_none() {
+        return;
+    }
+    let print_index = RAW16_DEBUG_PRINTS.fetch_add(1, Ordering::Relaxed);
+    if print_index >= 12 {
+        return;
+    }
+
+    let mut counts = vec![0u32; usize::from(u16::MAX) + 1];
+    let mut min = u16::MAX;
+    let mut max = 0u16;
+    let mut low_nibble_mask = 0u16;
+    for &sample in samples {
+        counts[sample as usize] += 1;
+        min = min.min(sample);
+        max = max.max(sample);
+        low_nibble_mask |= sample & 0x000f;
+    }
+
+    let mut unique = 0usize;
+    let mut first_values = Vec::new();
+    let mut top = Vec::<(u16, u32)>::new();
+    for (value, &count) in counts.iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        unique += 1;
+        if first_values.len() < 24 {
+            first_values.push(value as u16);
+        }
+        top.push((value as u16, count));
+    }
+    top.sort_unstable_by_key(|&(_, count)| std::cmp::Reverse(count));
+    top.truncate(12);
+
+    eprintln!(
+        "opengel raw16[{print_index}]: {width}x{height} {pixel_format} bit_depth={bit_depth:?} white_level={white_level:?} \
+         min={min} max={max} unique={unique} low_nibble_mask=0x{low_nibble_mask:01x} \
+         first_values={first_values:?} top_values={top:?}"
+    );
 }
 
 #[cfg(test)]
@@ -394,16 +519,94 @@ mod tests {
 
         // Beyond what the sensor can do: shoot the nearest achievable time
         // rather than fail the capture.
-        assert!(cam.set_exposure(Exposure::Manual(max * 10.0)).expect("clamped"));
+        assert!(cam
+            .set_exposure(Exposure::Manual(max * 10.0))
+            .expect("clamped"));
         assert!((cam.current_exposure_s().expect("exposure") - max).abs() < 1e-6);
-        assert!(cam.set_exposure(Exposure::Manual(min / 10.0)).expect("clamped"));
+        assert!(cam
+            .set_exposure(Exposure::Manual(min / 10.0))
+            .expect("clamped"));
         assert!((cam.current_exposure_s().expect("exposure") - min).abs() < 1e-6);
+    }
+
+    /// A frame carrying `bit_depth`, as the Lumenera's do.
+    fn raw16_frame(bits: i64, samples: &[u16]) -> Frame {
+        use numanager_core::{DeviceId, FrameBufferSpec, FrameHandle, FrameId, NodeId, StreamId};
+        let mut data = Vec::with_capacity(samples.len() * 2);
+        for sample in samples {
+            data.extend_from_slice(&sample.to_le_bytes());
+        }
+        Frame {
+            handle: FrameHandle {
+                stream: StreamId(1),
+                frame: FrameId(1),
+            },
+            device: DeviceId(NodeId(1)),
+            width: samples.len() as u32,
+            height: 1,
+            pixel_format: "Raw16".into(),
+            data,
+            buffer: FrameBufferSpec::default(),
+            metadata: BTreeMap::from([("bit_depth".into(), Value::I64(bits))]),
+        }
+    }
+
+    #[test]
+    fn a_twelve_bit_frame_is_scaled_into_the_full_word() {
+        // Otherwise a 12-bit sensor sits at a sixteenth brightness and the auto
+        // exposure chases a target it can never reach.
+        let frame = raw16_frame(12, &[0, 2048, 4095]);
+        let gray = frame_to_image(&frame).expect("Raw16 decodes").to_luma16();
+        let values: Vec<u16> = gray.pixels().map(|p| p.0[0]).collect();
+        assert_eq!(values[0], 0);
+        assert_eq!(values[2], u16::MAX, "full scale must reach the top");
+        assert!(values[1] > values[0] && values[1] < values[2]);
+    }
+
+    #[test]
+    fn explicit_white_level_sets_the_raw16_scale() {
+        let mut frame = raw16_frame(16, &[0, 1024, 2048]);
+        frame
+            .metadata
+            .insert("white_level".into(), Value::I64(2048));
+        let gray = frame_to_image(&frame).expect("Raw16 decodes").to_luma16();
+        let values: Vec<u16> = gray.pixels().map(|p| p.0[0]).collect();
+        assert_eq!(values[0], 0);
+        assert_eq!(values[2], u16::MAX);
+        assert!(values[1] > values[0] && values[1] < values[2]);
+    }
+
+    #[test]
+    fn raw16_sample_endian_metadata_is_honored() {
+        let mut frame = raw16_frame(16, &[]);
+        frame.width = 1;
+        frame.height = 1;
+        frame.data = 256u16.to_be_bytes().to_vec();
+        frame
+            .metadata
+            .insert("sample_endian".into(), Value::String("big".into()));
+        let gray = frame_to_image(&frame).expect("Raw16 decodes").to_luma16();
+        let values: Vec<u16> = gray.pixels().map(|p| p.0[0]).collect();
+        assert_eq!(values, vec![256]);
+    }
+
+    #[test]
+    fn container_wide_samples_are_not_clipped_by_declared_depth() {
+        // Some cameras report the sensor depth separately from the USB sample
+        // container. If the returned samples already exceed that declared
+        // sensor range, preserve them; clipping all of them to white would
+        // manufacture a saturation peak and flatten the histogram.
+        let frame = raw16_frame(12, &[4096, 30_000, u16::MAX]);
+        let gray = frame_to_image(&frame).expect("Raw16 decodes").to_luma16();
+        let values: Vec<u16> = gray.pixels().map(|p| p.0[0]).collect();
+        assert_eq!(values, vec![4096, 30_000, u16::MAX]);
     }
 
     #[test]
     fn capture_returns_a_gray_frame_of_the_device_geometry() {
         let mut cam = simulated_camera();
-        cam.set_exposure(Exposure::Manual(0.2)).expect("set exposure");
+        cam.set_exposure(Exposure::Manual(0.2))
+            .expect("set exposure");
         let frame = cam.capture().expect("capture a frame");
         let gray = frame.as_luma8().expect("Mono8 arrives as a gray image");
         assert_eq!((gray.width(), gray.height()), (640, 480));

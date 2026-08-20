@@ -10,6 +10,7 @@ export component CaptureTab inherits VerticalLayout {
     in property <bool> gd-activation-applicable: false;
     in property <float> gd-activation-progress: 0;
     in-out property <string> gd-activation-s: "45";
+    in-out property <string> gd-warmup-s: "5";
     in property <bool> gd-busy: false;
     in property <bool> gd-can-run: false;
     in-out property <int> gd-capture-mode-index: 0;
@@ -22,7 +23,7 @@ export component CaptureTab inherits VerticalLayout {
     in property <[FaultItem]> gd-faults;
     in-out property <int> gd-gel-type-index: 0;
     in-out property <int> gd-hdr-steps-idx: 1;
-    in-out property <bool> gd-highlight-saturated: true;
+    in-out property <bool> gd-highlight-saturated: false;
     in-out property <int> gd-instrument-index: 0;
     in property <[string]> gd-instrument-names;
     in property <bool> gd-lamps-on: false;
@@ -48,10 +49,13 @@ export component CaptureTab inherits VerticalLayout {
     in property <image> live-histogram-image;
     in property <image> live-preview-image;
     in-out property <bool> live-running: false;
+    in-out property <bool> live-auto-contrast: false;
     callback camera-selected(int);
     callback capture-mode-changed(int);
     callback gd-abort();
     callback gd-activation-changed(string);
+    callback gd-activate();
+    callback gd-warmup-changed(string);
     callback gd-clear-faults();
     callback gd-connect();
     callback gd-disconnect();
@@ -67,6 +71,7 @@ export component CaptureTab inherits VerticalLayout {
     callback live-auto();
     callback live-capture();
     callback live-exposure-changed(float);
+    callback live-auto-contrast-changed(bool);
     callback live-start();
     callback live-stop();
     callback rescan-cameras();
@@ -158,8 +163,13 @@ export component CaptureTab inherits VerticalLayout {
         VerticalLayout {
           horizontal-stretch: 1;
           spacing: 6px;
+          // Every piece of hardware this tab talks to, on one row above the
+          // picture: the camera, the enclosure, and the one button that looks
+          // for both. Rescan always re-enumerated both, but with the enclosure
+          // controls off in the settings column it did not look like it.
           HorizontalLayout {
             spacing: 6px;
+            height: 28px;
             Text { text: "Camera:"; vertical-alignment: center; }
             ComboBox {
               model: root.camera-names;
@@ -167,9 +177,27 @@ export component CaptureTab inherits VerticalLayout {
               horizontal-stretch: 1;
               selected(v) => { root.camera-selected(self.current-index); }
             }
-            // Re-enumerates cameras *and* enclosures: plugging the imager in
-            // is how this tab grows its channels, so the button that looks
-            // for hardware has to look for all of it.
+            // Only with an enclosure to choose: on a bare camera an empty
+            // "Instrument" box would only raise the question of what is missing.
+            if root.gd-instrument-names.length > 0: Text {
+              text: "Enclosure:";
+              vertical-alignment: center;
+            }
+            if root.gd-instrument-names.length > 0: ComboBox {
+              model: root.gd-instrument-names;
+              current-index <=> root.gd-instrument-index;
+              horizontal-stretch: 1;
+              enabled: !root.gd-connected;
+              selected(v) => { root.gd-instrument-selected(self.current-index); }
+            }
+            if root.gd-instrument-names.length > 0: Button {
+              text: root.gd-connected ? "Disconnect" : "Connect";
+              clicked => {
+                if (root.gd-connected) { root.gd-disconnect(); } else { root.gd-connect(); }
+              }
+            }
+            // Re-enumerates cameras *and* enclosures — which is why it sits
+            // with both of them.
             Button { text: "Rescan"; clicked => { root.rescan-cameras(); } }
             Button {
               text: root.live-running ? "Stop preview" : "Start preview";
@@ -233,10 +261,26 @@ export component CaptureTab inherits VerticalLayout {
               width: 64px;
               horizontal-alignment: right;
             }
+            // Beside the slider it sets, and under the picture it is judged
+            // from: metering to where nothing clips is the same act as dragging
+            // this by eye, done by the machine. With an enclosure it runs the
+            // exposure under the lamps; without one, on the room.
+            Button {
+              text: "Auto";
+              enabled: root.gd-connected
+                ? (root.gd-can-run && root.exposure-supported)
+                : (root.exposure-supported && !root.capture-active);
+              clicked => { root.live-auto(); }
+            }
             CheckBox {
               text: "Highlight saturated";
               checked <=> root.gd-highlight-saturated;
               toggled => { root.gd-highlight-saturated-changed(self.checked); }
+            }
+            CheckBox {
+              text: "Auto contrast";
+              checked <=> root.live-auto-contrast;
+              toggled => { root.live-auto-contrast-changed(self.checked); }
             }
           }
           // The activation countdown, and only that: 45 seconds of a UV
@@ -263,28 +307,6 @@ export component CaptureTab inherits VerticalLayout {
           width: 330px;
           spacing: 6px;
           alignment: start;
-
-          // The enclosure, when there is one to connect to. Hidden entirely
-          // with a plain camera: an empty "Instrument" box would only raise
-          // the question of what is missing.
-          if root.gd-instrument-names.length > 0: HorizontalLayout {
-            spacing: 6px;
-            vertical-stretch: 0;
-            height: 28px;
-            ComboBox {
-              model: root.gd-instrument-names;
-              current-index <=> root.gd-instrument-index;
-              horizontal-stretch: 1;
-              enabled: !root.gd-connected;
-              selected(v) => { root.gd-instrument-selected(self.current-index); }
-            }
-            Button {
-              text: root.gd-connected ? "Disconnect" : "Connect";
-              clicked => {
-                if (root.gd-connected) { root.gd-disconnect(); } else { root.gd-connect(); }
-              }
-            }
-          }
 
           HorizontalLayout {
             spacing: 6px;
@@ -407,30 +429,40 @@ export component CaptureTab inherits VerticalLayout {
               horizontal-alignment: right;
             }
           }
-          // Stain-free only: a UV pre-exposure that drives the chemistry,
-          // run before the image exposure.
+          // Only where there are lamps to warm up. One wait per acquisition,
+          // before the first frame — an HDR bracket does not repeat it.
+          if root.gd-connected: HorizontalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+            height: 28px;
+            Text { text: "Lamp warm-up:"; vertical-alignment: center; }
+            LineEdit {
+              text <=> root.gd-warmup-s;
+              horizontal-stretch: 1;
+              edited(t) => { root.gd-warmup-changed(t); }
+            }
+            Text { text: "s"; vertical-alignment: center; }
+          }
+          // Stain-free only: a UV pre-exposure that drives the gel's chemistry.
+          // Offered, never automatic — the reaction happens once per gel, and
+          // nothing the instrument reads can tell an activated gel from a fresh
+          // one, so the person holding it is the one who decides.
           if root.gd-activation-applicable: HorizontalLayout {
             spacing: 6px;
             vertical-stretch: 0;
             height: 28px;
-            Text { text: "Activation:"; vertical-alignment: center; }
+            Button {
+              text: "Activate gel";
+              horizontal-stretch: 1;
+              enabled: root.gd-can-run;
+              clicked => { root.gd-activate(); }
+            }
             LineEdit {
               text <=> root.gd-activation-s;
-              horizontal-stretch: 1;
+              width: 56px;
               edited(t) => { root.gd-activation-changed(t); }
             }
             Text { text: "s"; vertical-alignment: center; }
-          }
-          // Meter to where nothing clips. One image, so one Auto — with an
-          // enclosure it runs under the lamps, otherwise on the room.
-          Button {
-            text: "Auto exposure";
-            vertical-stretch: 0;
-            height: 28px;
-            enabled: root.gd-connected
-              ? (root.gd-can-run && root.exposure-supported)
-              : (root.exposure-supported && !root.capture-active);
-            clicked => { root.live-auto(); }
           }
           Button {
             text: root.gd-running ? "Abort run" : (root.gd-connected ? "Run" : "Capture");

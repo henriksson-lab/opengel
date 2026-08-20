@@ -34,8 +34,14 @@ pub enum RunGoal {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunPhase {
     Idle,
-    /// Stain-free UV activation is running.
-    Activating { elapsed_s: f64, total_s: f64 },
+    /// The lamps are on and settling before the exposure. One window, whether
+    /// it is a plain warm-up or the longer one a stain-free gel needs to
+    /// activate — same lamps, same tray, so there is nothing to separate.
+    LampWindow {
+        elapsed_s: f64,
+        total_s: f64,
+        activating: bool,
+    },
     /// Waiting for the lamps to light and stabilise.
     LightingUp,
     /// Lamps are on and the camera is exposing.
@@ -55,15 +61,24 @@ impl RunPhase {
     pub fn lamps_on(&self) -> bool {
         matches!(
             self,
-            RunPhase::Activating { .. } | RunPhase::LightingUp | RunPhase::Exposing
+            RunPhase::LampWindow { .. } | RunPhase::LightingUp | RunPhase::Exposing
         )
     }
 
     pub fn label(&self) -> String {
         match self {
             RunPhase::Idle => "Ready.".into(),
-            RunPhase::Activating { elapsed_s, total_s } => {
-                format!("Activating gel — {elapsed_s:.0} of {total_s:.0} s")
+            RunPhase::LampWindow {
+                elapsed_s,
+                total_s,
+                activating,
+            } => {
+                let what = if *activating {
+                    "Activating gel"
+                } else {
+                    "Warming up the lamps"
+                };
+                format!("{what} — {elapsed_s:.0} of {total_s:.0} s")
             }
             RunPhase::LightingUp => "Lighting the lamps…".into(),
             RunPhase::Exposing => "Exposing…".into(),
@@ -329,18 +344,24 @@ impl crate::state::AppState {
             tray,
             pending: Vec::new(),
         };
-        let activation_s = self.geldoc.plan.effective_activation_s(tray);
-        self.geldoc.phase = if activation_s > 0.0 {
-            RunPhase::Activating {
+        // There are lamps exactly when there is an instrument, which is the only
+        // way a run starts at all. A run never activates the gel — that is its
+        // own deliberate act (see `geldoc_activate`), because nothing the
+        // instrument can read tells an activated gel from a fresh one, so a run
+        // that activated by itself would re-dose a gel done ten minutes ago.
+        let warmup_s = self.geldoc.plan.effective_warmup_s(true);
+        self.geldoc.phase = if warmup_s > 0.0 {
+            RunPhase::LampWindow {
                 elapsed_s: 0.0,
-                total_s: activation_s,
+                total_s: warmup_s,
+                activating: false,
             }
         } else {
             RunPhase::LightingUp
         };
         self.geldoc.message = self.geldoc.phase.label();
         if let Some(inst) = &self.geldoc.inst {
-            inst.begin_run(activation_s);
+            inst.begin_run(warmup_s);
         }
         let what = match goal {
             RunGoal::Acquire => "Running",
@@ -350,6 +371,39 @@ impl crate::state::AppState {
             Some(tray) => format!("{what} — {}…", tray.label()),
             None => format!("{what}…"),
         }
+    }
+
+    /// Activate the gel: light the lamps for the activation time and put them
+    /// out. No picture is taken.
+    ///
+    /// Deliberately not part of a run. Stain-free activation is a one-time
+    /// reaction in the gel, and nothing the instrument can read distinguishes a
+    /// gel that has had it from one that has not — so it is the user who says
+    /// when, and re-imaging never silently re-activates.
+    pub fn geldoc_activate(&mut self) -> String {
+        if let Some(blocker) = self.geldoc.run_blocker() {
+            self.geldoc.message = blocker.clone();
+            return format!("Cannot activate: {blocker}");
+        }
+        let seconds = self
+            .geldoc
+            .plan
+            .effective_activation_s(self.geldoc.inserted_tray());
+        if seconds <= 0.0 {
+            let message = "Activation needs the stain-free tray and a time above zero.";
+            self.geldoc.message = message.into();
+            return message.into();
+        }
+        self.geldoc.phase = RunPhase::LampWindow {
+            elapsed_s: 0.0,
+            total_s: seconds,
+            activating: true,
+        };
+        self.geldoc.message = self.geldoc.phase.label();
+        if let Some(inst) = &self.geldoc.inst {
+            inst.activate_gel(seconds);
+        }
+        format!("Activating the gel — {seconds:.0} s…")
     }
 
     /// The physical Run button: take the picture, exactly as the on-screen
@@ -379,16 +433,19 @@ impl crate::state::AppState {
         let goal = self.geldoc.run.goal;
         let group = self.next_bracket_group();
         let Some(cam) = &self.cam else {
-            self.geldoc.abort_run("No camera available for the exposure.");
+            self.geldoc
+                .abort_run("No camera available for the exposure.");
             self.capturing = false;
             return;
         };
         match goal {
             // Metering steers the brightest pixels to just below saturation, so
             // what it settles on is the exposure at which nothing clips.
-            Some(RunGoal::AutoExpose) => {
-                cam.capture_auto(AutoExposureMode::IntenseBands, EXPOSURE_MIN_S, EXPOSURE_MAX_S)
-            }
+            Some(RunGoal::AutoExpose) => cam.capture_auto(
+                AutoExposureMode::IntenseBands,
+                EXPOSURE_MIN_S,
+                EXPOSURE_MAX_S,
+            ),
             Some(RunGoal::Acquire) => cam.capture_hdr(plan.exposures(), group),
             None => {
                 self.capturing = false;
@@ -420,7 +477,8 @@ impl crate::state::AppState {
         let what = tray.map(|t| t.label()).unwrap_or("The exposure");
 
         if door_violation {
-            self.geldoc.abort_run("Discarded: the door was opened during the exposure.");
+            self.geldoc
+                .abort_run("Discarded: the door was opened during the exposure.");
             return "Run discarded — the door was opened during the exposure.".into();
         }
         let Some(goal) = goal else {

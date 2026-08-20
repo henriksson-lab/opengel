@@ -55,7 +55,9 @@ nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 # scientific cameras (Toupcam/ToupTek and friends) are consumed as *devices* it
 # discovers and drives, rather than through USB backends of our own. `os-usb`
 # enables its live userspace USB transport.
-numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true }
+# `os-hid` is the host HID stack (IOHIDManager / hid.dll), which is how the
+# imaging enclosure is reached anywhere Linux `hidraw` does not exist.
+numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true, features = ["os-hid"] }
 numanager-drivers = { git = "https://github.com/henriksson-lab/numanager", optional = true, features = ["os-usb"] }
 
 # macOS (AVFoundation) and Windows (MediaFoundation) ship native capture with no
@@ -86,3 +88,10 @@ nokhwa-camera = ["dep:nokhwa"]
 # (Toupcam/ToupTek, and everything else nu-manager grows a driver for).
 numanager-camera = ["dep:numanager-core", "dep:numanager-drivers"]
 gelgenie-ml = ["dep:burn", "dep:burn-store"]
+
+# TEMPORARY (bench): local nu-manager while the post-renumeration device lookup
+# is being verified against the camera. Remove once the fix is pushed.
+[patch.'https://github.com/henriksson-lab/numanager']
+numanager-core = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-core" }
+numanager-drivers = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-drivers" }
+numanager-winusb = { path = "/Users/mahogny/git/claude/numanager/crates/numanager-winusb" }

@@ -37,7 +37,10 @@ pub enum CamCommand {
     SetExposure(f64),
     StartPreview,
     StopPreview,
-    CaptureHdr { exposures: Vec<f64>, group: u32 },
+    CaptureHdr {
+        exposures: Vec<f64>,
+        group: u32,
+    },
     /// Meter the scene and capture at the exposure it settles on.
     CaptureAuto {
         mode: AutoExposureMode,
@@ -50,7 +53,10 @@ pub enum CamCommand {
 /// Events sent from the camera worker back to the UI thread.
 pub enum CamEvent {
     Cameras(Vec<String>),
-    Opened { name: String, manual_exposure: bool },
+    Opened {
+        name: String,
+        manual_exposure: bool,
+    },
     OpenFailed(String),
     Preview(GrayF32),
     /// The camera refused to hand over a preview frame. Reported rather than
@@ -63,8 +69,14 @@ pub enum CamEvent {
     CameraLost(String),
     /// An auto-exposure metering attempt, so the user sees it converging rather
     /// than watching a still dialog through several exposures.
-    Metering { attempt: usize, exposure_s: f64 },
-    CaptureProgress { done: usize, total: usize },
+    Metering {
+        attempt: usize,
+        exposure_s: f64,
+    },
+    CaptureProgress {
+        done: usize,
+        total: usize,
+    },
     CaptureDone(Vec<(DynamicImage, CaptureMeta)>),
     CaptureFailed(String),
     Cancelled,
@@ -409,7 +421,9 @@ fn do_capture_auto(
             let _ = tx.send(CamEvent::CaptureDone(vec![frame]));
         }
         None => {
-            let _ = tx.send(CamEvent::CaptureFailed("auto exposure took no frames".into()));
+            let _ = tx.send(CamEvent::CaptureFailed(
+                "auto exposure took no frames".into(),
+            ));
         }
     }
 }

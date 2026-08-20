@@ -52,6 +52,17 @@ fn main() {
         }
         match cam.capture() {
             Ok(frame) => {
+                // 16-bit stats, not 8: whether the samples reach full scale is
+                // exactly the question, and to_luma8 throws away the evidence.
+                let deep = frame.to_luma16();
+                let (dmin, dmax) = deep.pixels().fold((u16::MAX, 0u16), |(lo, hi), p| {
+                    (lo.min(p.0[0]), hi.max(p.0[0]))
+                });
+                let clipped = deep.pixels().filter(|p| p.0[0] == u16::MAX).count();
+                println!(
+                    "  16-bit: min={dmin} max={dmax} clipped={clipped} ({:.2}% of full scale)",
+                    100.0 * dmax as f64 / u16::MAX as f64
+                );
                 let gray = frame.to_luma8();
                 let (min, max, sum) = gray.pixels().fold((255u8, 0u8, 0u64), |(lo, hi, s), p| {
                     (lo.min(p.0[0]), hi.max(p.0[0]), s + p.0[0] as u64)

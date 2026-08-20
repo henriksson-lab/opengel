@@ -231,7 +231,9 @@ impl GelDocument {
         // A capture that produced nothing would leave a channel-less project,
         // which no view can render; keep the default single channel instead.
         if project.channels.is_empty() {
-            project.channels.push(Channel::new(0, "Channel 1", ChannelColor::Gray));
+            project
+                .channels
+                .push(Channel::new(0, "Channel 1", ChannelColor::Gray));
         }
 
         GelDocument {
@@ -242,7 +244,9 @@ impl GelDocument {
     }
 
     /// Read a `.scn`/`.mscn` file straight into a document.
-    pub fn load_scn(path: impl AsRef<Path>) -> std::result::Result<Self, crate::core::scn::ScnError> {
+    pub fn load_scn(
+        path: impl AsRef<Path>,
+    ) -> std::result::Result<Self, crate::core::scn::ScnError> {
         Ok(Self::from_scn(&crate::core::scn::ScnFile::load(path)?))
     }
 
@@ -515,7 +519,10 @@ mod tests {
         let rec = loaded.project.hdr.expect("hdr record");
         assert!(rec.options.align);
         assert!((rec.scale - scale).abs() < 1e-9);
-        assert_eq!(loaded.working_image().map(|w| (w.width(), w.height())), Some((4, 4)));
+        assert_eq!(
+            loaded.working_image().map(|w| (w.width(), w.height())),
+            Some((4, 4))
+        );
     }
 
     #[test]

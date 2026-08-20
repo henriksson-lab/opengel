@@ -6,24 +6,19 @@
 //! that it was skipped and passes, so a checkout with no samples still gets a
 //! green run.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use opengel::core::model::ChannelColor;
 use opengel::core::scn::ScnFile;
 use opengel::core::GelDocument;
 
-/// The `Sample Images` directory, if this machine has one.
+/// The `Sample Images` directory, if explicitly configured.
 fn samples() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("OPENGEL_SCN_SAMPLES") {
         let p = PathBuf::from(dir);
         return p.is_dir().then_some(p);
     }
-    // The reverse-engineering checkout this format was decoded from, in the
-    // place it normally sits next to a working copy of OpenGel.
-    let home = std::env::var("HOME").ok()?;
-    let p = Path::new(&home)
-        .join("github/claude/reveng-dll/Bio-Rad_EZ_imager/Image Lab/Sample Images");
-    p.is_dir().then_some(p)
+    None
 }
 
 /// Every scan in the sample directory, sorted for a stable report.
@@ -62,7 +57,10 @@ fn every_shipped_sample_parses() {
         let file = ScnFile::load(path).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(!file.channels.is_empty(), "{name}: no channels");
         for (i, c) in file.channels.iter().enumerate() {
-            assert!(c.width > 0 && c.height > 0, "{name} channel {i}: empty geometry");
+            assert!(
+                c.width > 0 && c.height > 0,
+                "{name} channel {i}: empty geometry"
+            );
             // The decoded buffer must match the declared geometry exactly —
             // this is what catches a container split in the wrong place.
             assert_eq!(
@@ -122,7 +120,10 @@ fn the_multichannel_sample_has_three_distinct_channels() {
             "Red Epi illumination"
         ]
     );
-    assert!(file.channels.iter().all(|c| c.imager.as_deref() == Some("ChemiDoc™ MP")));
+    assert!(file
+        .channels
+        .iter()
+        .all(|c| c.imager.as_deref() == Some("ChemiDoc™ MP")));
 }
 
 #[test]
@@ -163,7 +164,10 @@ fn the_gel_doc_ez_sample_matches_the_documented_geometry() {
         "Serial Number",
         "Illumination Mode",
     ] {
-        assert!(names.contains(&expect), "missing acquisition field {expect}");
+        assert!(
+            names.contains(&expect),
+            "missing acquisition field {expect}"
+        );
     }
 }
 
@@ -185,7 +189,8 @@ fn a_blot_asks_to_be_displayed_inverted() {
 fn a_scan_survives_a_round_trip_through_our_own_container() {
     skip_without_samples!();
     let Some(path) = all_scans().into_iter().find(|p| {
-        p.extension().is_some_and(|e| e.eq_ignore_ascii_case("mscn"))
+        p.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("mscn"))
     }) else {
         eprintln!("skipped: this sample set has no multichannel scan");
         return;
@@ -218,7 +223,10 @@ fn a_scan_survives_a_round_trip_through_our_own_container() {
         let img = back
             .working_image_for_channel(channel.id)
             .expect("a working image per channel");
-        assert_eq!(img.width(), scn.channels[channel.id as usize].width as usize);
+        assert_eq!(
+            img.width(),
+            scn.channels[channel.id as usize].width as usize
+        );
     }
     // Pixels must come back bit-exact: 16-bit PNG is lossless, and a quiet
     // downconversion to 8-bit here would throw away most of the dynamic range.

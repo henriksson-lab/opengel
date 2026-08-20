@@ -281,7 +281,11 @@ fn next_pow2(n: usize) -> usize {
 }
 
 /// Zero-pad `frame` into a `pw × ph` complex buffer (row-major), real part only.
-fn padded_complex(frame: &GrayF32, pw: usize, ph: usize) -> Vec<rustfft::num_complex::Complex<f32>> {
+fn padded_complex(
+    frame: &GrayF32,
+    pw: usize,
+    ph: usize,
+) -> Vec<rustfft::num_complex::Complex<f32>> {
     use rustfft::num_complex::Complex;
     let (w, h) = (frame.width(), frame.height());
     let mut buf = vec![Complex::new(0.0f32, 0.0); pw * ph];
@@ -404,6 +408,10 @@ mod tests {
         let m = merge_hdr_with(&[f1, f2, f3], &[1.0, 2.0, 3.0], &opts).unwrap();
         // The ghost pixel should be pulled back toward the 0.30 consensus rather
         // than dragged down by the outlier sample.
-        assert!((m.get(0, 0) - 0.30).abs() < 0.05, "ghost pixel = {}", m.get(0, 0));
+        assert!(
+            (m.get(0, 0) - 0.30).abs() < 0.05,
+            "ghost pixel = {}",
+            m.get(0, 0)
+        );
     }
 }

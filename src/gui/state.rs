@@ -239,6 +239,9 @@ pub struct AppState {
     /// True when the capture in flight is an exposure *measurement* (the "Auto"
     /// button): its frame configures the channel instead of becoming a document.
     pub auto_metering: bool,
+    /// Adapt the live preview display to each frame's min/max. When false,
+    /// preview brightness uses the fixed normalized sensor range `[0,1]`.
+    pub live_auto_contrast: bool,
     /// Most recent live preview frame.
     pub preview: Option<GrayF32>,
 
@@ -257,9 +260,7 @@ pub struct AppState {
 /// multi-second, spanning the useful range for dim fluorescence to bright
 /// fields. Shared with the instrument so a time set on one tab means the same
 /// thing on the other.
-pub use opengel::instrument::acquisition::{
-    EXPOSURE_MAX_S, EXPOSURE_MIN_S, HDR_STEP_OPTIONS,
-};
+pub use opengel::instrument::acquisition::{EXPOSURE_MAX_S, EXPOSURE_MIN_S, HDR_STEP_OPTIONS};
 
 /// Default ladder load assumed when a ladder lane has no explicit value:
 /// 10 µL × 50 ng/µL = 500 ng.
@@ -331,6 +332,7 @@ impl AppState {
             capture_status: String::new(),
             autostart_sim: false,
             auto_metering: false,
+            live_auto_contrast: false,
             preview: None,
             geldoc: crate::geldoc::GelDocState::new(),
         }
@@ -1519,8 +1521,8 @@ impl AppState {
         self.preview.as_ref()
     }
 
-    /// Histogram (counts per bin) of the live preview frame, for the exposure
-    /// aid beneath the preview image. Empty if there is no preview yet.
+    /// Histogram (counts per bin) of the live preview frame over fixed
+    /// normalized output range `[0,1]`. Empty if there is no preview yet.
     pub fn preview_histogram(&self, bins: usize) -> Vec<u32> {
         let bins = bins.max(1);
         let mut h = vec![0u32; bins];
@@ -1545,9 +1547,11 @@ impl AppState {
         let tray = self.geldoc.channel_tray();
         let frames = imgs
             .into_iter()
-            .zip(metas.into_iter().chain(std::iter::repeat_with(
-                CaptureMeta::default,
-            )))
+            .zip(
+                metas
+                    .into_iter()
+                    .chain(std::iter::repeat_with(CaptureMeta::default)),
+            )
             .collect();
         self.adopt_capture_frames(frames, tray);
     }
@@ -1564,7 +1568,11 @@ impl AppState {
                 let (name, color) = crate::geldoc::channel_identity(tray);
                 GelDocument::from_channels(
                     self.gel_type,
-                    vec![opengel::core::CapturedChannel { name, color, frames }],
+                    vec![opengel::core::CapturedChannel {
+                        name,
+                        color,
+                        frames,
+                    }],
                 )
             }
             None => {

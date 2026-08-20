@@ -240,7 +240,10 @@ impl SimulatedEnclosure {
             }
             x if x == Opcode::LedControl as u8 => {
                 let (id, state) = (params.first().copied(), params.get(1).copied());
-                match (id.and_then(led_from_byte), state.and_then(led_state_from_byte)) {
+                match (
+                    id.and_then(led_from_byte),
+                    state.and_then(led_state_from_byte),
+                ) {
                     (Some(id), Some(state)) => {
                         self.leds[led_index(id)] = state;
                         self.reply(DeviceStatus::OK, &[]);

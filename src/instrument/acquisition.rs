@@ -25,6 +25,17 @@ pub const EXPOSURE_MAX_S: f64 = 10.0;
 /// Default stain-free activation time, in seconds.
 pub const DEFAULT_ACTIVATION_S: f64 = 45.0;
 
+/// Default lamp warm-up before the first exposure, in seconds.
+///
+/// The instrument holds its busy bit until the lamps strike, but striking is
+/// not the same as being *stable*: fluorescent tubes keep brightening for
+/// seconds afterwards, and an image taken during that ramp is not comparable
+/// with one taken after it. Five seconds is the usual settling allowance.
+pub const DEFAULT_WARMUP_S: f64 = 5.0;
+
+/// Longest lamp warm-up the plan will wait through, in seconds.
+const MAX_WARMUP_S: f64 = 120.0;
+
 /// Step counts offered for an HDR bracket.
 pub const HDR_STEP_OPTIONS: [usize; 4] = [2, 3, 5, 7];
 
@@ -75,6 +86,14 @@ pub struct CapturePlan {
     /// Stain-free UV activation before the exposure, seconds. Only ever run
     /// under the stain-free tray; 0 skips the step.
     pub activation_s: f64,
+    /// How long the lamps burn before the first frame is taken, seconds.
+    ///
+    /// Applies to a whole acquisition, not to each frame: an HDR bracket warms
+    /// up once and then shoots every exposure with the lamps still on, because
+    /// re-striking between frames would put each one at a different point on
+    /// the same ramp — exactly the error the wait exists to avoid.
+    #[serde(default = "default_warmup_s")]
+    pub warmup_s: f64,
     /// Render saturated pixels red in the resulting image.
     #[serde(default = "default_true")]
     pub highlight_saturated: bool,
@@ -82,6 +101,12 @@ pub struct CapturePlan {
 
 fn default_true() -> bool {
     true
+}
+
+/// A plan stored before the warm-up existed gets the default rather than none:
+/// zero would silently reintroduce the unsettled-lamp exposure.
+fn default_warmup_s() -> f64 {
+    DEFAULT_WARMUP_S
 }
 
 impl Default for CapturePlan {
@@ -99,7 +124,8 @@ impl CapturePlan {
             hdr_max_s: 1.0,
             hdr_steps: 3,
             activation_s: DEFAULT_ACTIVATION_S,
-            highlight_saturated: true,
+            warmup_s: DEFAULT_WARMUP_S,
+            highlight_saturated: false,
         }
     }
 
@@ -112,6 +138,7 @@ impl CapturePlan {
         self.hdr_max_s = self.hdr_max_s.clamp(self.hdr_min_s, EXPOSURE_MAX_S);
         self.hdr_steps = self.hdr_steps.max(2);
         self.activation_s = self.activation_s.clamp(0.0, MAX_ACTIVATION_S);
+        self.warmup_s = self.warmup_s.clamp(0.0, MAX_WARMUP_S);
         self
     }
 
@@ -132,6 +159,25 @@ impl CapturePlan {
     }
     pub fn set_activation_s(&mut self, seconds: f64) {
         self.activation_s = seconds.max(0.0);
+    }
+
+    /// How long to let the lamps settle before exposing. Bounded so a typo
+    /// cannot leave UV-B burning for an hour.
+    pub fn set_warmup_s(&mut self, seconds: f64) {
+        self.warmup_s = seconds.clamp(0.0, MAX_WARMUP_S);
+    }
+
+    /// The warm-up this acquisition should actually wait through.
+    ///
+    /// Only where there are lamps to warm up: a bare camera has none, and
+    /// making the user watch a five-second countdown before every frame would
+    /// be a wait for nothing.
+    pub fn effective_warmup_s(&self, has_lamps: bool) -> f64 {
+        if has_lamps {
+            self.warmup_s.clamp(0.0, MAX_WARMUP_S)
+        } else {
+            0.0
+        }
     }
 
     /// Whether a stain-free UV activation runs before the exposure, under the
@@ -259,6 +305,7 @@ mod tests {
             hdr_max_s: 0.5,
             hdr_steps: 0,
             activation_s: -3.0,
+            warmup_s: 999.0,
             highlight_saturated: true,
         }
         .normalized();
@@ -266,5 +313,20 @@ mod tests {
         assert!(plan.hdr_min_s <= plan.hdr_max_s);
         assert!(plan.hdr_steps >= 2);
         assert_eq!(plan.activation_s, 0.0);
+        assert!(plan.warmup_s <= MAX_WARMUP_S, "got {}", plan.warmup_s);
+    }
+
+    #[test]
+    fn the_warm_up_is_waited_only_where_there_are_lamps() {
+        let mut plan = CapturePlan::new();
+        assert_eq!(plan.warmup_s, DEFAULT_WARMUP_S);
+        assert_eq!(plan.effective_warmup_s(true), DEFAULT_WARMUP_S);
+        // A bare camera has no lamps to settle, so there is nothing to wait for.
+        assert_eq!(plan.effective_warmup_s(false), 0.0);
+        // A typo cannot leave UV-B burning for an hour.
+        plan.set_warmup_s(10_000.0);
+        assert_eq!(plan.warmup_s, MAX_WARMUP_S);
+        plan.set_warmup_s(-1.0);
+        assert_eq!(plan.warmup_s, 0.0);
     }
 }

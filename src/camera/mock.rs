@@ -168,8 +168,7 @@ impl Scene {
                     for xx in 0..W {
                         let dx = (xx as f64 - x) / sx;
                         let dy = (y as f64 - y0) / sy;
-                        radiance[(y * W + xx) as usize] +=
-                            amp * (-0.5 * (dx * dx + dy * dy)).exp();
+                        radiance[(y * W + xx) as usize] += amp * (-0.5 * (dx * dx + dy * dy)).exp();
                     }
                 }
             }

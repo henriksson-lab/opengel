@@ -286,8 +286,16 @@ fn main() -> anyhow::Result<()> {
                                 st.geldoc.message = format!("Sense bit 0x{mask:04x} went high.");
                             }
                         }
-                        InstEvent::Activating { elapsed_s, total_s } => {
-                            st.geldoc.phase = geldoc::RunPhase::Activating { elapsed_s, total_s };
+                        InstEvent::LampWindow {
+                            elapsed_s,
+                            total_s,
+                            activating,
+                        } => {
+                            st.geldoc.phase = geldoc::RunPhase::LampWindow {
+                                elapsed_s,
+                                total_s,
+                                activating,
+                            };
                             st.geldoc.message = st.geldoc.phase.label();
                         }
                         InstEvent::Lamps(on) => {
@@ -299,6 +307,16 @@ fn main() -> anyhow::Result<()> {
                             };
                             geldoc_dirty = true;
                             live_dirty = true;
+                        }
+                        InstEvent::ActivationFinished => {
+                            st.geldoc.phase = geldoc::RunPhase::Idle;
+                            st.geldoc.message = "Gel activated.".into();
+                            // The activation put the lamps out; the preview may
+                            // want them back on.
+                            st.geldoc_sync_lamps();
+                            drop(st);
+                            ui.set_status("Gel activated — ready to image.".into());
+                            geldoc_dirty = true;
                         }
                         InstEvent::LightsReady => {
                             st.geldoc_lights_ready();
@@ -1682,9 +1700,39 @@ fn main() -> anyhow::Result<()> {
         {
             let state = state.clone();
             let persist = persist.clone();
+            ui.on_gd_warmup_changed(move |text| {
+                // Same rule as the activation field: a half-typed number is not
+                // an error, it is a user mid-edit.
+                if let Ok(seconds) = text.trim().parse::<f64>() {
+                    state.borrow_mut().geldoc.plan.set_warmup_s(seconds);
+                    persist();
+                }
+            });
+        }
+        {
+            let state = state.clone();
+            let persist = persist.clone();
             ui.on_gd_highlight_saturated_changed(move |on| {
                 state.borrow_mut().geldoc.plan.highlight_saturated = on;
                 persist();
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_live_auto_contrast_changed(move |on| {
+                state.borrow_mut().live_auto_contrast = on;
+                view::refresh_live(&ui_weak.unwrap(), &state.borrow());
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let state = state.clone();
+            ui.on_gd_activate(move || {
+                let ui = ui_weak.unwrap();
+                let msg = state.borrow_mut().geldoc_activate();
+                ui.set_status(msg.into());
+                view::refresh_geldoc(&ui, &state.borrow());
             });
         }
         {

@@ -326,7 +326,10 @@ mod tests {
         // Door and busy live outside the tray mask; setting them must not change
         // which tray is reported.
         let uv = encode_tray(Some(TrayType::Uv));
-        assert_eq!(decode_tray(uv | SENSE_DOOR_CLOSED | SENSE_BUSY), Some(TrayType::Uv));
+        assert_eq!(
+            decode_tray(uv | SENSE_DOOR_CLOSED | SENSE_BUSY),
+            Some(TrayType::Uv)
+        );
     }
 
     #[test]
@@ -409,7 +412,10 @@ mod tests {
         let mut dev = open_sim();
         dev.transport_mut().reject_next(DeviceStatus(0x02));
         let err = dev.sense().expect_err("the simulator rejected it");
-        assert!(matches!(err, InstrumentError::Device(s) if s.rejected()), "{err}");
+        assert!(
+            matches!(err, InstrumentError::Device(s) if s.rejected()),
+            "{err}"
+        );
     }
 
     #[test]

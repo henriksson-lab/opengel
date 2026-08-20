@@ -121,6 +121,7 @@ export component AppWindow inherits Window {
     in property <image> live-preview-image;
     in property <image> live-histogram-image;
     in-out property <bool> live-running: false;
+    in-out property <bool> live-auto-contrast: false;
     in-out property <float> live-exposure-slider: 0.5;    // log-mapped exposure
     in property <string> live-exposure-label: "0.10 s";
     in property <string> hdr-min-label: "0.010 s";
@@ -174,8 +175,10 @@ export component AppWindow inherits Window {
     // The tray the simulated bench currently holds, for its own control.
     in-out property <int> gd-sim-tray-index: 0;
     in-out property <string> gd-activation-s: "45";
+    // How long the lamps settle before the first frame of an acquisition.
+    in-out property <string> gd-warmup-s: "5";
     in property <bool> gd-activation-applicable: false;
-    in-out property <bool> gd-highlight-saturated: true;
+    in-out property <bool> gd-highlight-saturated: false;
     in property <string> gd-last-exposure-label: "";
     // Run.
     in property <bool> gd-can-run: false;
@@ -265,6 +268,7 @@ export component AppWindow inherits Window {
     callback live-stop();
     callback live-capture();               // take the image
     callback live-auto();                  // meter, and set the exposure from it
+    callback live-auto-contrast-changed(bool);
     callback cancel-capture();             // cancel an in-progress capture
     callback live-exposure-changed(float); // exposure slider moved
     callback set-hdr-lower();              // adopt current exposure as HDR min
@@ -280,6 +284,8 @@ export component AppWindow inherits Window {
     callback gd-disconnect();
     callback gd-clear-faults();
     callback gd-activation-changed(string);
+    callback gd-activate();                  // light the lamps to activate the gel
+    callback gd-warmup-changed(string);
     callback gd-highlight-saturated-changed(bool);
     callback gd-run();
     callback gd-abort();
@@ -486,6 +492,7 @@ export component AppWindow inherits Window {
         gd-activation-applicable : root.gd-activation-applicable;
         gd-activation-progress : root.gd-activation-progress;
         gd-activation-s <=> root.gd-activation-s;
+        gd-warmup-s <=> root.gd-warmup-s;
         gd-busy : root.gd-busy;
         gd-can-run : root.gd-can-run;
         gd-capture-mode-index <=> root.gd-capture-mode-index;
@@ -524,10 +531,13 @@ export component AppWindow inherits Window {
         live-histogram-image : root.live-histogram-image;
         live-preview-image : root.live-preview-image;
         live-running <=> root.live-running;
+        live-auto-contrast <=> root.live-auto-contrast;
         camera-selected(a0) => { root.camera-selected(a0); }
         capture-mode-changed(a0) => { root.capture-mode-changed(a0); }
         gd-abort => { root.gd-abort(); }
         gd-activation-changed(a0) => { root.gd-activation-changed(a0); }
+        gd-activate => { root.gd-activate(); }
+        gd-warmup-changed(a0) => { root.gd-warmup-changed(a0); }
         gd-clear-faults => { root.gd-clear-faults(); }
         gd-connect => { root.gd-connect(); }
         gd-disconnect => { root.gd-disconnect(); }
@@ -541,6 +551,7 @@ export component AppWindow inherits Window {
         gel-type-changed(a0) => { root.gel-type-changed(a0); }
         hdr-steps-changed(a0) => { root.hdr-steps-changed(a0); }
         live-auto => { root.live-auto(); }
+        live-auto-contrast-changed(a0) => { root.live-auto-contrast-changed(a0); }
         live-capture => { root.live-capture(); }
         live-exposure-changed(a0) => { root.live-exposure-changed(a0); }
         live-start => { root.live-start(); }

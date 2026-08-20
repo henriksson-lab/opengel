@@ -28,6 +28,11 @@ pub mod transport;
 #[cfg(target_os = "linux")]
 pub mod hidraw;
 
+// Everywhere else the host's own HID stack is the way in, reached through the
+// nu-manager device layer that provides it.
+#[cfg(all(not(target_os = "linux"), numanager_backend))]
+pub mod oshid;
+
 pub use acquisition::{CaptureMode, CapturePlan};
 pub use geldoc_ez::GelDocEz;
 
@@ -104,7 +109,9 @@ impl std::fmt::Display for DeviceStatus {
 
 /// The interchangeable sample trays. Which one is inserted selects the light
 /// source, so it is an input to the acquisition, not a cosmetic detail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum TrayType {
     /// UV transilluminator (302 nm).
     Uv,
@@ -391,7 +398,12 @@ mod tests {
         for bit in 0..6 {
             let faults = Faults(1 << bit);
             let messages = faults.messages();
-            assert_eq!(messages.len(), 1, "bit {bit} produced {} messages", messages.len());
+            assert_eq!(
+                messages.len(),
+                1,
+                "bit {bit} produced {} messages",
+                messages.len()
+            );
             assert!(!messages[0].remedy.is_empty(), "bit {bit} has no remedy");
         }
     }

@@ -11,9 +11,7 @@ use slint::{Color, Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 
 use crate::geldoc::RunPhase;
 use crate::state::{AppState, LaneTrace, TraceMode};
-use crate::{
-    AppWindow, AxisTick, FaultItem, LaneItem, MetaRow, TracePath, TreeRow, WarpKnot,
-};
+use crate::{AppWindow, AxisTick, FaultItem, LaneItem, MetaRow, TracePath, TreeRow, WarpKnot};
 
 /// Rebuild the Metadata tab's rows.
 ///
@@ -740,6 +738,7 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
     // a UV pre-exposure that will not run.
     ui.set_gd_activation_applicable(tray == Some(TrayType::StainFree));
     ui.set_gd_activation_s(format!("{:.0}", plan.activation_s).into());
+    ui.set_gd_warmup_s(format!("{:.0}", plan.warmup_s).into());
     ui.set_gd_highlight_saturated(gd.plan.highlight_saturated);
     ui.set_gd_last_exposure_label(
         gd.last_exposure_s
@@ -770,9 +769,9 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
         );
     }
     ui.set_gd_activation_progress(match &gd.phase {
-        RunPhase::Activating { elapsed_s, total_s } if *total_s > 0.0 => {
-            (elapsed_s / total_s).clamp(0.0, 1.0) as f32
-        }
+        RunPhase::LampWindow {
+            elapsed_s, total_s, ..
+        } if *total_s > 0.0 => (elapsed_s / total_s).clamp(0.0, 1.0) as f32,
         _ => 0.0,
     });
     ui.set_gd_message(gd.message.clone().into());
@@ -781,10 +780,21 @@ pub fn refresh_geldoc(ui: &AppWindow, state: &AppState) {
 /// Refresh the Live tab: camera name, running state, status, preview image.
 pub fn refresh_live(ui: &AppWindow, state: &AppState) {
     ui.set_live_running(state.live_running);
+    ui.set_live_auto_contrast(state.live_auto_contrast);
     if let Some(p) = state.preview_image() {
-        // Always flag clipped-high (saturated) pixels in red — a live exposure
-        // aid, so you can lower exposure before capturing blown-out bands.
-        ui.set_live_preview_image(to_slint_image(p, 0.0, 1.0, state.invert, true, &[]));
+        let image = if state.live_auto_contrast {
+            to_slint_image(
+                p,
+                0.0,
+                1.0,
+                state.invert,
+                state.geldoc.plan.highlight_saturated,
+                &[],
+            )
+        } else {
+            to_slint_image_fixed_range(p, state.invert, state.geldoc.plan.highlight_saturated, &[])
+        };
+        ui.set_live_preview_image(image);
     }
     // Live histogram of the preview frame (exposure aid). Rendered wide so it
     // isn't upscaled/blurry when stretched across the column.
@@ -965,11 +975,38 @@ fn window_gray(
     let px = buf.make_mut_slice();
     for y in 0..h as usize {
         for x in 0..w as usize {
-            let raw = (work.get(x, y) - black) / denom;
-            px[y * w as usize + x] = if show_overexposed && raw >= 0.999 {
+            let source = work.get(x, y);
+            let raw = (source - black) / denom;
+            px[y * w as usize + x] = if show_overexposed && source >= 0.999 {
                 slint::Rgb8Pixel { r: 255, g: 0, b: 0 }
             } else {
                 let mut v = raw.clamp(0.0, 1.0);
+                if invert {
+                    v = 1.0 - v;
+                }
+                let g = (v * 255.0) as u8;
+                slint::Rgb8Pixel { r: g, g, b: g }
+            };
+        }
+    }
+    buf
+}
+
+fn window_gray_fixed_range(
+    work: &GrayF32,
+    invert: bool,
+    show_overexposed: bool,
+) -> SharedPixelBuffer<slint::Rgb8Pixel> {
+    let (w, h) = (work.width() as u32, work.height() as u32);
+    let mut buf = SharedPixelBuffer::<slint::Rgb8Pixel>::new(w, h);
+    let px = buf.make_mut_slice();
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let source = work.get(x, y);
+            px[y * w as usize + x] = if show_overexposed && source >= 0.999 {
+                slint::Rgb8Pixel { r: 255, g: 0, b: 0 }
+            } else {
+                let mut v = source.clamp(0.0, 1.0);
                 if invert {
                     v = 1.0 - v;
                 }
@@ -1016,6 +1053,21 @@ fn to_slint_image(
         show_overexposed,
         overlays,
     ))
+}
+
+fn to_slint_image_fixed_range(
+    work: &GrayF32,
+    invert: bool,
+    show_overexposed: bool,
+    overlays: &[Overlay],
+) -> Image {
+    let mut buf = window_gray_fixed_range(work, invert, show_overexposed);
+    let (w, h) = (work.width() as u32, work.height() as u32);
+    let px = buf.make_mut_slice();
+    for ov in overlays {
+        draw_overlay(px, w, h, ov, 1.0);
+    }
+    Image::from_rgb8(buf)
 }
 
 /// Draw a polyline (image-pixel coordinates) into an RGB buffer.

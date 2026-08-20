@@ -29,11 +29,9 @@ use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use opengel::instrument::geldoc_ez::{
-    self, GelDocEz,
-};
+use opengel::instrument::geldoc_ez::{self, GelDocEz};
 use opengel::instrument::sim::SimulatedEnclosure;
-use opengel::instrument::{Faults, Instrument, InstrumentInfo, Sense, TrayType};
+use opengel::instrument::{Faults, Instrument, InstrumentInfo, LedId, LedState, Sense, TrayType};
 
 /// How often to re-read the instrument while idle.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -55,10 +53,20 @@ pub enum InstCommand {
     Connect(usize),
     Disconnect,
     ClearFaults,
-    /// Check the interlocks, run the activation step if any, and light the
-    /// lamps. Answers with [`InstEvent::LightsReady`] or
-    /// [`InstEvent::RunRefused`].
-    BeginRun { activation_s: f64 },
+    /// Check the interlocks, light the lamps and let them settle. Answers with
+    /// [`InstEvent::LightsReady`] or [`InstEvent::RunRefused`].
+    BeginRun {
+        warmup_s: f64,
+    },
+    /// Light the lamps for `seconds` and put them out again, taking no picture.
+    ///
+    /// This is the stain-free activation, and it is a deliberate act on the
+    /// *gel* rather than a step of imaging it: the chemistry runs once, and no
+    /// instrument can tell an activated gel from a fresh one. Only the person
+    /// holding it knows, so only they can ask.
+    ActivateGel {
+        seconds: f64,
+    },
     /// Lamps off; read the latched faults and report whether the run is valid.
     EndRun,
     /// Abandon a run in progress — lamps off now.
@@ -102,13 +110,21 @@ pub enum InstEvent {
     ButtonPressed {
         mask: u16,
     },
-    /// The stain-free activation is running.
-    Activating {
+    /// The lamps are on and settling before the exposure — a plain warm-up, or
+    /// a stain-free activation, which is the same window seen two ways.
+    LampWindow {
         elapsed_s: f64,
         total_s: f64,
+        /// Whether this window is driving the stain-free chemistry, rather than
+        /// only letting the lamps settle. Changes what it is called, not what
+        /// it does.
+        activating: bool,
     },
     /// Lamps are lit and stable — expose now.
     LightsReady,
+    /// The activation window finished and the lamps are out. No image was
+    /// taken; the gel is simply ready to be imaged now.
+    ActivationFinished,
     /// The illumination was switched on or off outside a run.
     Lamps(bool),
     /// The run never started; the reason is for the user.
@@ -141,8 +157,11 @@ impl InstrumentHandle {
     pub fn clear_faults(&self) {
         let _ = self.tx.send(InstCommand::ClearFaults);
     }
-    pub fn begin_run(&self, activation_s: f64) {
-        let _ = self.tx.send(InstCommand::BeginRun { activation_s });
+    pub fn begin_run(&self, warmup_s: f64) {
+        let _ = self.tx.send(InstCommand::BeginRun { warmup_s });
+    }
+    pub fn activate_gel(&self, seconds: f64) {
+        let _ = self.tx.send(InstCommand::ActivateGel { seconds });
     }
     pub fn end_run(&self) {
         let _ = self.tx.send(InstCommand::EndRun);
@@ -203,6 +222,13 @@ enum Candidate {
         device: opengel::instrument::hidraw::HidDevice,
         model: String,
     },
+    /// The same enclosure, reached through the host's own HID stack where
+    /// `hidraw` does not exist.
+    #[cfg(all(not(target_os = "linux"), numanager_backend))]
+    OsHid {
+        device: opengel::instrument::oshid::HidDevice,
+        model: String,
+    },
     Simulated,
 }
 
@@ -238,6 +264,34 @@ fn enumerate() -> Vec<(String, Candidate)> {
             ));
         }
     }
+    // Same enclosure, same ids — only the way in differs. Kept beside the Linux
+    // branch rather than folded into it: `hidraw` needs no extra library on the
+    // host that has it, and this needs the nu-manager device layer.
+    #[cfg(all(not(target_os = "linux"), numanager_backend))]
+    {
+        use opengel::instrument::oshid;
+        for device in oshid::find_devices(
+            geldoc_ez::VENDOR_ID,
+            &[
+                geldoc_ez::PRODUCT_ID_GEL_DOC_EZ,
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE,
+            ],
+        ) {
+            let model = match device.product_id {
+                geldoc_ez::PRODUCT_ID_GEL_DOC_EZ => "Gel Doc EZ",
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE => "Criterion Stain Free",
+                _ => "Bio-Rad enclosure",
+            }
+            .to_string();
+            // The serial distinguishes two of the same model on one bench; with
+            // none reported the model alone is all there is to show.
+            let label = match &device.serial_number {
+                Some(serial) if !serial.is_empty() => format!("{model} ({serial})"),
+                _ => model.clone(),
+            };
+            out.push((label, Candidate::OsHid { device, model }));
+        }
+    }
     out.push(("Simulated Gel Doc EZ".into(), Candidate::Simulated));
     out
 }
@@ -250,6 +304,8 @@ fn enumerate() -> Vec<(String, Candidate)> {
 enum Connected {
     #[cfg(target_os = "linux")]
     Hid(GelDocEz<opengel::instrument::hidraw::HidRawTransport>),
+    #[cfg(all(not(target_os = "linux"), numanager_backend))]
+    OsHid(GelDocEz<opengel::instrument::oshid::OsHidTransport>),
     Sim(GelDocEz<SimulatedEnclosure>),
 }
 
@@ -258,6 +314,8 @@ impl Connected {
         match self {
             #[cfg(target_os = "linux")]
             Connected::Hid(dev) => dev,
+            #[cfg(all(not(target_os = "linux"), numanager_backend))]
+            Connected::OsHid(dev) => dev,
             Connected::Sim(dev) => dev,
         }
     }
@@ -266,6 +324,8 @@ impl Connected {
         match self {
             #[cfg(target_os = "linux")]
             Connected::Hid(_) => None,
+            #[cfg(all(not(target_os = "linux"), numanager_backend))]
+            Connected::OsHid(_) => None,
             Connected::Sim(dev) => Some(dev.transport_mut()),
         }
     }
@@ -274,6 +334,8 @@ impl Connected {
         match self {
             #[cfg(target_os = "linux")]
             Connected::Hid(_) => false,
+            #[cfg(all(not(target_os = "linux"), numanager_backend))]
+            Connected::OsHid(_) => false,
             Connected::Sim(_) => true,
         }
     }
@@ -285,6 +347,11 @@ fn connect(candidate: &Candidate) -> opengel::instrument::Result<Connected> {
         Candidate::HidRaw { device, model } => {
             let transport = opengel::instrument::hidraw::HidRawTransport::open(device.clone())?;
             Ok(Connected::Hid(GelDocEz::open(transport, model)?))
+        }
+        #[cfg(all(not(target_os = "linux"), numanager_backend))]
+        Candidate::OsHid { device, model } => {
+            let transport = opengel::instrument::oshid::OsHidTransport::open(device.clone())?;
+            Ok(Connected::OsHid(GelDocEz::open(transport, model)?))
         }
         Candidate::Simulated => Ok(Connected::Sim(GelDocEz::open(
             SimulatedEnclosure::new(),
@@ -385,6 +452,18 @@ fn poll_once(dev: &mut Connected, poller: &mut Poller, tx: &Sender<InstEvent>) {
 
     let changed = poller.last_sense != Some(sense) || poller.last_faults != faults;
     if changed {
+        // The fault light belongs to the box, not the window: someone standing
+        // at the bench with the app behind another window should still see that
+        // this run is not to be trusted. Driven only on a change, because it is
+        // a USB transaction and the poll runs four times a second.
+        if poller.last_faults.is_clear() != faults.is_clear() {
+            let state = if faults.is_clear() {
+                LedState::Off
+            } else {
+                LedState::On
+            };
+            let _ = dev.instrument().set_led(LedId::Red, state);
+        }
         poller.last_sense = Some(sense);
         poller.last_faults = faults;
         let _ = tx.send(InstEvent::Status {
@@ -446,7 +525,9 @@ fn handle(
             let _ = tx.send(InstEvent::Disconnected);
         }
         InstCommand::ClearFaults => {
-            let Some(dev) = connected.as_mut() else { return };
+            let Some(dev) = connected.as_mut() else {
+                return;
+            };
             // Deliberately *not* recording the cleared value here: the poll loop
             // only emits when something changed, so pre-empting it would leave
             // the UI showing a fault the user has already cleared.
@@ -455,18 +536,30 @@ fn handle(
             }
         }
         InstCommand::WatchRunButton(watch) => poller.watch_button = watch,
-        InstCommand::BeginRun { activation_s } => {
+        InstCommand::BeginRun { warmup_s } => {
             let Some(dev) = connected.as_mut() else {
                 let _ = tx.send(InstEvent::RunRefused("No instrument connected.".into()));
                 return;
             };
-            begin_run(dev, activation_s, poller, tx);
+            begin_run(dev, warmup_s, poller, tx);
+        }
+        InstCommand::ActivateGel { seconds } => {
+            let Some(dev) = connected.as_mut() else {
+                let _ = tx.send(InstEvent::RunRefused("No instrument connected.".into()));
+                return;
+            };
+            activate_gel(dev, seconds, poller, tx);
         }
         InstCommand::EndRun => {
-            let Some(dev) = connected.as_mut() else { return };
+            let Some(dev) = connected.as_mut() else {
+                return;
+            };
             poller.run_deadline = None;
+            let _ = dev.instrument().set_led(LedId::Green, LedState::Off);
             if let Err(e) = dev.instrument().stop_acquire() {
-                let _ = tx.send(InstEvent::Error(format!("Switching the lamps off failed: {e}")));
+                let _ = tx.send(InstEvent::Error(format!(
+                    "Switching the lamps off failed: {e}"
+                )));
             }
             let faults = dev.instrument().faults().unwrap_or(Faults::NONE);
             poller.last_faults = faults;
@@ -476,8 +569,11 @@ fn handle(
             });
         }
         InstCommand::Abort => {
-            let Some(dev) = connected.as_mut() else { return };
+            let Some(dev) = connected.as_mut() else {
+                return;
+            };
             poller.run_deadline = None;
+            let _ = dev.instrument().set_led(LedId::Green, LedState::Off);
             let _ = dev.instrument().stop_acquire();
             let _ = tx.send(InstEvent::Lamps(false));
         }
@@ -492,6 +588,9 @@ fn handle(
                 // the honest thing to show.
                 match dev.instrument().start_acquire(false) {
                     Ok(()) => {
+                        // Lit is lit: the panel light means the lamps are on,
+                        // whether for a run or for framing.
+                        let _ = dev.instrument().set_led(LedId::Green, LedState::On);
                         // Lamps lit for framing rather than for a run still get
                         // a deadline: 302 nm lamps have a finite life and a
                         // preview left running overnight would spend it.
@@ -507,6 +606,7 @@ fn handle(
                 }
             } else {
                 poller.run_deadline = None;
+                let _ = dev.instrument().set_led(LedId::Green, LedState::Off);
                 if let Err(e) = dev.instrument().stop_acquire() {
                     let _ = tx.send(InstEvent::Error(format!(
                         "Switching the lamps off failed: {e}"
@@ -538,19 +638,109 @@ fn handle(
     }
 }
 
+/// Light the lamps for a fixed time and put them out, taking no picture.
+///
+/// The stain-free activation. It shares every mechanism with a warm-up — same
+/// lamps, same tray, same door watch — and differs only in why it is being
+/// done, which is why it is not folded into a run: the chemistry happens once
+/// per gel, and a run that activated every time would burn UV into a gel that
+/// was already activated ten minutes ago.
+fn activate_gel(dev: &mut Connected, seconds: f64, poller: &mut Poller, tx: &Sender<InstEvent>) {
+    let inst = dev.instrument();
+
+    match inst.tray_debounced(geldoc_ez::TRAY_SETTLE) {
+        Ok(None) => {
+            let _ = tx.send(InstEvent::RunRefused(
+                "No sample tray is inserted — the tray is the light source.".into(),
+            ));
+            return;
+        }
+        Err(e) => {
+            let _ = tx.send(InstEvent::RunRefused(format!(
+                "Could not read the tray: {e}"
+            )));
+            return;
+        }
+        Ok(Some(_)) => {}
+    }
+    match inst.sense() {
+        Ok(sense) if !sense.door_closed => {
+            let _ = tx.send(InstEvent::RunRefused(
+                "The door is open. Close it before activating — the lamps will not light otherwise."
+                    .into(),
+            ));
+            return;
+        }
+        Err(e) => {
+            let _ = tx.send(InstEvent::RunRefused(format!(
+                "Could not read the instrument: {e}"
+            )));
+            return;
+        }
+        Ok(_) => {}
+    }
+
+    if let Err(e) = inst.start_acquire(true) {
+        let _ = tx.send(InstEvent::RunRefused(format!(
+            "The lamps did not come on: {e}"
+        )));
+        return;
+    }
+    // The lamps must not be left burning if the UI dies mid-activation.
+    poller.run_deadline = Some(Instant::now() + RUN_WATCHDOG);
+    let _ = inst.set_led(LedId::Green, LedState::On);
+
+    let started = Instant::now();
+    let total = Duration::from_secs_f64(seconds.max(0.0));
+    while started.elapsed() < total {
+        std::thread::sleep(ACTIVATION_TICK.min(total - started.elapsed()));
+        // An activation interrupted halfway has not activated the gel, so say
+        // so rather than letting the user believe it is ready.
+        if let Ok(sense) = inst.sense() {
+            if !sense.door_closed {
+                let _ = inst.stop_acquire();
+                let _ = inst.set_led(LedId::Green, LedState::Off);
+                poller.run_deadline = None;
+                let _ = tx.send(InstEvent::RunRefused(
+                    "The door was opened during gel activation. The gel is not activated — \
+                     close the door and activate it again."
+                        .into(),
+                ));
+                return;
+            }
+        }
+        let _ = tx.send(InstEvent::LampWindow {
+            elapsed_s: started.elapsed().as_secs_f64().min(seconds),
+            total_s: seconds,
+            activating: true,
+        });
+    }
+
+    poller.run_deadline = None;
+    let _ = inst.set_led(LedId::Green, LedState::Off);
+    if let Err(e) = inst.stop_acquire() {
+        let _ = tx.send(InstEvent::Error(format!(
+            "Switching the lamps off failed: {e}"
+        )));
+    }
+    let _ = tx.send(InstEvent::ActivationFinished);
+}
+
 /// The interlocks, the activation step, and lighting the lamps.
 ///
 /// The door check is deliberately ours as well as the hardware's. The lamps are
 /// gated on the door sensor in the instrument, but relying on that alone would
 /// mean asking for a UV exposure and finding out afterwards; refusing here also
 /// lets us say *why*.
-fn begin_run(dev: &mut Connected, activation_s: f64, poller: &mut Poller, tx: &Sender<InstEvent>) {
+fn begin_run(dev: &mut Connected, warmup_s: f64, poller: &mut Poller, tx: &Sender<InstEvent>) {
     let inst = dev.instrument();
 
     let tray = match inst.tray_debounced(geldoc_ez::TRAY_SETTLE) {
         Ok(tray) => tray,
         Err(e) => {
-            let _ = tx.send(InstEvent::RunRefused(format!("Could not read the tray: {e}")));
+            let _ = tx.send(InstEvent::RunRefused(format!(
+                "Could not read the tray: {e}"
+            )));
             return;
         }
     };
@@ -585,38 +775,18 @@ fn begin_run(dev: &mut Connected, activation_s: f64, poller: &mut Poller, tx: &S
         let _ = tx.send(InstEvent::Error(format!("Clearing old faults failed: {e}")));
     }
 
-    // Stain-free activation: a UV pre-exposure that drives the chemistry. Its
-    // own lamp window, so the gel is not left cooking through the capture too.
-    if activation_s > 0.0 {
-        if let Err(e) = inst.start_acquire(true) {
-            let _ = tx.send(InstEvent::RunRefused(format!("Activation failed: {e}")));
-            return;
-        }
-        let started = Instant::now();
-        let total = Duration::from_secs_f64(activation_s);
-        while started.elapsed() < total {
-            std::thread::sleep(ACTIVATION_TICK.min(total - started.elapsed()));
-            // Watch the door throughout: an activation is a UV exposure, and
-            // one interrupted halfway has not activated the gel.
-            if let Ok(sense) = inst.sense() {
-                if !sense.door_closed {
-                    let _ = inst.stop_acquire();
-                    let _ = tx.send(InstEvent::RunRefused(
-                        "The door was opened during gel activation. The run was abandoned.".into(),
-                    ));
-                    return;
-                }
-            }
-            let _ = tx.send(InstEvent::Activating {
-                elapsed_s: started.elapsed().as_secs_f64().min(activation_s),
-                total_s: activation_s,
-            });
-        }
-        if let Err(e) = inst.stop_acquire() {
-            let _ = tx.send(InstEvent::Error(format!("Ending activation failed: {e}")));
-        }
-    }
-
+    // One lamp window before the exposure, not two.
+    //
+    // A stain-free activation is a UV pre-exposure that drives the gel's
+    // chemistry; a warm-up lets the lamps settle. Both are "lamps on, wait,
+    // do not expose yet", on the same lamps through the same tray — so they are
+    // one wait, as long as the longer of the two asks for.
+    //
+    // Not the sum: once the gel has had its 45 seconds the chemistry is done,
+    // and further UV is dose nobody asked for. And emphatically not two windows
+    // with the lamps cycled between them — that was the old shape, and it threw
+    // away the very thing the warm-up exists to establish, re-striking lamps
+    // that forty-five seconds of activation had already brought to temperature.
     // Lights on for the exposure, waiting for the lamps to stabilise.
     if let Err(e) = inst.start_acquire(true) {
         let _ = tx.send(InstEvent::RunRefused(format!(
@@ -625,6 +795,45 @@ fn begin_run(dev: &mut Connected, activation_s: f64, poller: &mut Poller, tx: &S
         return;
     }
     poller.run_deadline = Some(Instant::now() + RUN_WATCHDOG);
+    // The front panel says what the box is doing, for anyone looking at the box
+    // rather than the screen.
+    let _ = inst.set_led(LedId::Green, LedState::On);
+
+    // The instrument's busy bit clears when the lamps *strike*; they go on
+    // brightening for seconds after that, so an exposure taken immediately sits
+    // somewhere on the ramp and is not comparable with the next one. Waited
+    // through once per acquisition, with the lamps left burning: an HDR bracket
+    // shoots every frame after this single wait, which is the point —
+    // re-striking between frames would put each exposure at a different place
+    // on the same ramp.
+    if warmup_s > 0.0 {
+        let started = Instant::now();
+        let total = Duration::from_secs_f64(warmup_s);
+        while started.elapsed() < total {
+            std::thread::sleep(ACTIVATION_TICK.min(total - started.elapsed()));
+            // The door is watched throughout: it kills the light, so anything
+            // exposed afterwards is dark — and an activation interrupted
+            // halfway has not activated the gel.
+            if let Ok(sense) = inst.sense() {
+                if !sense.door_closed {
+                    let _ = inst.stop_acquire();
+                    let _ = inst.set_led(LedId::Green, LedState::Off);
+                    let _ = tx.send(InstEvent::RunRefused(
+                        "The door was opened while the lamps warmed up. The run was abandoned."
+                            .into(),
+                    ));
+                    return;
+                }
+            }
+            // Silence here reads as a hung program: from the outside this is
+            // just lamps on and nothing happening.
+            let _ = tx.send(InstEvent::LampWindow {
+                elapsed_s: started.elapsed().as_secs_f64().min(warmup_s),
+                total_s: warmup_s,
+                activating: false,
+            });
+        }
+    }
     let _ = tx.send(InstEvent::LightsReady);
 }
 
@@ -755,21 +964,83 @@ mod tests {
     }
 
     #[test]
-    fn a_stain_free_run_activates_before_lighting_up_for_the_exposure() {
+    fn activating_the_gel_is_its_own_act_and_takes_no_picture() {
+        // A run must never activate by itself: the reaction happens once per
+        // gel, and nothing the instrument reads can tell an activated gel from
+        // a fresh one, so imaging twice would dose it twice.
         let (handle, events) = connect_to_simulator();
         handle.sim_set_tray(Some(TrayType::StainFree));
         handle.sim_set_door(true);
-        handle.begin_run(0.4);
+        handle.activate_gel(0.4);
+
         // Progress must be reported, or a 45-second activation looks like a hang.
         let total = wait_for(&events, "activation progress", |evt| match evt {
-            InstEvent::Activating { total_s, .. } => Some(*total_s),
-            InstEvent::LightsReady => panic!("the exposure started before activation finished"),
+            InstEvent::LampWindow {
+                total_s,
+                activating: true,
+                ..
+            } => Some(*total_s),
+            InstEvent::LightsReady => panic!("activation must not start an exposure"),
             _ => None,
         });
         assert!((total - 0.4).abs() < 1e-9);
+
+        // It ends by itself, with the lamps out and no frame requested.
+        wait_for(&events, "the activation to finish", |evt| {
+            matches!(evt, InstEvent::ActivationFinished).then_some(())
+        });
+    }
+
+    #[test]
+    fn a_run_warms_up_without_activating() {
+        // Same tray, but a *run*: the lamps settle and the exposure is allowed
+        // to start, and nothing reports itself as an activation.
+        let (handle, events) = connect_to_simulator();
+        handle.sim_set_tray(Some(TrayType::StainFree));
+        handle.sim_set_door(true);
+        handle.begin_run(0.2);
+        wait_for(&events, "lights ready", |evt| match evt {
+            InstEvent::LampWindow {
+                activating: true, ..
+            } => panic!("a run must not activate the gel"),
+            InstEvent::LightsReady => Some(()),
+            _ => None,
+        });
+        handle.end_run();
+    }
+
+    #[test]
+    fn the_lamps_warm_up_before_the_exposure_is_allowed_to_start() {
+        // The instrument's busy bit clears when the lamps strike, not when they
+        // are stable. Exposing on the ramp is the error the wait exists to
+        // prevent, so `LightsReady` must not arrive until it is over.
+        let (handle, events) = connect_to_simulator();
+        handle.sim_set_tray(Some(TrayType::Uv));
+        handle.sim_set_door(true);
+        let started = Instant::now();
+        handle.begin_run(0.4);
+
+        // Progress is reported throughout: an unexplained pause with the lamps
+        // lit reads as a hung program.
+        let total = wait_for(&events, "warm-up progress", |evt| match evt {
+            InstEvent::LampWindow {
+                total_s,
+                activating: false,
+                ..
+            } => Some(*total_s),
+            InstEvent::LightsReady => panic!("the exposure started before the lamps had settled"),
+            _ => None,
+        });
+        assert!((total - 0.4).abs() < 1e-9, "got {total}");
+
         wait_for(&events, "lights ready", |evt| {
             matches!(evt, InstEvent::LightsReady).then_some(())
         });
+        assert!(
+            started.elapsed() >= Duration::from_secs_f64(0.4),
+            "the wait was skipped: {:?}",
+            started.elapsed()
+        );
         handle.end_run();
     }
 
@@ -804,7 +1075,10 @@ mod tests {
         // matches everything, rather than failing to compile.
         for (product_id, expected) in [
             (geldoc_ez::PRODUCT_ID_GEL_DOC_EZ, "Gel Doc EZ"),
-            (geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE, "Criterion Stain Free"),
+            (
+                geldoc_ez::PRODUCT_ID_CRITERION_STAIN_FREE,
+                "Criterion Stain Free",
+            ),
             (0xffff, "Bio-Rad enclosure"),
         ] {
             let model = match product_id {
