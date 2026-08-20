@@ -55,15 +55,20 @@ nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
 # scientific cameras (Toupcam/ToupTek and friends) are consumed as *devices* it
 # discovers and drives, rather than through USB backends of our own. `os-usb`
 # enables its live userspace USB transport.
-# `os-hid` is the host HID stack (IOHIDManager / hid.dll), which is how the
-# imaging enclosure is reached anywhere Linux `hidraw` does not exist.
-numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true, features = ["os-hid"] }
+# The host HID stack is target-specific below: Linux uses OpenGel's hidraw
+# transport directly, avoiding hidapi's libudev build dependency in headless CI.
+numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true, default-features = false }
 numanager-drivers = { git = "https://github.com/henriksson-lab/numanager", optional = true, features = ["os-usb"] }
 
 # macOS (AVFoundation) and Windows (MediaFoundation) ship native capture with no
 # extra system deps, so the real camera backend is always compiled there.
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 nokhwa = { version = "0.10", features = ["input-native"] }
+
+# `os-hid` is the host HID stack (IOHIDManager / hid.dll), which is how the
+# imaging enclosure is reached anywhere Linux `hidraw` does not exist.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+numanager-core = { git = "https://github.com/henriksson-lab/numanager", optional = true, default-features = false, features = ["os-hid"] }
 
 [build-dependencies]
 slint-build = "1.17"
